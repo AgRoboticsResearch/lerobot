@@ -32,9 +32,9 @@ from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.datasets.async_video_encoder import AsyncVideoEncoder
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.datasets.async_video_encoder import AsyncVideoEncoder
 from lerobot.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
