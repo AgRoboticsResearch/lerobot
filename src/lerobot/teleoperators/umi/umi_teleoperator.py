@@ -28,6 +28,7 @@ from collections import deque
 
 from ...utils.logging_utils import get_logger
 from ...utils.config import BaseConfig
+from ...model.kinematics import RobotKinematics
 from ..teleoperator import Teleoperator
 from .config_umi_teleoperator import UmiTeleoperatorConfig
 
@@ -43,163 +44,13 @@ except ImportError:
     logger.warning("UMI dependencies not available. UMI teleoperation features will be limited.")
 
 
-class UmiIkSolver:
-    """UMI Inverse Kinematics Solver."""
-    
-    def __init__(self, config: UmiTeleoperatorConfig):
-        """Initialize IK solver."""
-        self.config = config
-        self.dh_params = config.get_robot_dh_parameters()
-        
-        if self.dh_params is None:
-            logger.warning("DH parameters not available for IK solver")
-    
-    def forward_kinematics(self, joint_angles: np.ndarray) -> np.ndarray:
-        """
-        Compute forward kinematics.
-        
-        Args:
-            joint_angles: Joint angles in radians
-            
-        Returns:
-            End-effector pose as 4x4 transformation matrix
-        """
-        if self.dh_params is None:
-            return np.eye(4)
-        
-        # Initialize transformation matrix
-        T = np.eye(4)
-        
-        # Apply DH transformations
-        for i, (dh, angle) in enumerate(zip(self.dh_params, joint_angles)):
-            a, alpha, d, theta = dh["a"], dh["alpha"], dh["d"], dh["theta"]
-            
-            # DH transformation matrix
-            ct = np.cos(theta + angle)
-            st = np.sin(theta + angle)
-            ca = np.cos(alpha)
-            sa = np.sin(alpha)
-            
-            T_i = np.array([
-                [ct, -st * ca, st * sa, a * ct],
-                [st, ct * ca, -ct * sa, a * st],
-                [0, sa, ca, d],
-                [0, 0, 0, 1]
-            ])
-            
-            T = T @ T_i
-        
-        return T
-    
-    def inverse_kinematics(
-        self,
-        target_pose: np.ndarray,
-        initial_guess: Optional[np.ndarray] = None
-    ) -> Optional[np.ndarray]:
-        """
-        Compute inverse kinematics.
-        
-        Args:
-            target_pose: Target end-effector pose as 4x4 transformation matrix
-            initial_guess: Initial joint angle guess
-            
-        Returns:
-            Joint angles in radians or None if IK failed
-        """
-        if self.dh_params is None:
-            logger.warning("DH parameters not available for IK")
-            return None
-        
-        # Use simple numerical IK for now
-        # In practice, you would use IKFast, TRAC-IK, or KDL
-        
-        if initial_guess is None:
-            initial_guess = np.zeros(len(self.dh_params))
-        
-        # Simple gradient descent IK
-        joint_angles = initial_guess.copy()
-        
-        for iteration in range(self.config.ik.max_iterations):
-            # Compute current pose
-            current_pose = self.forward_kinematics(joint_angles)
-            
-            # Compute pose error
-            pose_error = self._compute_pose_error(target_pose, current_pose)
-            
-            # Check convergence
-            if np.linalg.norm(pose_error[:3]) < self.config.ik.tolerance_position and \
-               np.linalg.norm(pose_error[3:]) < self.config.ik.tolerance_orientation:
-                return joint_angles
-            
-            # Compute Jacobian (simplified)
-            J = self._compute_jacobian(joint_angles)
-            
-            # Update joint angles
-            if np.linalg.matrix_rank(J) == J.shape[1]:
-                delta_theta = np.linalg.pinv(J) @ pose_error
-                joint_angles += 0.1 * delta_theta
-                
-                # Apply joint limits
-                joint_angles = self._apply_joint_limits(joint_angles)
-        
-        logger.warning("IK failed to converge")
-        return None
-    
-    def _compute_pose_error(self, target_pose: np.ndarray, current_pose: np.ndarray) -> np.ndarray:
-        """Compute pose error between target and current poses."""
-        # Position error
-        pos_error = target_pose[:3, 3] - current_pose[:3, 3]
-        
-        # Orientation error (simplified)
-        target_rot = target_pose[:3, :3]
-        current_rot = current_pose[:3, :3]
-        
-        # Convert to rotation vector
-        rot_diff = target_rot @ current_rot.T
-        rot_error = st.Rotation.from_matrix(rot_diff).as_rotvec()
-        
-        return np.concatenate([pos_error, rot_error])
-    
-    def _compute_jacobian(self, joint_angles: np.ndarray) -> np.ndarray:
-        """Compute Jacobian matrix (simplified)."""
-        # Simplified numerical Jacobian
-        epsilon = 1e-6
-        J = np.zeros((6, len(joint_angles)))
-        
-        base_pose = self.forward_kinematics(joint_angles)
-        
-        for i in range(len(joint_angles)):
-            # Perturb joint i
-            perturbed_angles = joint_angles.copy()
-            perturbed_angles[i] += epsilon
-            
-            perturbed_pose = self.forward_kinematics(perturbed_angles)
-            
-            # Compute finite difference
-            pose_diff = self._compute_pose_error(perturbed_pose, base_pose)
-            J[:, i] = pose_diff / epsilon
-        
-        return J
-    
-    def _apply_joint_limits(self, joint_angles: np.ndarray) -> np.ndarray:
-        """Apply joint limits to joint angles."""
-        if self.config.ik.joint_limits is None:
-            return joint_angles
-        
-        limited_angles = joint_angles.copy()
-        for i, (lower, upper) in enumerate(self.config.ik.joint_limits):
-            limited_angles[i] = np.clip(limited_angles[i], lower, upper)
-        
-        return limited_angles
-
-
 class UmiTeleoperator(Teleoperator):
     """
     UMI Teleoperator for LeRobot.
     
     This class provides UMI-style teleoperation with:
     - SpaceMouse control
-    - Real-time IK calculations
+    - Real-time IK calculations using LeRobot's placo-based IK
     - Collision avoidance
     - Multi-robot coordination
     """
@@ -212,8 +63,9 @@ class UmiTeleoperator(Teleoperator):
         super().__init__(config)
         self.config = config
         
-        # Initialize IK solver
-        self.ik_solver = UmiIkSolver(config)
+        # Initialize LeRobot's IK solver using placo
+        self.ik_solvers = []
+        self._init_ik_solvers()
         
         # Initialize SpaceMouse
         self.spacemouse = None
@@ -235,6 +87,44 @@ class UmiTeleoperator(Teleoperator):
         self.robot_joint_angles = [np.zeros(6)] * config.num_robots
         
         logger.info(f"Initialized UMI teleoperator for {config.num_robots} robots")
+    
+    def _init_ik_solvers(self):
+        """Initialize IK solvers for each robot using LeRobot's placo-based kinematics."""
+        for robot_idx in range(self.config.num_robots):
+            try:
+                # Get URDF path for this robot type
+                urdf_path = self._get_urdf_path(self.config.ik.robot_type)
+                
+                # Create LeRobot's IK solver
+                ik_solver = RobotKinematics(
+                    urdf_path=urdf_path,
+                    target_frame_name=self.config.ik.target_frame_name,
+                    joint_names=self.config.ik.joint_names
+                )
+                
+                self.ik_solvers.append(ik_solver)
+                logger.info(f"Initialized IK solver for robot {robot_idx} using {urdf_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize IK solver for robot {robot_idx}: {e}")
+                # Create a fallback solver
+                self.ik_solvers.append(None)
+    
+    def _get_urdf_path(self, robot_type: str) -> str:
+        """Get URDF path for the specified robot type."""
+        # This would typically come from configuration or be determined at runtime
+        urdf_paths = {
+            "ur5": "path/to/ur5.urdf",
+            "franka": "path/to/franka.urdf",
+            "arx": "path/to/arx.urdf",
+            "so100": "path/to/so100.urdf",
+            "so101": "path/to/so101_new_calib.urdf"  # SO101 URDF from SO-ARM100 repo
+        }
+        
+        if robot_type in urdf_paths:
+            return urdf_paths[robot_type]
+        else:
+            raise ValueError(f"Unknown robot type: {robot_type}. Supported types: {list(urdf_paths.keys())}")
     
     def _init_spacemouse(self):
         """Initialize SpaceMouse device."""
@@ -282,7 +172,7 @@ class UmiTeleoperator(Teleoperator):
             # Update target pose
             self._update_target_pose()
             
-            # Solve IK for each robot
+            # Solve IK for each robot using LeRobot's IK solver
             self._solve_ik_all_robots()
             
             # Apply safety checks
@@ -408,7 +298,7 @@ class UmiTeleoperator(Teleoperator):
         self.target_pose[:3, 3] = position
     
     def _solve_ik_all_robots(self):
-        """Solve IK for all robots."""
+        """Solve IK for all robots using LeRobot's placo-based IK solver."""
         for robot_idx in range(self.config.num_robots):
             # Get target pose for this robot
             if robot_idx == 0:
@@ -419,17 +309,32 @@ class UmiTeleoperator(Teleoperator):
                 target_pose = self.target_pose.copy()
                 target_pose[:3, 3] += offset
             
-            # Solve IK
-            joint_angles = self.ik_solver.inverse_kinematics(
-                target_pose,
-                initial_guess=self.robot_joint_angles[robot_idx]
-            )
-            
-            if joint_angles is not None:
-                self.robot_joint_angles[robot_idx] = joint_angles
-                self.robot_poses[robot_idx] = target_pose
+            # Use LeRobot's IK solver
+            ik_solver = self.ik_solvers[robot_idx]
+            if ik_solver is not None:
+                try:
+                    # Convert current joint angles to degrees (LeRobot's IK expects degrees)
+                    current_joint_deg = np.rad2deg(self.robot_joint_angles[robot_idx])
+                    
+                    # Solve IK using LeRobot's placo-based solver
+                    target_joint_deg = ik_solver.inverse_kinematics(
+                        current_joint_pos=current_joint_deg,
+                        desired_ee_pose=target_pose,
+                        position_weight=self.config.ik.position_weight,
+                        orientation_weight=self.config.ik.orientation_weight
+                    )
+                    
+                    # Convert back to radians
+                    target_joint_rad = np.deg2rad(target_joint_deg)
+                    
+                    # Update robot state
+                    self.robot_joint_angles[robot_idx] = target_joint_rad
+                    self.robot_poses[robot_idx] = target_pose
+                    
+                except Exception as e:
+                    logger.warning(f"IK failed for robot {robot_idx}: {e}")
             else:
-                logger.warning(f"IK failed for robot {robot_idx}")
+                logger.warning(f"No IK solver available for robot {robot_idx}")
     
     def _apply_safety_checks(self):
         """Apply safety checks."""

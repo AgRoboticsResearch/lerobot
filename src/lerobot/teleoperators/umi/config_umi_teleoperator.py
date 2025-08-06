@@ -52,15 +52,21 @@ class UmiSpaceMouseConfig:
 
 @dataclass
 class UmiIkConfig:
-    """Configuration for UMI Inverse Kinematics."""
+    """Configuration for UMI Inverse Kinematics using LeRobot's placo-based solver."""
     
     # Robot parameters
-    robot_type: str = "ur5"  # "ur5", "franka", "arx"
+    robot_type: str = "so101"  # "ur5", "franka", "arx", "so100", "so101"
+    urdf_path: Optional[str] = None  # Path to robot URDF file
+    target_frame_name: str = "gripper_frame_link"  # End-effector frame name in URDF
+    joint_names: Optional[List[str]] = None  # List of joint names for IK
+    
+    # IK solver parameters (for LeRobot's placo-based solver)
+    position_weight: float = 1.0  # Weight for position constraint
+    orientation_weight: float = 0.01  # Weight for orientation constraint
+    
+    # Legacy parameters (kept for compatibility)
     joint_limits: Optional[List[Tuple[float, float]]] = None
     velocity_limits: Optional[List[float]] = None
-    
-    # IK solver parameters
-    ik_solver: str = "ikfast"  # "ikfast", "trac_ik", "kdl"
     max_iterations: int = 100
     tolerance_position: float = 0.001  # meters
     tolerance_orientation: float = 0.01  # radians
@@ -88,7 +94,7 @@ class UmiTeleoperatorConfig(BaseConfig):
     
     This configuration class supports UMI's unique teleoperation approach:
     - SpaceMouse-based control
-    - Real-time IK calculations
+    - Real-time IK calculations using LeRobot's placo-based solver
     - Collision avoidance
     - Multi-robot coordination
     """
@@ -131,6 +137,14 @@ class UmiTeleoperatorConfig(BaseConfig):
         if self.num_robots > 1:
             self.bimanual = True
         
+        # Set default URDF path if not provided
+        if self.ik.urdf_path is None:
+            self.ik.urdf_path = self._get_default_urdf_path()
+        
+        # Set default joint names if not provided
+        if self.ik.joint_names is None:
+            self.ik.joint_names = self._get_default_joint_names()
+        
         # Set default joint limits based on robot type
         if self.ik.joint_limits is None:
             self.ik.joint_limits = self._get_default_joint_limits()
@@ -138,6 +152,41 @@ class UmiTeleoperatorConfig(BaseConfig):
         # Set default velocity limits
         if self.ik.velocity_limits is None:
             self.ik.velocity_limits = self._get_default_velocity_limits()
+    
+    def _get_default_urdf_path(self) -> str:
+        """Get default URDF path for the robot type."""
+        urdf_paths = {
+            "ur5": "path/to/ur5.urdf",
+            "franka": "path/to/franka.urdf",
+            "arx": "path/to/arx.urdf",
+            "so100": "path/to/so100.urdf",
+            "so101": "path/to/so101_new_calib.urdf"  # SO101 URDF from SO-ARM100 repo
+        }
+        
+        if self.ik.robot_type in urdf_paths:
+            return urdf_paths[self.ik.robot_type]
+        else:
+            raise ValueError(f"Unknown robot type: {self.ik.robot_type}. Supported types: {list(urdf_paths.keys())}")
+    
+    def _get_default_joint_names(self) -> List[str]:
+        """Get default joint names for the robot type."""
+        joint_names = {
+            "ur5": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", 
+                   "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+            "franka": ["panda_joint1", "panda_joint2", "panda_joint3", "panda_joint4",
+                      "panda_joint5", "panda_joint6", "panda_joint7"],
+            "arx": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+            "so100": ["shoulder_pan", "shoulder_lift", "elbow_flex", 
+                     "wrist_flex", "wrist_roll", "gripper"],
+            "so101": ["shoulder_pan", "shoulder_lift", "elbow_flex", 
+                     "wrist_flex", "wrist_roll", "gripper"]  # Same as SO100
+        }
+        
+        if self.ik.robot_type in joint_names:
+            return joint_names[self.ik.robot_type]
+        else:
+            # Generic 6-DOF robot
+            return [f"joint{i+1}" for i in range(6)]
     
     def _get_default_joint_limits(self) -> List[Tuple[float, float]]:
         """Get default joint limits based on robot type."""
@@ -160,6 +209,15 @@ class UmiTeleoperatorConfig(BaseConfig):
                 (-0.0175, 3.7525),        # panda_joint6
                 (-2.8973, 2.8973),        # panda_joint7
             ]
+        elif self.ik.robot_type in ["so100", "so101"]:
+            return [
+                (-180, 180),              # shoulder_pan
+                (-180, 180),              # shoulder_lift
+                (-180, 180),              # elbow_flex
+                (-180, 180),              # wrist_flex
+                (-180, 180),              # wrist_roll
+                (0, 100),                 # gripper
+            ]
         else:
             # Generic 6-DOF robot
             return [(-np.pi, np.pi)] * 6
@@ -170,6 +228,8 @@ class UmiTeleoperatorConfig(BaseConfig):
             return [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # rad/s
         elif self.ik.robot_type == "franka":
             return [2.175, 2.175, 2.175, 2.175, 2.175, 2.175, 2.175]  # rad/s
+        elif self.ik.robot_type in ["so100", "so101"]:
+            return [90.0, 90.0, 90.0, 90.0, 90.0, 50.0]  # deg/s
         else:
             # Generic 6-DOF robot
             return [1.0] * 6
@@ -198,33 +258,11 @@ class UmiTeleoperatorConfig(BaseConfig):
             if lower >= upper:
                 logger.warning(f"Invalid workspace limits for {axis}: {lower} >= {upper}")
         
-        return True
-    
-    def get_robot_dh_parameters(self) -> Optional[List[Dict[str, float]]]:
-        """
-        Get DH parameters for the robot.
+        # Check URDF path
+        if self.ik.urdf_path and not self.ik.urdf_path.startswith("path/to/"):
+            # This would be a real path that should exist
+            import os
+            if not os.path.exists(self.ik.urdf_path):
+                logger.warning(f"URDF file not found: {self.ik.urdf_path}")
         
-        Returns:
-            List of DH parameters or None if not available
-        """
-        if self.ik.robot_type == "ur5":
-            return [
-                {"a": 0.0, "alpha": 0.0, "d": 0.1625, "theta": 0.0},
-                {"a": -0.425, "alpha": 0.0, "d": 0.0, "theta": 0.0},
-                {"a": -0.3922, "alpha": 0.0, "d": 0.0, "theta": 0.0},
-                {"a": 0.0, "alpha": 0.0, "d": 0.1333, "theta": 0.0},
-                {"a": 0.0, "alpha": 0.0, "d": 0.0997, "theta": 0.0},
-                {"a": 0.0, "alpha": 0.0, "d": 0.0996, "theta": 0.0},
-            ]
-        elif self.ik.robot_type == "franka":
-            return [
-                {"a": 0.0, "alpha": 0.0, "d": 0.333, "theta": 0.0},
-                {"a": 0.0, "alpha": -np.pi/2, "d": 0.0, "theta": 0.0},
-                {"a": 0.0, "alpha": np.pi/2, "d": 0.316, "theta": 0.0},
-                {"a": 0.0825, "alpha": np.pi/2, "d": 0.0, "theta": 0.0},
-                {"a": -0.0825, "alpha": -np.pi/2, "d": 0.384, "theta": 0.0},
-                {"a": 0.0, "alpha": np.pi/2, "d": 0.0, "theta": 0.0},
-                {"a": 0.088, "alpha": np.pi/2, "d": 0.107, "theta": 0.0},
-            ]
-        else:
-            return None 
+        return True 
