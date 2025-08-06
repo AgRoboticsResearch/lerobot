@@ -36,7 +36,7 @@ from typing import Dict, List, Optional, Tuple, Any
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseConfig
-from lerobot.utils.umi_slam import create_umi_slam_processor
+from lerobot.utils.orb_slam_integration import create_orb_slam_processor, OrbSlamConfig
 from lerobot.teleoperators.umi import UmiTeleoperatorConfig, create_umi_teleoperator
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.logging_utils import get_logger
@@ -76,7 +76,7 @@ class UmiLeRobotPipeline:
         
         # Initialize components
         self.cameras = {}
-        self.slam_processor = None
+        self.orb_slam_processor = None
         self.ik_solver = None
         self.teleoperator = None
         
@@ -87,7 +87,7 @@ class UmiLeRobotPipeline:
         
         # Initialize pipeline components
         self._init_cameras()
-        self._init_slam_processor()
+        self._init_orb_slam_processor()
         self._init_ik_solver()
         self._init_teleoperator()
     
@@ -104,18 +104,23 @@ class UmiLeRobotPipeline:
             except Exception as e:
                 logger.error(f"Failed to connect camera {camera_name}: {e}")
     
-    def _init_slam_processor(self):
-        """Initialize UMI SLAM processor for visual odometry."""
-        logger.info("Initializing UMI SLAM processor...")
+    def _init_orb_slam_processor(self):
+        """Initialize ORB-SLAM processor for visual odometry."""
+        logger.info("Initializing ORB-SLAM processor...")
         
         try:
-            self.slam_processor = create_umi_slam_processor(
-                umi_root_path="universal_manipulation_interface",
-                calibration_dir="universal_manipulation_interface/example/calibration"
+            config = OrbSlamConfig(
+                camera_config_path="universal_manipulation_interface/example/calibration/camera_config.yaml",
+                vocabulary_path="universal_manipulation_interface/example/calibration/ORBvoc.txt",
+                settings_path="universal_manipulation_interface/example/calibration/settings.yaml",
+                max_features=2000,
+                output_frequency=10.0
             )
-            logger.info("UMI SLAM processor initialized")
+            
+            self.orb_slam_processor = create_orb_slam_processor(config)
+            logger.info("ORB-SLAM processor initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize SLAM processor: {e}")
+            logger.error(f"Failed to initialize ORB-SLAM processor: {e}")
     
     def _init_ik_solver(self):
         """Initialize LeRobot's IK solver."""
@@ -190,23 +195,19 @@ class UmiLeRobotPipeline:
         Returns:
             Estimated pose as 4x4 transformation matrix or None
         """
-        if self.slam_processor is None or len(frames) == 0:
+        if self.orb_slam_processor is None or len(frames) == 0:
             return None
         
         try:
-            # For now, we'll use a placeholder for ORB-SLAM pose estimation
-            # In practice, this would integrate with UMI's ORB-SLAM implementation
+            # Use ORB-SLAM processor to estimate pose from camera frames
+            estimated_pose = self.orb_slam_processor.process_camera_frames(frames)
             
-            # Simulate pose estimation from dual camera setup
-            # This would typically involve:
-            # 1. Feature detection and matching between cameras
-            # 2. ORB-SLAM processing for visual odometry
-            # 3. Pose estimation and refinement
-            
-            logger.debug("Estimating pose using ORB-SLAM from dual camera setup")
-            
-            # Placeholder: return current pose (in practice, this would be ORB-SLAM output)
-            return self.current_pose
+            if estimated_pose is not None:
+                logger.debug("Pose estimated using ORB-SLAM from dual camera setup")
+                return estimated_pose
+            else:
+                logger.debug("ORB-SLAM failed to estimate pose")
+                return None
             
         except Exception as e:
             logger.error(f"Failed to estimate pose: {e}")
@@ -319,7 +320,7 @@ class UmiLeRobotPipeline:
         """Get status of all pipeline components."""
         return {
             "cameras_connected": len(self.cameras) > 0,
-            "slam_processor_ready": self.slam_processor is not None,
+            "orb_slam_processor_ready": self.orb_slam_processor is not None,
             "ik_solver_ready": self.ik_solver is not None,
             "teleoperator_ready": self.teleoperator is not None,
             "is_running": self.is_running,
@@ -395,10 +396,10 @@ def demonstrate_complete_pipeline():
     
     logger.info("\n=== Pipeline Summary ===")
     logger.info("✅ LeRobot RealSense cameras for dual camera input")
-    logger.info("✅ UMI ORB-SLAM for visual odometry and pose estimation")
+    logger.info("✅ ORB-SLAM integration for visual odometry and pose estimation")
     logger.info("✅ LeRobot IK solver for inverse kinematics")
     logger.info("✅ UMI teleoperator for end-effector control")
-    logger.info("✅ Complete pipeline: Camera → SLAM → IK → Teleoperation")
+    logger.info("✅ Complete pipeline: Camera → ORB-SLAM → IK → Teleoperation")
 
 
 def main():
@@ -411,7 +412,7 @@ def main():
     demonstrate_complete_pipeline()
     
     logger.info("\nUMI-LeRobot Pipeline Example completed!")
-    logger.info("This pipeline combines UMI's visual odometry innovation")
+    logger.info("This pipeline combines ORB-SLAM visual odometry innovation")
     logger.info("with LeRobot's mature camera and IK infrastructure.")
 
 
