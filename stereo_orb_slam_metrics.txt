@@ -1,0 +1,13 @@
+# Stereo ORB-SLAM Performance Metrics
+# Test Duration: 30.1 seconds
+# Total Frames: 199
+# Success Rate: 100.0%
+# Average Processing Time: 0.146s
+# Average Features: 100.0
+# Total Distance: 1.970m
+# Average Velocity: 0.065m/s
+# Drift Distance: 0.130m
+# Velocity Variance: 0.000001
+# Translation Range X: [-0.045, 0.104]
+# Translation Range Y: [-0.108, 0.051]
+# Translation Range Z: [-0.098, 0.034]

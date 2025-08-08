@@ -13,9 +13,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
+import os
+import time
+from pathlib import Path
 from typing import Any
 
-from lerobot.utils.utils import format_big_number
+from lerobot.utils.utils import format_big_number, init_logging
 
 
 class AverageMeter:
@@ -161,3 +165,28 @@ class MetricsTracker:
         """Resets average meters."""
         for m in self.metrics.values():
             m.reset()
+
+
+def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
+    """
+    Get a logger using the standardized logging setup from utils.py.
+
+    Args:
+        name: Logger name (e.g., 'policy_server', 'robot_client')
+        log_to_file: Whether to also log to a file
+
+    Returns:
+        Configured logger instance
+    """
+    # Create logs directory if logging to file
+    if log_to_file:
+        os.makedirs("logs", exist_ok=True)
+        log_file = Path(f"logs/{name}_{int(time.time())}.log")
+    else:
+        log_file = None
+
+    # Initialize the standardized logging
+    init_logging(log_file=log_file, display_pid=False)
+
+    # Return a named logger
+    return logging.getLogger(name)

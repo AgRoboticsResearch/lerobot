@@ -1,0 +1,20 @@
+{
+  "final_reproj_error": 0.0,
+  "fps": 30.0,
+  "image_height": 480,
+  "image_width": 848,
+  "intrinsic_type": "PINHOLE",
+  "intrinsics": {
+    "aspect_ratio": 1.7666666666666666,
+    "focal_length": 419.8328552246094,
+    "principal_pt_x": 429.5089416503906,
+    "principal_pt_y": 237.1636505126953,
+    "radial_distortion_1": 0.0,
+    "radial_distortion_2": 0.0,
+    "radial_distortion_3": 0.0,
+    "radial_distortion_4": 0.0,
+    "skew": 0.0
+  },
+  "nr_calib_images": 0,
+  "stabelized": false
+}

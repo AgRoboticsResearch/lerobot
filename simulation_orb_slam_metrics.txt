@@ -1,0 +1,13 @@
+# Simulation ORB-SLAM Performance Metrics
+# Test Duration: 60.1 seconds
+# Total Frames: 599
+# Success Rate: 100.0%
+# Average Processing Time: 0.023s
+# Average Features: 100.0
+# Total Distance: 0.679m
+# Average Velocity: 0.011m/s
+# Drift Distance: 0.679m
+# Velocity Variance: 0.000000
+# Translation Range X: [0.000, 0.598]
+# Translation Range Y: [0.000, 0.299]
+# Translation Range Z: [0.000, 0.120]
