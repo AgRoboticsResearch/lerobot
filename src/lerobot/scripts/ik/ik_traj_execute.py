@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--return-to-seed", action="store_true", help="After trajectory, return to initial seed posture")
     parser.add_argument("--step-dt", type=float, default=0.02, help="Sleep between incremental joint steps (s)")
     parser.add_argument("--hold-seconds", type=float, default=0.0, help="Hold at the end before disconnecting (s)")
+    parser.add_argument("--no-wait-to-exit", action="store_true", help="Exit without waiting for ENTER at the end")
 
     args = parser.parse_args()
 
@@ -224,6 +225,14 @@ def main() -> None:
 
         if args.hold_seconds and args.hold_seconds > 0:
             time.sleep(args.hold_seconds)
+
+        # Wait for user confirmation before disconnecting (unless explicitly disabled)
+        if not args.no_wait_to_exit:
+            print("Press ENTER to disconnect and exit safely...")
+            try:
+                input()
+            except EOFError:
+                pass
 
     finally:
         try:
