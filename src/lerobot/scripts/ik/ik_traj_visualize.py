@@ -122,8 +122,32 @@ def main() -> None:
     ax3d.set_zlabel("z [m]")
     ax3d.view_init(elev=22, azim=45)
     ax3d.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
+
+    # Ensure non-zero axis extents to avoid singular projection for straight-line or static paths
+    if have_actual:
+        x_all = np.concatenate([x, x_a])
+        y_all = np.concatenate([y, y_a])
+        z_all = np.concatenate([z, z_a])
+    else:
+        x_all, y_all, z_all = x, y, z
+
+    dx = float(np.ptp(x_all))
+    dy = float(np.ptp(y_all))
+    dz = float(np.ptp(z_all))
+
+    # Pad axis limits if any dimension is near zero range
+    def _pad_axis(set_lim, vmin, vmax):
+        if abs(vmax - vmin) < 1e-6:
+            mid = 0.5 * (vmin + vmax)
+            pad = 0.01
+            set_lim(mid - pad, mid + pad)
+
+    _pad_axis(ax3d.set_xlim, float(x_all.min()), float(x_all.max()))
+    _pad_axis(ax3d.set_ylim, float(y_all.min()), float(y_all.max()))
+    _pad_axis(ax3d.set_zlim, float(z_all.min()), float(z_all.max()))
+
     try:
-        ax3d.set_box_aspect((np.ptp(x), np.ptp(y), np.ptp(z)))
+        ax3d.set_box_aspect((max(dx, 1e-6), max(dy, 1e-6), max(dz, 1e-6)))
     except Exception:
         pass
     ax3d.grid(True, alpha=0.3)
@@ -165,7 +189,9 @@ def main() -> None:
     ax2.set_xlabel("time [s]")
     ax2.set_ylabel("orientation [deg]")
     ax2.grid(True, alpha=0.3)
-    ax2.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
+    handles, labels = ax2.get_legend_handles_labels()
+    if labels:
+        ax2.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
 
     # Optional error plot if requested: L2 position error over time
     if args.show_error and have_actual:
