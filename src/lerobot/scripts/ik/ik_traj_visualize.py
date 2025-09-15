@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--joint-names", type=str, default=None, help="Comma-separated joint names to match CSV columns order")
     parser.add_argument("--show-frames", action="store_true", help="Draw small EE orientation frames along path (less clean)")
     parser.add_argument("--show-error", action="store_true", help="Plot position error over time (disabled by default)")
+    parser.add_argument("--no-clip", action="store_true", help="Do not clip actual/joints data to planned time range")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -104,6 +105,20 @@ def main() -> None:
         have_actual = True
         t_a, x_a, y_a, z_a = t_j, x_j, y_j, z_j
         rs_a = ps_a = ysaw_a = []
+
+    # Clip actual data to planned time window unless disabled
+    if have_actual and not args.no_clip:
+        t_min, t_max = float(t.min()), float(t.max())
+        mask = (t_a >= t_min) & (t_a <= t_max)
+        if mask.any():
+            t_a = t_a[mask]
+            x_a = x_a[mask]
+            y_a = y_a[mask]
+            z_a = z_a[mask]
+            if rs_a:
+                rs_a = list(np.array(rs_a)[mask])
+                ps_a = list(np.array(ps_a)[mask])
+                ysaw_a = list(np.array(ysaw_a)[mask])
 
     fig = plt.figure(figsize=(16, 8))
     fig.suptitle(args.title)

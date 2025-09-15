@@ -38,9 +38,6 @@ def main() -> None:
     parser.add_argument("--traj-csv", type=Path, required=True, help="CSV file with t,x,y,z[,r,p,y] (deg)")
     parser.add_argument("--preview-only", action="store_true", help="Do not move, only print first/last targets")
     parser.add_argument("--dry-run", action="store_true", help="Compute IK and timings, but do not send commands")
-    parser.add_argument("--record-actual", type=Path, default=None, help="Record measured/commanded EE path to CSV (t,x,y,z[,r,p,y])")
-    parser.add_argument("--record-rate-hz", type=float, default=10.0, help="Max recording rate when --record-actual is set")
-    parser.add_argument("--record-commanded", action="store_true", help="Record commanded joints instead of reading bus")
     parser.add_argument("--record-joints", type=Path, default=None, help="Record only joint states to CSV (t,<joint_deg...>)")
     parser.add_argument("--record-joints-rate-hz", type=float, default=5.0, help="Max recording rate for --record-joints")
 
@@ -157,13 +154,7 @@ def main() -> None:
             yaw = 0.0
         return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
 
-    # Prepare recorder
-    actual_rows: list[list[float]] = []
-    if args.record_actual is not None:
-        # Header: t,x,y,z,roll_deg,pitch_deg,yaw_deg plus joints (deg)
-        pass
-    next_record_time = 0.0
-
+    # Prepare joints-only recorder
     joints_rows: list[list[float]] = []
     next_joints_record_time = 0.0
 
@@ -270,33 +261,6 @@ def main() -> None:
                 robot.send_action(action)
                 q_prev = q
 
-                # Record actual measured FK at this step if requested
-                if args.record_actual is not None:
-                    now = time.monotonic() - t0
-                    if now >= next_record_time:
-                        next_record_time = now + (1.0 / max(1e-3, args.record_rate_hz))
-
-                        if args.record_commanded:
-                            q_src = q_prev.copy()
-                        else:
-                            present = robot.bus.sync_read("Present_Position")
-                            try:
-                                q_src = np.array([present[name] for name in kin.joint_names], dtype=float)
-                            except KeyError:
-                                q_src = q_prev.copy()
-
-                        fk_T = kin.forward_kinematics(q_src)
-                        roll_deg, pitch_deg, yaw_deg = _matrix_to_rpy_deg(fk_T[:3, :3])
-                        actual_rows.append([
-                            float(now),
-                            float(fk_T[0, 3]),
-                            float(fk_T[1, 3]),
-                            float(fk_T[2, 3]),
-                            float(roll_deg),
-                            float(pitch_deg),
-                            float(yaw_deg),
-                        ] + [float(v) for v in q_src.tolist()])
-
                 # Lightweight joints-only recorder
                 if args.record_joints is not None:
                     now_j = time.monotonic() - t0
@@ -336,17 +300,6 @@ def main() -> None:
                 pass
 
     finally:
-        # Save actual trajectory if requested
-        if args.record_actual is not None and actual_rows:
-            args.record_actual.parent.mkdir(parents=True, exist_ok=True)
-            with args.record_actual.open("w", newline="") as f:
-                w = csv.writer(f)
-                header = ["t", "x", "y", "z", "roll_deg", "pitch_deg", "yaw_deg"] + [f"{n}_deg" for n in kin.joint_names]
-                w.writerow(header)
-                for row in actual_rows:
-                    w.writerow(row)
-            print(f"Saved actual path to {args.record_actual}")
-
         # Save joints-only if requested
         if args.record_joints is not None and joints_rows:
             args.record_joints.parent.mkdir(parents=True, exist_ok=True)
