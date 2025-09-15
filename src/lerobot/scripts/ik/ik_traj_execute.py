@@ -38,6 +38,12 @@ def main() -> None:
     parser.add_argument("--preview-only", action="store_true", help="Do not move, only print first/last targets")
     parser.add_argument("--dry-run", action="store_true", help="Compute IK and timings, but do not send commands")
 
+    # Pre/post moves
+    parser.add_argument("--pre-mid", action="store_true", help="Before trajectory, move all joints to mid position")
+    parser.add_argument("--post-mid", action="store_true", help="After trajectory, move all joints back to mid position")
+    parser.add_argument("--return-to-seed", action="store_true", help="After trajectory, return to initial seed posture")
+    parser.add_argument("--step-dt", type=float, default=0.02, help="Sleep between incremental joint steps (s)")
+
     args = parser.parse_args()
 
     # Kinematics init
@@ -79,6 +85,8 @@ def main() -> None:
     else:
         q_prev = np.zeros(nj, dtype=float)
 
+    q_seed = q_prev.copy()
+
     traj = read_csv_trajectory(args.traj_csv)
     if len(traj) < 2:
         raise SystemExit("Trajectory must contain at least two points")
@@ -112,6 +120,38 @@ def main() -> None:
         )
         robot = SO100Follower(robot_cfg)
         robot.connect(calibrate=False)
+
+    # Helper: incremental move to joint target with per-step clamp
+    def move_to_joint_target(q_target: np.ndarray, label: str) -> None:
+        nonlocal q_prev
+        if args.dry_run:
+            print(f"[dry-run] Would move to {label}: {np.array2string(q_target, precision=2)}")
+            return
+        max_step = float(args.max_joint_step_deg) if args.max_joint_step_deg is not None else 5.0
+        for _ in range(2000):  # safety cap
+            dq = np.clip(q_target - q_prev, -max_step, max_step)
+            if np.allclose(dq, 0.0, atol=1e-2):
+                break
+            q_prev = q_prev + dq
+            action = {
+                "shoulder_pan.pos": float(q_prev[0]),
+                "shoulder_lift.pos": float(q_prev[1]),
+                "elbow_flex.pos": float(q_prev[2]),
+                "wrist_flex.pos": float(q_prev[3]),
+                "wrist_roll.pos": float(q_prev[4]),
+            }
+            if len(q_prev) >= 6:
+                action["gripper.pos"] = float(np.clip(q_prev[5], 5.0, 95.0))
+            robot.send_action(action)
+            time.sleep(max(0.0, args.step_dt))
+
+    # Optional: move to mid pose before trajectory
+    if args.pre_mid:
+        q_mid = np.zeros_like(q_prev)
+        if len(q_mid) >= 6:
+            q_mid[5] = 50.0  # gripper midpoint in [0..100]
+        print("Moving to joint mid position before trajectory...")
+        move_to_joint_target(q_mid, label="mid")
 
     try:
         print("Ready. Press ENTER to start execution...")
@@ -168,6 +208,17 @@ def main() -> None:
 
         if not args.dry_run:
             print("Trajectory execution finished.")
+
+        # Post-move behavior
+        if args.post_mid:
+            q_mid = np.zeros_like(q_prev)
+            if len(q_mid) >= 6:
+                q_mid[5] = 50.0
+            print("Moving back to joint mid position after trajectory...")
+            move_to_joint_target(q_mid, label="mid")
+        elif args.return_to_seed:
+            print("Returning to initial seed posture...")
+            move_to_joint_target(q_seed, label="seed")
 
     finally:
         try:
