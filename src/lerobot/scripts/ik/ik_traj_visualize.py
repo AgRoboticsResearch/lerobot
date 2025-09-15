@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--target-frame", type=str, default="gripper_frame_link", help="End-effector frame in URDF")
     parser.add_argument("--joint-names", type=str, default=None, help="Comma-separated joint names to match CSV columns order")
     parser.add_argument("--show-frames", action="store_true", help="Draw small EE orientation frames along path (less clean)")
+    parser.add_argument("--show-error", action="store_true", help="Plot position error over time (disabled by default)")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -166,8 +167,8 @@ def main() -> None:
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
 
-    # Optional error plot if actual present: L2 position error over time
-    if have_actual:
+    # Optional error plot if requested: L2 position error over time
+    if args.show_error and have_actual:
         # Resample actual to planned timestamps via nearest for quick viz
         def _nearest(x_src, y_src, x_tgt):
             idx = np.searchsorted(x_src, x_tgt)
