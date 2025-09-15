@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--position-weight", type=float, default=1.0, help="IK position weight")
     parser.add_argument("--orientation-weight", type=float, default=0.0, help="IK orientation weight (0 for position-only)")
     parser.add_argument("--initial-joints", type=float, nargs="+", default=None, help="Initial joints in degrees")
+    parser.add_argument("--seed-from-robot", action="store_true", help="Read current robot joints as initial seed")
     parser.add_argument("--max-joint-step-deg", type=float, default=2.0, help="Clamp per-step joint change (deg)")
 
     # Trajectory
@@ -49,13 +50,33 @@ def main() -> None:
     )
     nj = len(kin.joint_names)
 
+    # Optionally connect early to read seed from robot
+    robot = None
+    if args.seed_from_robot:
+        robot_cfg = SO100FollowerConfig(
+            id="so100",
+            port=args.port,
+            cameras={},
+            use_degrees=(not args.no_degrees),
+            max_relative_target=(args.max_relative_target if args.max_relative_target is not None else None),
+        )
+        robot = SO100Follower(robot_cfg)
+        robot.connect(calibrate=False)
+
     # Initial joints
-    if args.initial_joints is None:
-        q_prev = np.zeros(nj, dtype=float)
-    else:
+    if args.initial_joints is not None:
         if len(args.initial_joints) != nj:
             raise ValueError(f"--initial-joints length {len(args.initial_joints)} != joint count {nj}")
         q_prev = np.array(args.initial_joints, dtype=float)
+    elif robot is not None:
+        present = robot.bus.sync_read("Present_Position")
+        try:
+            q_prev = np.array([present[name] for name in kin.joint_names], dtype=float)
+        except KeyError as e:
+            missing = str(e)
+            raise SystemExit(f"Missing joint '{missing}' in Present_Position; available: {list(present.keys())}")
+    else:
+        q_prev = np.zeros(nj, dtype=float)
 
     traj = read_csv_trajectory(args.traj_csv)
     if len(traj) < 2:
@@ -71,18 +92,25 @@ def main() -> None:
         last = traj[-1]
         print("First pose:", first.pos, first.rpy_deg)
         print("Last pose:", last.pos, last.rpy_deg)
+        # Disconnect early-created robot if any
+        if robot is not None:
+            try:
+                robot.disconnect()
+            except Exception:
+                pass
         return
 
-    # Robot init
-    robot_cfg = SO100FollowerConfig(
-        id="so100",
-        port=args.port,
-        cameras={},
-        use_degrees=(not args.no_degrees),
-        max_relative_target=(args.max_relative_target if args.max_relative_target is not None else None),
-    )
-    robot = SO100Follower(robot_cfg)
-    robot.connect(calibrate=False)
+    # Robot init (if not already created for seeding)
+    if robot is None:
+        robot_cfg = SO100FollowerConfig(
+            id="so100",
+            port=args.port,
+            cameras={},
+            use_degrees=(not args.no_degrees),
+            max_relative_target=(args.max_relative_target if args.max_relative_target is not None else None),
+        )
+        robot = SO100Follower(robot_cfg)
+        robot.connect(calibrate=False)
 
     try:
         print("Ready. Press ENTER to start execution...")
