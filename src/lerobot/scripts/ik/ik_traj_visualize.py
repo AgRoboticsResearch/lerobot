@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--urdf", type=Path, default=None, help="URDF needed to compute FK from joints")
     parser.add_argument("--target-frame", type=str, default="gripper_frame_link", help="End-effector frame in URDF")
     parser.add_argument("--joint-names", type=str, default=None, help="Comma-separated joint names to match CSV columns order")
+    parser.add_argument("--show-frames", action="store_true", help="Draw small EE orientation frames along path (less clean)")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -103,22 +104,23 @@ def main() -> None:
         t_a, x_a, y_a, z_a = t_j, x_j, y_j, z_j
         rs_a = ps_a = ysaw_a = []
 
-    fig = plt.figure(figsize=(14, 7))
+    fig = plt.figure(figsize=(16, 8))
     fig.suptitle(args.title)
 
     # 3D path
     ax3d = fig.add_subplot(1, 2, 1, projection="3d")
     # Color by time
     c = (t - t.min()) / max(1e-9, (t.max() - t.min()))
-    ax3d.plot(x, y, z, color="C0", linewidth=2, alpha=0.9, label="planned")
+    ax3d.plot(x, y, z, color="C0", linewidth=2.5, alpha=0.9, label="planned")
     if have_actual:
-        ax3d.plot(x_a, y_a, z_a, color="C1", linewidth=2, alpha=0.9, label="actual")
-    ax3d.scatter([x[0]], [y[0]], [z[0]], color="green", s=40, label="start")
-    ax3d.scatter([x[-1]], [y[-1]], [z[-1]], color="red", s=40, label="end (planned)")
+        ax3d.plot(x_a, y_a, z_a, color="C1", linewidth=2.0, alpha=0.8, linestyle="--", label="actual")
+    ax3d.scatter([x[0]], [y[0]], [z[0]], color="green", s=30, label="start")
+    ax3d.scatter([x[-1]], [y[-1]], [z[-1]], color="red", s=30, label="end (planned)")
     ax3d.set_xlabel("x [m]")
     ax3d.set_ylabel("y [m]")
     ax3d.set_zlabel("z [m]")
-    ax3d.legend(loc="best")
+    ax3d.view_init(elev=22, azim=45)
+    ax3d.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
     try:
         ax3d.set_box_aspect((np.ptp(x), np.ptp(y), np.ptp(z)))
     except Exception:
@@ -126,44 +128,43 @@ def main() -> None:
     ax3d.grid(True, alpha=0.3)
 
     # If orientation present, draw a few orientation arrows along path
-    if have_rpy:
-        idxs = np.linspace(0, len(traj) - 1, num=min(10, len(traj)), dtype=int)
-        scale = 0.03  # arrow length
+    if args.show_frames and have_rpy:
+        idxs = np.linspace(0, len(traj) - 1, num=min(6, len(traj)), dtype=int)
+        scale = 0.03
         for i in idxs:
             R = _rpy_deg_to_matrix(r[i], pch[i], yv[i])
             o = np.array([x[i], y[i], z[i]])
-            # Draw x (red), y (green), z (blue) axes of the EE
-            ax3d.quiver(o[0], o[1], o[2], R[0, 0], R[1, 0], R[2, 0], length=scale, color="r", alpha=0.7)
-            ax3d.quiver(o[0], o[1], o[2], R[0, 1], R[1, 1], R[2, 1], length=scale, color="g", alpha=0.7)
-            ax3d.quiver(o[0], o[1], o[2], R[0, 2], R[1, 2], R[2, 2], length=scale, color="b", alpha=0.7)
+            ax3d.quiver(o[0], o[1], o[2], R[0, 0], R[1, 0], R[2, 0], length=scale, color="r", alpha=0.6)
+            ax3d.quiver(o[0], o[1], o[2], R[0, 1], R[1, 1], R[2, 1], length=scale, color="g", alpha=0.6)
+            ax3d.quiver(o[0], o[1], o[2], R[0, 2], R[1, 2], R[2, 2], length=scale, color="b", alpha=0.6)
 
     # Time plots
     ax = fig.add_subplot(2, 2, 2)
-    ax.plot(t, x, label="x [m] planned")
-    ax.plot(t, y, label="y [m] planned")
-    ax.plot(t, z, label="z [m] planned")
+    ax.plot(t, x, label="x planned", color="C0", linewidth=2.0)
+    ax.plot(t, y, label="y planned", color="C2", linewidth=2.0)
+    ax.plot(t, z, label="z planned", color="C3", linewidth=2.0)
     if have_actual:
-        ax.plot(t_a, x_a, "--", label="x [m] actual")
-        ax.plot(t_a, y_a, "--", label="y [m] actual")
-        ax.plot(t_a, z_a, "--", label="z [m] actual")
+        ax.plot(t_a, x_a, "--", label="x actual", color="C0", alpha=0.8)
+        ax.plot(t_a, y_a, "--", label="y actual", color="C2", alpha=0.8)
+        ax.plot(t_a, z_a, "--", label="z actual", color="C3", alpha=0.8)
     ax.set_xlabel("time [s]")
     ax.set_ylabel("position [m]")
     ax.grid(True, alpha=0.3)
-    ax.legend()
+    ax.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
 
     ax2 = fig.add_subplot(2, 2, 4)
     if have_rpy:
-        ax2.plot(t, r, label="roll [deg] planned")
-        ax2.plot(t, pch, label="pitch [deg] planned")
-        ax2.plot(t, yv, label="yaw [deg] planned")
+        ax2.plot(t, r, label="roll planned", linewidth=1.8)
+        ax2.plot(t, pch, label="pitch planned", linewidth=1.8)
+        ax2.plot(t, yv, label="yaw planned", linewidth=1.8)
     if have_actual and rs_a:
-        ax2.plot(t_a, rs_a, "--", label="roll [deg] actual")
-        ax2.plot(t_a, ps_a, "--", label="pitch [deg] actual")
-        ax2.plot(t_a, ysaw_a, "--", label="yaw [deg] actual")
+        ax2.plot(t_a, rs_a, "--", label="roll actual", alpha=0.8)
+        ax2.plot(t_a, ps_a, "--", label="pitch actual", alpha=0.8)
+        ax2.plot(t_a, ysaw_a, "--", label="yaw actual", alpha=0.8)
     ax2.set_xlabel("time [s]")
     ax2.set_ylabel("orientation [deg]")
     ax2.grid(True, alpha=0.3)
-    ax2.legend()
+    ax2.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), ncol=3, framealpha=0.6)
 
     # Optional error plot if actual present: L2 position error over time
     if have_actual:
@@ -180,11 +181,11 @@ def main() -> None:
         z_a_i = _nearest(t_a, z_a, t)
         err = np.sqrt((x - x_a_i) ** 2 + (y - y_a_i) ** 2 + (z - z_a_i) ** 2)
         ax_err = fig.add_subplot(2, 2, 3)
-        ax_err.plot(t, err, color="C3", label="pos error [m]")
+        ax_err.plot(t, err, color="C4", linewidth=2.0, label="pos error [m]")
         ax_err.set_xlabel("time [s]")
         ax_err.set_ylabel("error [m]")
         ax_err.grid(True, alpha=0.3)
-        ax_err.legend()
+        ax_err.legend(loc="upper left", bbox_to_anchor=(0.0, 1.02), framealpha=0.6)
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
