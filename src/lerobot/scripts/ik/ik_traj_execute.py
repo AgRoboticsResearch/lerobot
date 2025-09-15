@@ -3,6 +3,7 @@
 import argparse
 import math
 import time
+import csv
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -37,6 +38,7 @@ def main() -> None:
     parser.add_argument("--traj-csv", type=Path, required=True, help="CSV file with t,x,y,z[,r,p,y] (deg)")
     parser.add_argument("--preview-only", action="store_true", help="Do not move, only print first/last targets")
     parser.add_argument("--dry-run", action="store_true", help="Compute IK and timings, but do not send commands")
+    parser.add_argument("--record-actual", type=Path, default=None, help="Record measured EE path to CSV (t,x,y,z[,r,p,y])")
 
     # Pre/post moves
     parser.add_argument("--pre-mid", action="store_true", help="Before trajectory, move all joints to mid position")
@@ -123,6 +125,27 @@ def main() -> None:
         robot = SO100Follower(robot_cfg)
         robot.connect(calibrate=False)
 
+    # Small helper to convert rotation matrix to ZYX rpy degrees
+    def _matrix_to_rpy_deg(R: np.ndarray) -> tuple[float, float, float]:
+        # ZYX convention
+        sy = -R[2, 0]
+        sy = float(max(-1.0, min(1.0, sy)))
+        pitch = math.asin(sy)
+        if abs(sy) < 0.9999:
+            roll = math.atan2(R[2, 1], R[2, 2])
+            yaw = math.atan2(R[1, 0], R[0, 0])
+        else:
+            # Gimbal lock
+            roll = math.atan2(-R[0, 2], R[1, 1])
+            yaw = 0.0
+        return (math.degrees(roll), math.degrees(pitch), math.degrees(yaw))
+
+    # Prepare recorder
+    actual_rows: list[list[float]] = []
+    if args.record_actual is not None:
+        # Header: t,x,y,z,roll_deg,pitch_deg,yaw_deg plus joints (deg)
+        pass
+
     # Helper: incremental move to joint target with per-step clamp
     def move_to_joint_target(q_target: np.ndarray, label: str) -> None:
         nonlocal q_prev
@@ -208,6 +231,25 @@ def main() -> None:
                 robot.send_action(action)
                 q_prev = q
 
+                # Record actual measured FK at this step if requested
+                if args.record_actual is not None:
+                    present = robot.bus.sync_read("Present_Position")
+                    try:
+                        q_meas = np.array([present[name] for name in kin.joint_names], dtype=float)
+                    except KeyError:
+                        q_meas = q_prev.copy()
+                    fk_T = kin.forward_kinematics(q_meas)
+                    roll_deg, pitch_deg, yaw_deg = _matrix_to_rpy_deg(fk_T[:3, :3])
+                    actual_rows.append([
+                        float(target_elapsed),
+                        float(fk_T[0, 3]),
+                        float(fk_T[1, 3]),
+                        float(fk_T[2, 3]),
+                        float(roll_deg),
+                        float(pitch_deg),
+                        float(yaw_deg),
+                    ] + [float(v) for v in q_meas.tolist()])
+
         if not args.dry_run:
             print("Trajectory execution finished.")
 
@@ -235,6 +277,16 @@ def main() -> None:
                 pass
 
     finally:
+        # Save actual trajectory if requested
+        if args.record_actual is not None and actual_rows:
+            args.record_actual.parent.mkdir(parents=True, exist_ok=True)
+            with args.record_actual.open("w", newline="") as f:
+                w = csv.writer(f)
+                header = ["t", "x", "y", "z", "roll_deg", "pitch_deg", "yaw_deg"] + [f"{n}_deg" for n in kin.joint_names]
+                w.writerow(header)
+                for row in actual_rows:
+                    w.writerow(row)
+            print(f"Saved actual path to {args.record_actual}")
         try:
             robot.disconnect()
         except Exception:
