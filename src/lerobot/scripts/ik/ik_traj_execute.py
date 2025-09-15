@@ -43,6 +43,7 @@ def main() -> None:
     parser.add_argument("--post-mid", action="store_true", help="After trajectory, move all joints back to mid position")
     parser.add_argument("--return-to-seed", action="store_true", help="After trajectory, return to initial seed posture")
     parser.add_argument("--step-dt", type=float, default=0.02, help="Sleep between incremental joint steps (s)")
+    parser.add_argument("--hold-seconds", type=float, default=0.0, help="Hold at the end before disconnecting (s)")
 
     args = parser.parse_args()
 
@@ -210,15 +211,19 @@ def main() -> None:
             print("Trajectory execution finished.")
 
         # Post-move behavior
+        # Allow both actions in sequence
+        if args.return_to_seed:
+            print("Returning to initial seed posture...")
+            move_to_joint_target(q_seed, label="seed")
         if args.post_mid:
             q_mid = np.zeros_like(q_prev)
             if len(q_mid) >= 6:
                 q_mid[5] = 50.0
             print("Moving back to joint mid position after trajectory...")
             move_to_joint_target(q_mid, label="mid")
-        elif args.return_to_seed:
-            print("Returning to initial seed posture...")
-            move_to_joint_target(q_seed, label="seed")
+
+        if args.hold_seconds and args.hold_seconds > 0:
+            time.sleep(args.hold_seconds)
 
     finally:
         try:
