@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--show-frames", action="store_true", help="Draw small EE orientation frames along path (less clean)")
     parser.add_argument("--show-error", action="store_true", help="Plot position error over time (disabled by default)")
     parser.add_argument("--no-clip", action="store_true", help="Do not clip actual/joints data to planned time range")
+    parser.add_argument("--align-start", action="store_true", help="Translate actual path so its first point matches planned start (plotting only)")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -119,6 +120,15 @@ def main() -> None:
                 rs_a = list(np.array(rs_a)[mask])
                 ps_a = list(np.array(ps_a)[mask])
                 ysaw_a = list(np.array(ysaw_a)[mask])
+
+    # Optional: align actual start to planned start for clearer visual comparison
+    if have_actual and args.align_start and len(x_a) > 0:
+        dx = float(x[0] - x_a[0])
+        dy = float(y[0] - y_a[0])
+        dz = float(z[0] - z_a[0])
+        x_a = x_a + dx
+        y_a = y_a + dy
+        z_a = z_a + dz
 
     fig = plt.figure(figsize=(16, 8))
     fig.suptitle(args.title)
