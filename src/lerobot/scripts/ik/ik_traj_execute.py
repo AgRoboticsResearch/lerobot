@@ -41,6 +41,8 @@ def main() -> None:
     parser.add_argument("--record-actual", type=Path, default=None, help="Record measured/commanded EE path to CSV (t,x,y,z[,r,p,y])")
     parser.add_argument("--record-rate-hz", type=float, default=10.0, help="Max recording rate when --record-actual is set")
     parser.add_argument("--record-commanded", action="store_true", help="Record commanded joints instead of reading bus")
+    parser.add_argument("--record-joints", type=Path, default=None, help="Record only joint states to CSV (t,<joint_deg...>)")
+    parser.add_argument("--record-joints-rate-hz", type=float, default=5.0, help="Max recording rate for --record-joints")
 
     # Pre/post moves
     parser.add_argument("--pre-mid", action="store_true", help="Before trajectory, move all joints to mid position")
@@ -148,6 +150,9 @@ def main() -> None:
         # Header: t,x,y,z,roll_deg,pitch_deg,yaw_deg plus joints (deg)
         pass
     next_record_time = 0.0
+
+    joints_rows: list[list[float]] = []
+    next_joints_record_time = 0.0
 
     # Helper: incremental move to joint target with per-step clamp
     def move_to_joint_target(q_target: np.ndarray, label: str) -> None:
@@ -261,6 +266,18 @@ def main() -> None:
                             float(yaw_deg),
                         ] + [float(v) for v in q_src.tolist()])
 
+                # Lightweight joints-only recorder
+                if args.record_joints is not None:
+                    now_j = time.monotonic() - t0
+                    if now_j >= next_joints_record_time:
+                        next_joints_record_time = now_j + (1.0 / max(1e-3, args.record_joints_rate_hz))
+                        present = robot.bus.sync_read("Present_Position")
+                        try:
+                            q_meas = [float(present[name]) for name in kin.joint_names]
+                        except KeyError:
+                            q_meas = q_prev.tolist()
+                        joints_rows.append([float(now_j)] + q_meas)
+
         if not args.dry_run:
             print("Trajectory execution finished.")
 
@@ -298,6 +315,17 @@ def main() -> None:
                 for row in actual_rows:
                     w.writerow(row)
             print(f"Saved actual path to {args.record_actual}")
+
+        # Save joints-only if requested
+        if args.record_joints is not None and joints_rows:
+            args.record_joints.parent.mkdir(parents=True, exist_ok=True)
+            with args.record_joints.open("w", newline="") as f:
+                w = csv.writer(f)
+                header = ["t", *[f"{n}_deg" for n in kin.joint_names]]
+                w.writerow(header)
+                for row in joints_rows:
+                    w.writerow(row)
+            print(f"Saved joints to {args.record_joints}")
         try:
             robot.disconnect()
         except Exception:

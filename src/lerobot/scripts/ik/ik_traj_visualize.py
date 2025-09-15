@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lerobot.scripts.ik.ik_traj_replay import read_csv_trajectory, _rpy_deg_to_matrix
+from lerobot.model.kinematics import RobotKinematics
 
 
 def main() -> None:
@@ -16,6 +17,11 @@ def main() -> None:
     parser.add_argument("--actual-csv", type=Path, default=None, help="Actual CSV from executor: t,x,y,z,roll_deg,pitch_deg,yaw_deg,...")
     parser.add_argument("--save", type=Path, default=None, help="Save figure to path instead of showing")
     parser.add_argument("--title", type=str, default="Trajectory Visualization", help="Plot title")
+    # For joints-only CSV visualization
+    parser.add_argument("--joints-csv", type=Path, default=None, help="CSV of joints over time (t,<joint_deg...>)")
+    parser.add_argument("--urdf", type=Path, default=None, help="URDF needed to compute FK from joints")
+    parser.add_argument("--target-frame", type=str, default="gripper_frame_link", help="End-effector frame in URDF")
+    parser.add_argument("--joint-names", type=str, default=None, help="Comma-separated joint names to match CSV columns order")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -63,6 +69,36 @@ def main() -> None:
             have_actual = t_a is not None and x_a is not None
         except Exception:
             have_actual = False
+
+    # If joints-csv is provided, compute EE path via FK
+    if args.joints_csv is not None and args.joints_csv.exists():
+        if args.urdf is None:
+            raise SystemExit("--urdf is required when using --joints-csv")
+        joint_names = [n.strip() for n in args.joint_names.split(",")] if args.joint_names else None
+        kin = RobotKinematics(str(args.urdf), args.target_frame, joint_names)
+        import csv as _csv
+        ts_j = []
+        qs_j = []
+        with args.joints_csv.open("r", newline="") as f:
+            reader = _csv.reader(f)
+            header = next(reader, None)
+            for row in reader:
+                if not row:
+                    continue
+                vals = [float(v) for v in row if v != ""]
+                ts_j.append(vals[0])
+                qs_j.append(vals[1:])
+        t_j = np.array(ts_j, dtype=float)
+        qs_j = np.array(qs_j, dtype=float)
+        xs_j, ys_j, zs_j = [], [], []
+        for q in qs_j:
+            T = kin.forward_kinematics(q)
+            xs_j.append(T[0, 3]); ys_j.append(T[1, 3]); zs_j.append(T[2, 3])
+        x_j = np.array(xs_j); y_j = np.array(ys_j); z_j = np.array(zs_j)
+        # Treat as "actual" overlay when plotting
+        have_actual = True
+        t_a, x_a, y_a, z_a = t_j, x_j, y_j, z_j
+        rs_a = ps_a = ysaw_a = []
 
     fig = plt.figure(figsize=(14, 7))
     fig.suptitle(args.title)
