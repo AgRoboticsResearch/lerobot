@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--port", required=True, help="Serial port to connect to the arm, e.g. /dev/ttyUSB0")
     parser.add_argument("--no-degrees", action="store_true", help="If set, do not use degrees mode on motors")
     parser.add_argument("--max-relative-target", type=float, default=None, help="SO100Follower safety cap per joint")
+    parser.add_argument("--robot-id", default="ik_so101", help="Calibration/profile id for the robot")
 
     # Kinematics
     parser.add_argument("--urdf", required=True, help="Path to robot URDF file")
@@ -54,7 +55,7 @@ def main() -> None:
     robot = None
     if args.seed_from_robot:
         robot_cfg = SO100FollowerConfig(
-            id="so100",
+            id=args.robot_id,
             port=args.port,
             cameras={},
             use_degrees=(not args.no_degrees),
@@ -103,7 +104,7 @@ def main() -> None:
     # Robot init (if not already created for seeding)
     if robot is None:
         robot_cfg = SO100FollowerConfig(
-            id="so100",
+            id=args.robot_id,
             port=args.port,
             cameras={},
             use_degrees=(not args.no_degrees),
