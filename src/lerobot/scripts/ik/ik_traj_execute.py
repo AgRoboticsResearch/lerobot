@@ -51,6 +51,9 @@ def main() -> None:
     parser.add_argument("--step-dt", type=float, default=0.02, help="Sleep between incremental joint steps (s)")
     parser.add_argument("--hold-seconds", type=float, default=0.0, help="Hold at the end before disconnecting (s)")
     parser.add_argument("--no-wait-to-exit", action="store_true", help="Exit without waiting for ENTER at the end")
+    # Alignment options
+    parser.add_argument("--align-to-current", action="store_true", help="Shift planned trajectory so first point matches current EE position")
+    parser.add_argument("--move-to-start", action="store_true", help="Before timing, move to the (aligned) first trajectory pose")
 
     args = parser.parse_args()
 
@@ -101,6 +104,16 @@ def main() -> None:
 
     # Orientation for points that have none
     keep_R = kin.forward_kinematics(q_prev)[:3, :3]
+
+    # Optional: compute position shift to align planned start with current EE position
+    traj_shift = np.zeros(3, dtype=float)
+    if args.align_to_current:
+        if len(traj) < 1:
+            raise SystemExit("Trajectory must contain at least one point for alignment")
+        fk_now = kin.forward_kinematics(q_prev)
+        planned_start = np.array(traj[0].pos, dtype=float)
+        current_pos = fk_now[:3, 3]
+        traj_shift = current_pos - planned_start
 
     print(f"Trajectory points: {len(traj)} | First t={traj[0].t:.3f}s, Last t={traj[-1].t:.3f}s")
     print(f"Initial joints (deg): {np.array2string(q_prev, precision=2)}")
@@ -186,6 +199,24 @@ def main() -> None:
         print("Moving to joint mid position before trajectory...")
         move_to_joint_target(q_mid, label="mid")
 
+    # Optional: move to the (aligned) first trajectory pose to avoid initial jump/clamping
+    if args.move_to_start and len(traj) > 0:
+        first = traj[0]
+        if first.rpy_deg is None:
+            T0 = np.eye(4)
+            T0[:3, :3] = keep_R
+            T0[:3, 3] = np.array(first.pos) + traj_shift
+        else:
+            T0 = _pose_from_pos_rpy(tuple(np.array(first.pos) + traj_shift), first.rpy_deg)
+        q0 = kin.inverse_kinematics(
+            current_joint_pos=q_prev,
+            desired_ee_pose=T0,
+            position_weight=args.position_weight,
+            orientation_weight=args.orientation_weight,
+        )
+        print("Moving to first trajectory pose (aligned)...")
+        move_to_joint_target(q0, label="traj_start")
+
     try:
         print("Ready. Press ENTER to start execution...")
         input()
@@ -203,9 +234,9 @@ def main() -> None:
             if p.rpy_deg is None:
                 T = np.eye(4)
                 T[:3, :3] = keep_R
-                T[:3, 3] = np.array(p.pos)
+                T[:3, 3] = np.array(p.pos) + traj_shift
             else:
-                T = _pose_from_pos_rpy(p.pos, p.rpy_deg)
+                T = _pose_from_pos_rpy(tuple(np.array(p.pos) + traj_shift), p.rpy_deg)
 
             # IK
             q = kin.inverse_kinematics(
