@@ -41,6 +41,9 @@ def main() -> None:
 
     # If actual provided, load raw columns via numpy to allow flexible columns
     have_actual = False
+    rs_a: list[float] = []
+    ps_a: list[float] = []
+    ysaw_a: list[float] = []
     if args.actual_csv is not None and args.actual_csv.exists():
         try:
             import csv
@@ -153,7 +156,7 @@ def main() -> None:
         ax2.plot(t, r, label="roll [deg] planned")
         ax2.plot(t, pch, label="pitch [deg] planned")
         ax2.plot(t, yv, label="yaw [deg] planned")
-    if have_actual and len(rs_a) == len(xs_a) and rs_a:
+    if have_actual and rs_a:
         ax2.plot(t_a, rs_a, "--", label="roll [deg] actual")
         ax2.plot(t_a, ps_a, "--", label="pitch [deg] actual")
         ax2.plot(t_a, ysaw_a, "--", label="yaw [deg] actual")
