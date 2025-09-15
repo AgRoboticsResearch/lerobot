@@ -93,14 +93,19 @@ def read_csv_trajectory(path: Path) -> List[TrajPoint]:
 
 def write_csv_trajectory(points: List[TrajPoint], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # If all points include orientation, write 7 columns; otherwise, write 4 columns
+    all_have_rpy = all(p.rpy_deg is not None for p in points)
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["t", "x", "y", "z", "roll_deg", "pitch_deg", "yaw_deg"])
-        for p in points:
-            if p.rpy_deg is None:
-                writer.writerow([p.t, p.pos[0], p.pos[1], p.pos[2], "", "", ""])
-            else:
+        if all_have_rpy:
+            writer.writerow(["t", "x", "y", "z", "roll_deg", "pitch_deg", "yaw_deg"])
+            for p in points:
+                assert p.rpy_deg is not None
                 writer.writerow([p.t, p.pos[0], p.pos[1], p.pos[2], p.rpy_deg[0], p.rpy_deg[1], p.rpy_deg[2]])
+        else:
+            writer.writerow(["t", "x", "y", "z"])
+            for p in points:
+                writer.writerow([p.t, p.pos[0], p.pos[1], p.pos[2]])
 
 
 def save_joint_trajectory_csv(joint_names: List[str], times: List[float], joints_deg: List[np.ndarray], path: Path) -> None:
