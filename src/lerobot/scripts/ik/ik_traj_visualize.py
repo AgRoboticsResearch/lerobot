@@ -26,6 +26,11 @@ def main() -> None:
     parser.add_argument("--show-error", action="store_true", help="Plot position error over time (disabled by default)")
     parser.add_argument("--no-clip", action="store_true", help="Do not clip actual/joints data to planned time range")
     parser.add_argument("--align-start", action="store_true", help="Translate actual path so its first point matches planned start (plotting only)")
+    # IK-from-planned overlay
+    parser.add_argument("--ik-from-traj", action="store_true", help="Compute IK path from planned CSV and overlay")
+    parser.add_argument("--ik-position-weight", type=float, default=1.0, help="IK position weight for overlay")
+    parser.add_argument("--ik-orientation-weight", type=float, default=0.0, help="IK orientation weight for overlay")
+    parser.add_argument("--ik-initial-joints", type=float, nargs="+", default=None, help="Initial joints (deg) for IK overlay")
     args = parser.parse_args()
 
     traj = read_csv_trajectory(args.traj_csv)
@@ -121,6 +126,45 @@ def main() -> None:
                 ps_a = list(np.array(ps_a)[mask])
                 ysaw_a = list(np.array(ysaw_a)[mask])
 
+    # Optional: IK-from-planned overlay path
+    have_ik = False
+    if args.ik_from_traj:
+        if args.urdf is None:
+            raise SystemExit("--urdf is required when using --ik-from-traj")
+        joint_names = [n.strip() for n in args.joint_names.split(",")] if args.joint_names else None
+        kin_ik = RobotKinematics(str(args.urdf), args.target_frame, joint_names)
+        nj = len(kin_ik.joint_names)
+        if args.ik_initial_joints is not None:
+            if len(args.ik_initial_joints) != nj:
+                raise SystemExit(f"--ik-initial-joints length {len(args.ik_initial_joints)} != joint count {nj}")
+            qk_prev = np.array(args.ik_initial_joints, dtype=float)
+        else:
+            qk_prev = np.zeros(nj, dtype=float)
+
+        # If planned has no orientation, keep FK orientation from initial
+        keep_Rk = kin_ik.forward_kinematics(qk_prev)[:3, :3]
+        x_k, y_k, z_k = [], [], []
+        for p in traj:
+            if p.rpy_deg is None:
+                T = np.eye(4)
+                T[:3, :3] = keep_Rk
+                T[:3, 3] = np.array(p.pos)
+            else:
+                T = np.eye(4)
+                T[:3, :3] = _rpy_deg_to_matrix(p.rpy_deg[0], p.rpy_deg[1], p.rpy_deg[2])
+                T[:3, 3] = np.array(p.pos)
+            qk = kin_ik.inverse_kinematics(
+                current_joint_pos=qk_prev,
+                desired_ee_pose=T,
+                position_weight=args.ik_position_weight,
+                orientation_weight=args.ik_orientation_weight,
+            )
+            qk_prev = qk
+            Tk = kin_ik.forward_kinematics(qk)
+            x_k.append(Tk[0, 3]); y_k.append(Tk[1, 3]); z_k.append(Tk[2, 3])
+        x_k = np.array(x_k); y_k = np.array(y_k); z_k = np.array(z_k)
+        have_ik = True
+
     # Optional: align actual start to planned start for clearer visual comparison
     if have_actual and args.align_start and len(x_a) > 0:
         dx = float(x[0] - x_a[0])
@@ -140,6 +184,8 @@ def main() -> None:
     ax3d.plot(x, y, z, color="C0", linewidth=2.5, alpha=0.9, label="planned")
     if have_actual:
         ax3d.plot(x_a, y_a, z_a, color="C1", linewidth=2.0, alpha=0.8, linestyle="--", label="actual")
+    if 'have_ik' in locals() and have_ik:
+        ax3d.plot(x_k, y_k, z_k, color="C5", linewidth=2.0, alpha=0.9, linestyle=":", label="ik-from-planned")
     ax3d.scatter([x[0]], [y[0]], [z[0]], color="green", s=30, label="start")
     ax3d.scatter([x[-1]], [y[-1]], [z[-1]], color="red", s=30, label="end (planned)")
     ax3d.set_xlabel("x [m]")
@@ -197,6 +243,10 @@ def main() -> None:
         ax.plot(t_a, x_a, "--", label="x actual", color="C0", alpha=0.8)
         ax.plot(t_a, y_a, "--", label="y actual", color="C2", alpha=0.8)
         ax.plot(t_a, z_a, "--", label="z actual", color="C3", alpha=0.8)
+    if 'have_ik' in locals() and have_ik:
+        ax.plot(t, x_k, ":", label="x ik", color="C5", alpha=0.9)
+        ax.plot(t, y_k, ":", label="y ik", color="C6", alpha=0.9)
+        ax.plot(t, z_k, ":", label="z ik", color="C7", alpha=0.9)
     ax.set_xlabel("time [s]")
     ax.set_ylabel("position [m]")
     ax.grid(True, alpha=0.3)
