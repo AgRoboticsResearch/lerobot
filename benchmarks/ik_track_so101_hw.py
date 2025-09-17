@@ -46,9 +46,13 @@ def generate_line_traj(center_T: np.ndarray, num_points: int, axis: str, amplitu
     center_pos = center_T[:3, 3].copy()
     t = np.linspace(0.0, 2.0 * math.pi * cycles, N, endpoint=False)
     delta = amplitude_m * np.sin(t)
-    xyz = np.stack([center_pos[0] + (delta if axis == "x" else 0.0),
-                    center_pos[1] + (delta if axis == "y" else 0.0),
-                    center_pos[2] + (delta if axis == "z" else 0.0)], axis=-1)
+    xyz = np.tile(center_pos, (N, 1))
+    if axis == "x":
+        xyz[:, 0] += delta
+    elif axis == "y":
+        xyz[:, 1] += delta
+    else:
+        xyz[:, 2] += delta
     poses[:, 0, 3] = xyz[:, 0]
     poses[:, 1, 3] = xyz[:, 1]
     poses[:, 2, 3] = xyz[:, 2]
