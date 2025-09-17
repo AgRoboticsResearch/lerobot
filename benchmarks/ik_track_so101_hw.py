@@ -49,9 +49,6 @@ def main():
     parser.add_argument("--position_weight", type=float, default=1.0)
     parser.add_argument("--orientation_weight", type=float, default=0.0)
     parser.add_argument("--max_relative_target_deg", type=float, default=5.0, help="Safety cap per joint per step")
-    parser.add_argument("--move_to_mid", action="store_true", help="Move to mid-range joint configuration before starting trajectory")
-    parser.add_argument("--move_to_mid_timeout_s", type=float, default=20.0)
-    parser.add_argument("--move_to_mid_tolerance_deg", type=float, default=2.0)
     parser.add_argument("--out_dir", type=str, default="./ik_track_hw_out")
     args = parser.parse_args()
 
@@ -84,43 +81,7 @@ def main():
     q_meas = np.array([present[n] for n in joint_names], dtype=np.float64)
     gripper_pos = float(present["gripper"])  # keep gripper constant
 
-    # Optionally move to mid-range configuration using calibration ranges
-    if args.move_to_mid:
-        if getattr(robot, "calibration", None):
-            mid_targets = np.array(
-                [
-                    (robot.calibration[name].range_min + robot.calibration[name].range_max) / 2.0
-                    for name in joint_names
-                ],
-                dtype=np.float64,
-            )
-        else:
-            # Fallback: keep current if no calibration info
-            mid_targets = q_meas.copy()
-
-        action = {f"{name}.pos": float(val) for name, val in zip(joint_names, mid_targets)}
-        action["gripper.pos"] = gripper_pos
-        robot.send_action(action)
-
-        # Wait until close or timeout
-        t0 = time.perf_counter()
-        while time.perf_counter() - t0 < args.move_to_mid_timeout_s:
-            present = robot.bus.sync_read("Present_Position")
-            q_now = np.array([present[n] for n in joint_names], dtype=np.float64)
-            if np.max(np.abs(q_now - mid_targets)) <= args.move_to_mid_tolerance_deg:
-                q_meas = q_now
-                break
-            time.sleep(1.0 / max(args.fps, 1.0))
-
-    # Record start (mid) joints and EE pose
-    start_mid_joints_deg = q_meas.copy()
-    start_mid_T = kin.forward_kinematics(start_mid_joints_deg)
-    start_mid_ee_xyz = start_mid_T[:3, 3].copy()
-    # Save a small CSV for the starting pose
-    with open(out_dir / "start_mid_pose.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([*joint_names, "ee_x", "ee_y", "ee_z"]) 
-        writer.writerow([*start_mid_joints_deg.tolist(), *start_mid_ee_xyz.tolist()])
+    # Start pose is whatever is measured now
 
     center_T = kin.forward_kinematics(q_meas)
     desired_poses = generate_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
@@ -210,8 +171,6 @@ def main():
         achieved_xyz=achieved_xyz,
         commanded_joints_deg=commanded_joints,
         measured_joints_deg=measured_joints,
-        start_mid_joints_deg=start_mid_joints_deg,
-        start_mid_ee_xyz=start_mid_ee_xyz,
         position_error=pos_err,
         position_error_norm=pos_err_norm,
         config=json.dumps({
