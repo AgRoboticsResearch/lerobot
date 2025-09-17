@@ -205,10 +205,12 @@ def main():
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-        fig = plt.figure(figsize=(6, 6))
+        fig = plt.figure(figsize=(7, 7))
         ax = fig.add_subplot(111, projection="3d")
-        ax.plot(desired_xyz[:, 0], desired_xyz[:, 1], desired_xyz[:, 2], label="desired", c="C0")
+        ax.plot(desired_xyz[:, 0], desired_xyz[:, 1], desired_xyz[:, 2], label="planned", c="C0")
         ax.plot(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="C1")
+        if 'expected_xyz' in locals() or 'expected_xyz' in globals():
+            ax.plot(expected_xyz[:, 0], expected_xyz[:, 1], expected_xyz[:, 2], label="ik_pred", c="C2")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Z [m]")
