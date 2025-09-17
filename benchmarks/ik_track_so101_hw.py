@@ -49,6 +49,8 @@ def main():
     parser.add_argument("--position_weight", type=float, default=1.0)
     parser.add_argument("--orientation_weight", type=float, default=0.0)
     parser.add_argument("--max_relative_target_deg", type=float, default=5.0, help="Safety cap per joint per step")
+    parser.add_argument("--ramp_in_s", type=float, default=1.0, help="Seconds to ramp from current pose to first planned point before main trajectory")
+    parser.add_argument("--ramp_orientation", action="store_true", help="If set, ramp orientation weight from 0 to --orientation_weight during ramp-in")
     parser.add_argument("--out_dir", type=str, default="./ik_track_hw_out")
     args = parser.parse_args()
 
@@ -94,6 +96,50 @@ def main():
 
     dt = 1.0 / args.fps
     try:
+        # Optional ramp-in to avoid large first step
+        ramp_steps = int(max(0.0, args.ramp_in_s) * args.fps)
+        if ramp_steps > 0 and desired_poses.shape[0] > 0:
+            T_start = center_T.copy()
+            T_first = desired_poses[0]
+            for k in range(ramp_steps):
+                step_start = time.perf_counter()
+                alpha = (k + 1) / ramp_steps
+
+                # Blend position; keep orientation equal to start (trajectory already uses start orientation)
+                T_blend = np.eye(4)
+                T_blend[:3, :3] = T_start[:3, :3]
+                T_blend[:3, 3] = (1 - alpha) * T_start[:3, 3] + alpha * T_first[:3, 3]
+
+                present_seed = robot.bus.sync_read("Present_Position")
+                q_seed = np.array([present_seed[n] for n in joint_names], dtype=np.float64)
+
+                ow = args.orientation_weight * alpha if args.ramp_orientation else 0.0
+                q_cmd = kin.inverse_kinematics(
+                    current_joint_pos=q_seed,
+                    desired_ee_pose=T_blend,
+                    position_weight=args.position_weight,
+                    orientation_weight=ow,
+                )
+
+                T_cmd = kin.forward_kinematics(q_cmd)
+                action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
+                action["gripper.pos"] = gripper_pos
+                robot.send_action(action)
+
+                remaining = dt - (time.perf_counter() - step_start)
+                if remaining > 0:
+                    time.sleep(remaining)
+
+                present_meas = robot.bus.sync_read("Present_Position")
+                q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                T_meas = kin.forward_kinematics(q_meas)
+
+                desired_xyz.append(T_blend[:3, 3].copy())
+                achieved_xyz.append(T_meas[:3, 3].copy())
+                expected_xyz.append(T_cmd[:3, 3].copy())
+                commanded_joints.append(q_cmd.copy())
+                measured_joints.append(q_meas.copy())
+
         for i, T_des in enumerate(desired_poses):
             step_start = time.perf_counter()
 
