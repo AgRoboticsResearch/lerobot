@@ -93,6 +93,7 @@ def main():
     parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
     parser.add_argument("--line_amplitude_m", type=float, default=0.05)
     parser.add_argument("--num_points_per_axis", type=int, default=None, help="Override points per axis for line_xyz")
+    parser.add_argument("--two_phase", action="store_true", help="Phase 1: line_xyz with orientation_weight=0, then Phase 2: curve using provided orientation_weight")
     parser.add_argument("--radius_m", type=float, default=0.03)
     parser.add_argument("--z_amplitude_m", type=float, default=0.02)
     parser.add_argument("--cycles", type=float, default=1.0)
@@ -136,12 +137,28 @@ def main():
     # Start pose is whatever is measured now
 
     center_T = kin.forward_kinematics(q_meas)
-    if args.traj_type == "circle":
-        desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
-    elif args.traj_type == "line":
-        desired_poses = generate_line_traj(center_T, args.num_points, args.line_axis, args.line_amplitude_m, args.cycles)
+    # Build desired poses and per-step orientation weights
+    if args.two_phase:
+        n1 = max(1, args.num_points // 2)
+        n2 = max(1, args.num_points - n1)
+        phase1 = generate_line_xyz_traj(center_T, n1, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
+        # Phase 2 uses the selected traj_type (default circle)
+        if args.traj_type == "circle":
+            phase2 = generate_circle_traj(center_T, n2, args.radius_m, args.z_amplitude_m, args.cycles)
+        elif args.traj_type == "line":
+            phase2 = generate_line_traj(center_T, n2, args.line_axis, args.line_amplitude_m, args.cycles)
+        else:
+            phase2 = generate_line_xyz_traj(center_T, n2, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
+        desired_poses = np.concatenate([phase1, phase2], axis=0)
+        ow_sequence = [0.0] * n1 + [args.orientation_weight] * n2
     else:
-        desired_poses = generate_line_xyz_traj(center_T, args.num_points, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
+        if args.traj_type == "circle":
+            desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
+        elif args.traj_type == "line":
+            desired_poses = generate_line_traj(center_T, args.num_points, args.line_axis, args.line_amplitude_m, args.cycles)
+        else:
+            desired_poses = generate_line_xyz_traj(center_T, args.num_points, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
+        ow_sequence = [args.orientation_weight] * desired_poses.shape[0]
 
     achieved_xyz = []
     desired_xyz = []
@@ -207,7 +224,7 @@ def main():
                 current_joint_pos=q_seed,
                 desired_ee_pose=T_des,
                 position_weight=args.position_weight,
-                orientation_weight=args.orientation_weight,
+                orientation_weight=ow_sequence[i],
             )
 
             # Predicted EE pose from IK command
