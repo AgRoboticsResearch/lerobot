@@ -141,7 +141,8 @@ def main():
     if args.two_phase:
         n1 = max(1, args.num_points // 2)
         n2 = max(1, args.num_points - n1)
-        phase1 = generate_line_xyz_traj(center_T, n1, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
+        # For phase 1, ensure total points equals n1 irrespective of per-axis override
+        phase1 = generate_line_xyz_traj(center_T, n1, args.line_amplitude_m, args.cycles, per_axis_points=None)
         # Phase 2 uses the selected traj_type (default circle)
         if args.traj_type == "circle":
             phase2 = generate_circle_traj(center_T, n2, args.radius_m, args.z_amplitude_m, args.cycles)
@@ -150,7 +151,7 @@ def main():
         else:
             phase2 = generate_line_xyz_traj(center_T, n2, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
         desired_poses = np.concatenate([phase1, phase2], axis=0)
-        ow_sequence = [0.0] * n1 + [args.orientation_weight] * n2
+        ow_sequence = [0.0] * phase1.shape[0] + [args.orientation_weight] * phase2.shape[0]
     else:
         if args.traj_type == "circle":
             desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
