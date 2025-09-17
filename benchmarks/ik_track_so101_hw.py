@@ -88,6 +88,7 @@ def main():
 
     achieved_xyz = []
     desired_xyz = []
+    expected_xyz = []
     commanded_joints = []
     measured_joints = []
 
@@ -108,6 +109,9 @@ def main():
                 orientation_weight=args.orientation_weight,
             )
 
+            # Predicted EE pose from IK command
+            T_cmd = kin.forward_kinematics(q_cmd)
+
             action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
             action["gripper.pos"] = gripper_pos
             robot.send_action(action)
@@ -124,6 +128,7 @@ def main():
 
             desired_xyz.append(T_des[:3, 3].copy())
             achieved_xyz.append(T_meas[:3, 3].copy())
+            expected_xyz.append(T_cmd[:3, 3].copy())
             commanded_joints.append(q_cmd.copy())
             measured_joints.append(q_meas.copy())
 
@@ -154,6 +159,7 @@ def main():
             "idx",
             "des_x","des_y","des_z",
             "ach_x","ach_y","ach_z",
+            "exp_x","exp_y","exp_z",
             "err_x","err_y","err_z","err_norm",
         ] + [f"q{i}_cmd_deg" for i in range(commanded_joints.shape[1])] + [f"q{i}_meas_deg" for i in range(measured_joints.shape[1])]
         writer.writerow(header)
@@ -162,6 +168,7 @@ def main():
                 i,
                 desired_xyz[i, 0], desired_xyz[i, 1], desired_xyz[i, 2],
                 achieved_xyz[i, 0], achieved_xyz[i, 1], achieved_xyz[i, 2],
+                expected_xyz[i, 0], expected_xyz[i, 1], expected_xyz[i, 2],
                 pos_err[i, 0], pos_err[i, 1], pos_err[i, 2], pos_err_norm[i],
             ] + list(commanded_joints[i]) + list(measured_joints[i])
             writer.writerow(row)
@@ -171,6 +178,7 @@ def main():
         out_dir / "hw_ik_track_results.npz",
         desired_xyz=desired_xyz,
         achieved_xyz=achieved_xyz,
+        expected_xyz=expected_xyz,
         commanded_joints_deg=commanded_joints,
         measured_joints_deg=measured_joints,
         position_error=pos_err,
