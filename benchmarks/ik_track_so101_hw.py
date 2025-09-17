@@ -59,6 +59,28 @@ def generate_line_traj(center_T: np.ndarray, num_points: int, axis: str, amplitu
     return poses
 
 
+def generate_line_xyz_traj(center_T: np.ndarray, num_points_total: int, amplitude_m: float, cycles: float, per_axis_points: int | None = None) -> np.ndarray:
+    """Concatenate straight-line segments along X, Y, and Z (in that order).
+
+    - Each segment is a sinusoidal sweep around the center along a single axis,
+      keeping orientation fixed at center_T.
+    - If per_axis_points is None, points are split evenly among axes.
+    """
+    if per_axis_points is None:
+        base = max(1, num_points_total // 3)
+        remainder = max(0, num_points_total - base * 3)
+        counts = [base, base, base]
+        for i in range(remainder):
+            counts[i] += 1
+    else:
+        counts = [per_axis_points, per_axis_points, per_axis_points]
+
+    segs = []
+    for axis, n in zip(["x", "y", "z"], counts, strict=False):
+        segs.append(generate_line_traj(center_T, n, axis, amplitude_m, cycles))
+    return np.concatenate(segs, axis=0)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Track a planned EE trajectory on real SO101 using IK.")
     parser.add_argument("--urdf_path", type=str, required=True)
@@ -67,9 +89,10 @@ def main():
     parser.add_argument("--joint_names", type=str, default="shoulder_pan,shoulder_lift,elbow_flex,wrist_flex,wrist_roll")
     parser.add_argument("--fps", type=float, default=15.0)
     parser.add_argument("--num_points", type=int, default=200)
-    parser.add_argument("--traj_type", type=str, choices=["circle", "line"], default="circle")
+    parser.add_argument("--traj_type", type=str, choices=["circle", "line", "line_xyz"], default="circle")
     parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
     parser.add_argument("--line_amplitude_m", type=float, default=0.05)
+    parser.add_argument("--num_points_per_axis", type=int, default=None, help="Override points per axis for line_xyz")
     parser.add_argument("--radius_m", type=float, default=0.03)
     parser.add_argument("--z_amplitude_m", type=float, default=0.02)
     parser.add_argument("--cycles", type=float, default=1.0)
@@ -115,8 +138,10 @@ def main():
     center_T = kin.forward_kinematics(q_meas)
     if args.traj_type == "circle":
         desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
-    else:
+    elif args.traj_type == "line":
         desired_poses = generate_line_traj(center_T, args.num_points, args.line_axis, args.line_amplitude_m, args.cycles)
+    else:
+        desired_poses = generate_line_xyz_traj(center_T, args.num_points, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
 
     achieved_xyz = []
     desired_xyz = []
