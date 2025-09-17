@@ -96,34 +96,36 @@ def main():
         for i, T_des in enumerate(desired_poses):
             step_start = time.perf_counter()
 
-            # Read current joints for IK seed and logging
-            present = robot.bus.sync_read("Present_Position")
-            q_meas = np.array([present[n] for n in joint_names], dtype=np.float64)
-            measured_joints.append(q_meas.copy())
-
-            # Log current achieved position (before issuing new command)
-            T_meas = kin.forward_kinematics(q_meas)
-            achieved_xyz.append(T_meas[:3, 3].copy())
-            desired_xyz.append(T_des[:3, 3].copy())
+            # Read current joints for IK seed
+            present_seed = robot.bus.sync_read("Present_Position")
+            q_seed = np.array([present_seed[n] for n in joint_names], dtype=np.float64)
 
             # IK to next desired pose (position-only by default)
             q_cmd = kin.inverse_kinematics(
-                current_joint_pos=q_meas,
+                current_joint_pos=q_seed,
                 desired_ee_pose=T_des,
                 position_weight=args.position_weight,
                 orientation_weight=args.orientation_weight,
             )
-            commanded_joints.append(q_cmd.copy())
 
             action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
             action["gripper.pos"] = gripper_pos
-
             robot.send_action(action)
 
-            # Timing
+            # Wait for motion to execute
             remaining = dt - (time.perf_counter() - step_start)
             if remaining > 0:
                 time.sleep(remaining)
+
+            # Record achieved state after the command
+            present_meas = robot.bus.sync_read("Present_Position")
+            q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+            T_meas = kin.forward_kinematics(q_meas)
+
+            desired_xyz.append(T_des[:3, 3].copy())
+            achieved_xyz.append(T_meas[:3, 3].copy())
+            commanded_joints.append(q_cmd.copy())
+            measured_joints.append(q_meas.copy())
 
     except KeyboardInterrupt:
         print("[INFO] Stopped by user.")
