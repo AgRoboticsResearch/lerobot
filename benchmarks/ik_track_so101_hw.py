@@ -21,7 +21,7 @@ from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 
 
-def generate_traj(center_T: np.ndarray, num_points: int, radius_m: float, z_amplitude_m: float, cycles: float) -> np.ndarray:
+def generate_circle_traj(center_T: np.ndarray, num_points: int, radius_m: float, z_amplitude_m: float, cycles: float) -> np.ndarray:
     N = num_points
     poses = np.repeat(center_T[None, :, :], N, axis=0)
     center_pos = center_T[:3, 3].copy()
@@ -35,6 +35,26 @@ def generate_traj(center_T: np.ndarray, num_points: int, radius_m: float, z_ampl
     return poses
 
 
+def generate_line_traj(center_T: np.ndarray, num_points: int, axis: str, amplitude_m: float, cycles: float) -> np.ndarray:
+    """Generate a straight-line EE path along one axis with smooth reversals.
+
+    The EE moves along a line segment of length 2*amplitude_m centered at center_T position,
+    following a sinusoidal progression (smooth turnarounds), so it always stays on a straight line.
+    """
+    N = num_points
+    poses = np.repeat(center_T[None, :, :], N, axis=0)
+    center_pos = center_T[:3, 3].copy()
+    t = np.linspace(0.0, 2.0 * math.pi * cycles, N, endpoint=False)
+    delta = amplitude_m * np.sin(t)
+    xyz = np.stack([center_pos[0] + (delta if axis == "x" else 0.0),
+                    center_pos[1] + (delta if axis == "y" else 0.0),
+                    center_pos[2] + (delta if axis == "z" else 0.0)], axis=-1)
+    poses[:, 0, 3] = xyz[:, 0]
+    poses[:, 1, 3] = xyz[:, 1]
+    poses[:, 2, 3] = xyz[:, 2]
+    return poses
+
+
 def main():
     parser = argparse.ArgumentParser(description="Track a planned EE trajectory on real SO101 using IK.")
     parser.add_argument("--urdf_path", type=str, required=True)
@@ -43,6 +63,9 @@ def main():
     parser.add_argument("--joint_names", type=str, default="shoulder_pan,shoulder_lift,elbow_flex,wrist_flex,wrist_roll")
     parser.add_argument("--fps", type=float, default=15.0)
     parser.add_argument("--num_points", type=int, default=200)
+    parser.add_argument("--traj_type", type=str, choices=["circle", "line"], default="circle")
+    parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
+    parser.add_argument("--line_amplitude_m", type=float, default=0.05)
     parser.add_argument("--radius_m", type=float, default=0.03)
     parser.add_argument("--z_amplitude_m", type=float, default=0.02)
     parser.add_argument("--cycles", type=float, default=1.0)
@@ -86,7 +109,10 @@ def main():
     # Start pose is whatever is measured now
 
     center_T = kin.forward_kinematics(q_meas)
-    desired_poses = generate_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
+    if args.traj_type == "circle":
+        desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
+    else:
+        desired_poses = generate_line_traj(center_T, args.num_points, args.line_axis, args.line_amplitude_m, args.cycles)
 
     achieved_xyz = []
     desired_xyz = []
