@@ -139,6 +139,7 @@ def main():
 
     achieved_xyz = np.stack(achieved_xyz, axis=0)
     desired_xyz = np.stack(desired_xyz, axis=0)
+    expected_xyz = np.stack(expected_xyz, axis=0)
     commanded_joints = np.stack(commanded_joints, axis=0)
     measured_joints = np.stack(measured_joints, axis=0)
 
