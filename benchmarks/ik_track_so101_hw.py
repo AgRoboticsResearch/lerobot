@@ -561,11 +561,11 @@ def main():
                 # If we sampled specific indices, highlight them
                 if 'tested_indices' in locals() and tested_indices:
                     pts = planned_full_xyz[np.array(tested_indices)]
-                    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="C0", s=30, marker="o", label="chosen_points")
+                    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="r", s=36, marker="o", label="chosen_points")
             except Exception:
                 pass
         # Achieved measurements as points (no connecting line)
-        ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="r", s=30, marker="x")
+        ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="g", s=36, marker="o")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Z [m]")
