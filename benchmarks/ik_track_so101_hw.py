@@ -110,6 +110,11 @@ def main():
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
     parser.add_argument("--snap_to_degrees", type=str, default=None, help="Comma-separated degrees d1,..,d5 to snap to before execution")
     parser.add_argument("--hold_after_snap_s", type=float, default=0.2, help="Optional settle/hold time after snap completes before recording starts")
+    # Random reach-test options (use with --joint_traj_npz)
+    parser.add_argument("--sample_points", type=int, default=None, help="Randomly sample K targets from the precomputed joint trajectory and test reachability")
+    parser.add_argument("--sample_seed", type=int, default=0)
+    parser.add_argument("--reach_tolerance_deg", type=float, default=2.0, help="Tolerance to accept a target as reached (max abs joint error)")
+    parser.add_argument("--reach_timeout_s", type=float, default=3.0, help="Max time per target")
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
     parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
@@ -351,30 +356,71 @@ def main():
             achieved_xyz.clear(); desired_xyz.clear(); expected_xyz.clear()
             commanded_joints.clear(); measured_joints.clear()
 
-            # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
-            for i, q_cmd in enumerate(precomputed_joint_traj):
-                step_start = time.perf_counter()
+            # If sampling is requested, pick random targets and test reachability; else play full trajectory
+            if args.sample_points:
+                rng = np.random.default_rng(args.sample_seed)
+                N = precomputed_joint_traj.shape[0]
+                idxs = rng.choice(N, size=min(args.sample_points, N), replace=False)
+                # Log file for reach test
+                reach_csv = out_dir / "reach_test.csv"
+                with open(reach_csv, "w", newline="") as f:
+                    import csv as _csv
+                    w = _csv.writer(f)
+                    w.writerow(["idx","reached","max_abs_err_deg"])  # per-point summary
 
-                # Predicted EE pose from joints (planned)
-                T_cmd = kin.forward_kinematics(q_cmd)
+                    for i in sorted(idxs.tolist()):
+                        q_cmd = precomputed_joint_traj[i]
+                        # Command target repeatedly until tolerance or timeout
+                        t0 = time.perf_counter()
+                        reached = False
+                        max_err = None
+                        while time.perf_counter() - t0 < args.reach_timeout_s:
+                            action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
+                            action["gripper.pos"] = gripper_pos
+                            robot.send_action(action)
+                            present_meas = robot.bus.sync_read("Present_Position")
+                            q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                            err = np.abs(q_meas - q_cmd)
+                            max_err = float(np.max(err))
+                            if max_err <= args.reach_tolerance_deg:
+                                reached = True
+                                break
+                            time.sleep(0.02)
 
-                action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
-                action["gripper.pos"] = gripper_pos
-                robot.send_action(action)
+                        # Log kinematics and record
+                        T_cmd = kin.forward_kinematics(q_cmd)
+                        T_meas = kin.forward_kinematics(q_meas)
+                        desired_xyz.append(T_cmd[:3, 3].copy())
+                        achieved_xyz.append(T_meas[:3, 3].copy())
+                        expected_xyz.append(T_cmd[:3, 3].copy())
+                        commanded_joints.append(q_cmd.copy())
+                        measured_joints.append(q_meas.copy())
+                        w.writerow([i, int(reached), max_err if max_err is not None else "NA"])  # noqa: T201
+            else:
+                # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
+                for i, q_cmd in enumerate(precomputed_joint_traj):
+                    step_start = time.perf_counter()
 
-                remaining = dt - (time.perf_counter() - step_start)
-                if remaining > 0:
-                    time.sleep(remaining)
+                    # Predicted EE pose from joints (planned)
+                    T_cmd = kin.forward_kinematics(q_cmd)
 
-                present_meas = robot.bus.sync_read("Present_Position")
-                q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
-                T_meas = kin.forward_kinematics(q_meas)
+                    action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
+                    action["gripper.pos"] = gripper_pos
+                    robot.send_action(action)
 
-                desired_xyz.append(T_cmd[:3, 3].copy())
-                achieved_xyz.append(T_meas[:3, 3].copy())
-                expected_xyz.append(T_cmd[:3, 3].copy())
-                commanded_joints.append(q_cmd.copy())
-                measured_joints.append(q_meas.copy())
+                    remaining = dt - (time.perf_counter() - step_start)
+                    if remaining > 0:
+                        time.sleep(remaining)
+
+                    present_meas = robot.bus.sync_read("Present_Position")
+                    q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                    T_meas = kin.forward_kinematics(q_meas)
+
+                    desired_xyz.append(T_cmd[:3, 3].copy())
+                    achieved_xyz.append(T_meas[:3, 3].copy())
+                    expected_xyz.append(T_cmd[:3, 3].copy())
+                    commanded_joints.append(q_cmd.copy())
+                    measured_joints.append(q_meas.copy())
         else:
             for i, T_des in enumerate(desired_poses):
                 step_start = time.perf_counter()
