@@ -31,7 +31,7 @@ class EvalConfig:
     mid_joints_deg: list[float] | None = None
     # Trajectory params
     traj_type: str = "circle"  # circle | line | line_xyz
-    line_axis: str = "x"  # x | y | z
+    line_axis: str = "z"  # x | y | z
     line_amplitude_m: float = 0.05
     num_points_per_axis: int | None = None
     num_points: int = 200
