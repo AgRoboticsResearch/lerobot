@@ -32,7 +32,7 @@ def main():
     )
     parser.add_argument("--urdf_path", type=str, required=True)
     parser.add_argument("--port", type=str, required=True)
-    parser.add_argument("--degrees", type=str, required=True, help="Comma-separated 5 joint degrees")
+    parser.add_argument("--degrees", type=str, required=False, help="Comma-separated 5 joint degrees (single-point mode)")
     parser.add_argument("--target_frame_name", type=str, default="gripper_frame_link")
     parser.add_argument(
         "--joint_names",
@@ -46,6 +46,11 @@ def main():
     parser.add_argument("--plot_units", type=str, choices=["m", "cm"], default="cm", help="Units for plot axes (keeps JSON in meters)")
     parser.add_argument("--context_box_cm", type=float, default=20.0, help="Context cube size around point (cm) for the context plot")
     parser.add_argument("--zoom_box_cm", type=float, default=3.0, help="Zoom cube size (cm) around the points for the zoom plot")
+    # Multi-point options from ik_eval_out
+    parser.add_argument("--joint_traj_npz", type=str, default=None, help="Path to ik_eval_out/ik_eval_results.npz (expects key 'ik_joints_deg')")
+    parser.add_argument("--sample_points", type=int, default=None, help="Randomly sample K indices from NPZ trajectory")
+    parser.add_argument("--test_point_indices", type=str, default=None, help="Comma-separated indices into the NPZ joint trajectory")
+    parser.add_argument("--sample_seed", type=int, default=0)
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -55,7 +60,9 @@ def main():
     if len(joint_names) != 5:
         raise ValueError("This script assumes 5 DoF (5 joint_names)")
 
-    q_target = parse_degrees_list(args.degrees, expected_len=len(joint_names))
+    q_target = None
+    if args.degrees is not None:
+        q_target = parse_degrees_list(args.degrees, expected_len=len(joint_names))
 
     # Initialize hardware robot
     robot_cfg = SO101FollowerConfig(
@@ -76,7 +83,137 @@ def main():
 
     robot.connect()
     try:
-        # Command the target and wait until within tolerance
+        # If NPZ is provided, run multi-point comparison; otherwise single-point mode using --degrees
+        if args.joint_traj_npz is not None:
+            data = np.load(args.joint_traj_npz, allow_pickle=True)
+            if "ik_joints_deg" not in data:
+                raise ValueError("NPZ must contain 'ik_joints_deg'")
+            traj = data["ik_joints_deg"]
+            if traj.shape[1] != len(joint_names):
+                raise ValueError("Joint count mismatch in NPZ vs joint_names")
+
+            # Planned full curve in EE if available
+            planned_full_xyz = None
+            ee_path = Path(args.joint_traj_npz).parent / "ee_points.npy"
+            if ee_path.exists():
+                try:
+                    planned_full_xyz = np.load(ee_path)
+                except Exception:
+                    planned_full_xyz = None
+            if planned_full_xyz is None:
+                pts = [kin.forward_kinematics(q)[:3, 3] for q in traj]
+                planned_full_xyz = np.asarray(pts)
+
+            # Select indices
+            if args.test_point_indices:
+                indices = [int(x) for x in args.test_point_indices.split(",")]
+            elif args.sample_points:
+                rng = np.random.default_rng(args.sample_seed)
+                N = traj.shape[0]
+                indices = rng.choice(N, size=min(args.sample_points, N), replace=False).tolist()
+            else:
+                # default: use all
+                indices = list(range(traj.shape[0]))
+
+            chosen_xyz = []
+            achieved_xyz = []
+            chosen_q = []
+            measured_q = []
+
+            gripper_pos = robot.bus.sync_read("Present_Position")["gripper"]
+            for i in indices:
+                q_t = traj[i]
+                action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_t)}
+                action["gripper.pos"] = gripper_pos
+
+                t0 = time.perf_counter()
+                while time.perf_counter() - t0 < args.snap_timeout_s:
+                    robot.send_action(action)
+                    present = robot.bus.sync_read("Present_Position")
+                    q_meas = np.array([present[n] for n in joint_names], dtype=np.float64)
+                    if np.max(np.abs(q_meas - q_t)) <= args.snap_tolerance_deg:
+                        break
+                    time.sleep(0.02)
+
+                T_t = kin.forward_kinematics(q_t)
+                T_m = kin.forward_kinematics(q_meas)
+                chosen_xyz.append(T_t[:3, 3].copy())
+                achieved_xyz.append(T_m[:3, 3].copy())
+                chosen_q.append(q_t.copy())
+                measured_q.append(q_meas.copy())
+
+            chosen_xyz = np.asarray(chosen_xyz)
+            achieved_xyz = np.asarray(achieved_xyz)
+            chosen_q = np.asarray(chosen_q)
+            measured_q = np.asarray(measured_q)
+            pos_err = achieved_xyz - chosen_xyz
+            pos_err_norm = np.linalg.norm(pos_err, axis=1)
+
+            # Save CSV summary
+            import csv as _csv
+            with open(out_dir / "fk_compare_multi.csv", "w", newline="") as f:
+                w = _csv.writer(f)
+                header = [
+                    "idx","t_x","t_y","t_z","m_x","m_y","m_z","e_x","e_y","e_z","e_norm",
+                ] + [f"t_q{i}" for i in range(chosen_q.shape[1])] + [f"m_q{i}" for i in range(measured_q.shape[1])]
+                w.writerow(header)
+                for row_i, idx in enumerate(indices):
+                    w.writerow([
+                        idx,
+                        *chosen_xyz[row_i].tolist(),
+                        *achieved_xyz[row_i].tolist(),
+                        *pos_err[row_i].tolist(),
+                        float(pos_err_norm[row_i]),
+                        *chosen_q[row_i].tolist(),
+                        *measured_q[row_i].tolist(),
+                    ])
+
+            # Plot overlay: planned curve (blue), chosen points (red), achieved (green) + connections
+            try:
+                import matplotlib.pyplot as plt
+                from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+                scale = 100.0 if args.plot_units == "cm" else 1.0
+                unit_label = "cm" if args.plot_units == "cm" else "m"
+                curve = planned_full_xyz * scale
+                ch = chosen_xyz * scale
+                ac = achieved_xyz * scale
+
+                fig = plt.figure(figsize=(7, 7))
+                ax = fig.add_subplot(111, projection="3d")
+                ax.plot(curve[:,0], curve[:,1], curve[:,2], c="C0", alpha=0.6, label="planned_curve")
+                ax.scatter(ch[:,0], ch[:,1], ch[:,2], c="r", s=36, label="chosen_points")
+                ax.scatter(ac[:,0], ac[:,1], ac[:,2], c="g", s=36, label="achieved")
+                for k in range(ch.shape[0]):
+                    ax.plot([ch[k,0], ac[k,0]],[ch[k,1], ac[k,1]],[ch[k,2], ac[k,2]], c="g", alpha=0.4)
+                ax.set_xlabel(f"X [{unit_label}]")
+                ax.set_ylabel(f"Y [{unit_label}]")
+                ax.set_zlabel(f"Z [{unit_label}]")
+                ax.legend()
+                fig.tight_layout()
+                fig.savefig(out_dir / "fk_compare_multi_plot.png", dpi=150)
+                plt.close(fig)
+            except Exception as e:
+                print(f"[WARN] Plotting failed: {e}")
+
+            # Save JSON aggregate
+            summary = {
+                "indices": indices,
+                "mean_err_m": float(pos_err_norm.mean()),
+                "median_err_m": float(np.median(pos_err_norm)),
+                "max_err_m": float(pos_err_norm.max()),
+                "min_err_m": float(pos_err_norm.min()),
+            }
+            (out_dir / "fk_compare_multi.json").write_text(json.dumps(summary, indent=2))
+
+            print(json.dumps(summary, indent=2))
+            print("Output dir:", out_dir)
+
+            return
+        # ---- Single-point mode below ----
+        if q_target is None:
+            raise ValueError("Provide either --degrees (single point) or --joint_traj_npz (multi points)")
+
         action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_target)}
         action["gripper.pos"] = robot.bus.sync_read("Present_Position")["gripper"]
 
