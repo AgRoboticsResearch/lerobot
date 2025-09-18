@@ -103,6 +103,7 @@ def main():
     parser.add_argument("--ramp_in_s", type=float, default=1.0, help="Seconds to ramp from current pose to first planned point before main trajectory")
     parser.add_argument("--ramp_orientation", action="store_true", help="If set, ramp orientation weight from 0 to --orientation_weight during ramp-in")
     parser.add_argument("--out_dir", type=str, default="./ik_track_hw_out")
+    parser.add_argument("--joint_traj_npz", type=str, default=None, help="Path to NPZ with precomputed joint trajectory (keys: ik_joints_deg or commanded_joints_deg)")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -137,8 +138,23 @@ def main():
     # Start pose is whatever is measured now
 
     center_T = kin.forward_kinematics(q_meas)
-    # Build desired poses and per-step orientation weights
-    if args.two_phase:
+    # If a precomputed joint trajectory is provided, skip pose generation and IK
+    precomputed_joint_traj = None
+    if args.joint_traj_npz is not None:
+        data = np.load(args.joint_traj_npz, allow_pickle=True)
+        if "ik_joints_deg" in data:
+            precomputed_joint_traj = data["ik_joints_deg"]
+        elif "commanded_joints_deg" in data:
+            precomputed_joint_traj = data["commanded_joints_deg"]
+        else:
+            raise ValueError("NPZ must contain 'ik_joints_deg' or 'commanded_joints_deg'")
+        if precomputed_joint_traj.ndim != 2:
+            raise ValueError("Joint trajectory must be 2D (steps x joints)")
+        if precomputed_joint_traj.shape[1] != len(joint_names):
+            raise ValueError("Joint count mismatch: npz joints vs joint_names")
+    
+    # Build desired poses and per-step orientation weights (only if not precomputed joints)
+    if precomputed_joint_traj is None and args.two_phase:
         n1 = max(1, args.num_points // 2)
         n2 = max(1, args.num_points - n1)
         # For phase 1, ensure total points equals n1 irrespective of per-axis override
@@ -152,7 +168,7 @@ def main():
             phase2 = generate_line_xyz_traj(center_T, n2, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
         desired_poses = np.concatenate([phase1, phase2], axis=0)
         ow_sequence = [0.0] * phase1.shape[0] + [args.orientation_weight] * phase2.shape[0]
-    else:
+    elif precomputed_joint_traj is None:
         if args.traj_type == "circle":
             desired_poses = generate_circle_traj(center_T, args.num_points, args.radius_m, args.z_amplitude_m, args.cycles)
         elif args.traj_type == "line":
@@ -160,6 +176,9 @@ def main():
         else:
             desired_poses = generate_line_xyz_traj(center_T, args.num_points, args.line_amplitude_m, args.cycles, args.num_points_per_axis)
         ow_sequence = [args.orientation_weight] * desired_poses.shape[0]
+    else:
+        desired_poses = None
+        ow_sequence = None
 
     achieved_xyz = []
     desired_xyz = []
@@ -169,9 +188,9 @@ def main():
 
     dt = 1.0 / args.fps
     try:
-        # Optional ramp-in to avoid large first step
+        # Optional ramp-in to avoid large first step (only for pose-based mode)
         ramp_steps = int(max(0.0, args.ramp_in_s) * args.fps)
-        if ramp_steps > 0 and desired_poses.shape[0] > 0:
+        if ramp_steps > 0 and (desired_poses is not None) and desired_poses.shape[0] > 0:
             T_start = center_T.copy()
             T_first = desired_poses[0]
             for k in range(ramp_steps):
@@ -213,8 +232,34 @@ def main():
                 commanded_joints.append(q_cmd.copy())
                 measured_joints.append(q_meas.copy())
 
-        for i, T_des in enumerate(desired_poses):
-            step_start = time.perf_counter()
+        if precomputed_joint_traj is not None:
+            # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
+            for i, q_cmd in enumerate(precomputed_joint_traj):
+                step_start = time.perf_counter()
+
+                # Predicted EE pose from joints (planned)
+                T_cmd = kin.forward_kinematics(q_cmd)
+
+                action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
+                action["gripper.pos"] = gripper_pos
+                robot.send_action(action)
+
+                remaining = dt - (time.perf_counter() - step_start)
+                if remaining > 0:
+                    time.sleep(remaining)
+
+                present_meas = robot.bus.sync_read("Present_Position")
+                q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                T_meas = kin.forward_kinematics(q_meas)
+
+                desired_xyz.append(T_cmd[:3, 3].copy())
+                achieved_xyz.append(T_meas[:3, 3].copy())
+                expected_xyz.append(T_cmd[:3, 3].copy())
+                commanded_joints.append(q_cmd.copy())
+                measured_joints.append(q_meas.copy())
+        else:
+            for i, T_des in enumerate(desired_poses):
+                step_start = time.perf_counter()
 
             # Read current joints for IK seed
             present_seed = robot.bus.sync_read("Present_Position")
