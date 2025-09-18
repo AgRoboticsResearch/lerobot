@@ -234,6 +234,9 @@ def main():
     # Start pose is whatever is measured now
 
     center_T = kin.forward_kinematics(q_meas)
+    # For visualization overlay
+    planned_full_xyz = None  # full curve from eval (ee_points.npy) or computed
+    tested_indices = None
     # If a precomputed joint trajectory is provided, skip pose generation and IK
     precomputed_joint_traj = None
     if args.joint_traj_npz is not None:
@@ -248,6 +251,14 @@ def main():
             raise ValueError("Joint trajectory must be 2D (steps x joints)")
         if precomputed_joint_traj.shape[1] != len(joint_names):
             raise ValueError("Joint count mismatch: npz joints vs joint_names")
+        # Try to load the full planned EE curve saved by eval (ee_points.npy)
+        try:
+            npz_dir = Path(args.joint_traj_npz).parent
+            ee_path = npz_dir / "ee_points.npy"
+            if ee_path.exists():
+                planned_full_xyz = np.load(ee_path)
+        except Exception:
+            planned_full_xyz = None
     
     # Build desired poses and per-step orientation weights (only if not precomputed joints)
     if precomputed_joint_traj is None and args.two_phase:
@@ -367,10 +378,12 @@ def main():
                 except Exception as e:
                     robot.disconnect()
                     raise ValueError(f"Invalid --test_point_indices: {e}")
+                tested_indices = list(test_indices)
             elif args.sample_points:
                 rng = np.random.default_rng(args.sample_seed)
                 N = precomputed_joint_traj.shape[0]
                 test_indices = sorted(rng.choice(N, size=min(args.sample_points, N), replace=False).tolist())
+                tested_indices = list(test_indices)
                 # Log file for reach test
                 reach_csv = out_dir / "reach_test.csv"
                 with open(reach_csv, "w", newline="") as f:
@@ -406,6 +419,13 @@ def main():
                         commanded_joints.append(q_cmd.copy())
                         measured_joints.append(q_meas.copy())
                         w.writerow([i, int(reached), max_err if max_err is not None else "NA"])  # noqa: T201
+            # Ensure we have the full curve for overlay
+            if planned_full_xyz is None:
+                pts = []
+                for q in precomputed_joint_traj:
+                    T = kin.forward_kinematics(q)
+                    pts.append(T[:3, 3].copy())
+                planned_full_xyz = np.asarray(pts)
             else:
                 # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
                 for i, q_cmd in enumerate(precomputed_joint_traj):
@@ -431,6 +451,8 @@ def main():
                     expected_xyz.append(T_cmd[:3, 3].copy())
                     commanded_joints.append(q_cmd.copy())
                     measured_joints.append(q_meas.copy())
+                # Full planned curve equals the desired path we just executed
+                planned_full_xyz = np.asarray(desired_xyz)
         else:
             for i, T_des in enumerate(desired_poses):
                 step_start = time.perf_counter()
@@ -546,7 +568,18 @@ def main():
 
         fig = plt.figure(figsize=(7, 7))
         ax = fig.add_subplot(111, projection="3d")
-        ax.plot(desired_xyz[:, 0], desired_xyz[:, 1], desired_xyz[:, 2], label="planned", c="C0")
+        # Overlay the full planned curve if available
+        if 'planned_full_xyz' in locals() and planned_full_xyz is not None:
+            try:
+                ax.plot(planned_full_xyz[:, 0], planned_full_xyz[:, 1], planned_full_xyz[:, 2], label="planned_curve", c="C0", alpha=0.6)
+                # If we sampled specific indices, highlight them
+                if 'tested_indices' in locals() and tested_indices:
+                    pts = planned_full_xyz[np.array(tested_indices)]
+                    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="C0", s=30, marker="o", label="chosen_points")
+            except Exception:
+                pass
+        # Planned for executed/tested points
+        ax.plot(desired_xyz[:, 0], desired_xyz[:, 1], desired_xyz[:, 2], label="planned", c="C3")
         ax.plot(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="C1")
         if 'expected_xyz' in locals() or 'expected_xyz' in globals():
             ax.plot(expected_xyz[:, 0], expected_xyz[:, 1], expected_xyz[:, 2], label="ik_pred", c="C2")
