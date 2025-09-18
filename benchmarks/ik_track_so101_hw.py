@@ -109,6 +109,8 @@ def main():
     parser.add_argument("--snap_timeout_s", type=float, default=10.0)
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
+    parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
+    parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -143,6 +145,48 @@ def main():
     if args.print_present:
         print("Present joints (degrees) in order", joint_names)
         print(q_meas.tolist())
+        robot.disconnect()
+        return
+
+    if args.print_calibration_limits:
+        # Convert calibration raw ticks to degrees using MotorsBus mapping
+        def raw_to_deg(motor_name: str, raw: float) -> float:
+            cal = robot.bus.calibration[motor_name]
+            mid = (cal.range_min + cal.range_max) / 2.0
+            # model resolution is ticks per 360 deg
+            max_res = robot.bus.model_resolution_table[robot.bus._name_to_model(motor_name)] - 1
+            return (raw - mid) * 360.0 / max_res
+
+        print("Calibrated joint limits (deg):")
+        for name in joint_names:
+            cal = robot.bus.calibration[name]
+            lo = raw_to_deg(name, cal.range_min)
+            hi = raw_to_deg(name, cal.range_max)
+            if lo > hi:
+                lo, hi = hi, lo
+            print(f"  {name}: [{lo:.2f}, {hi:.2f}]")
+        robot.disconnect()
+        return
+
+    if args.print_urdf_limits:
+        # Simple URDF parser: find <joint name="..."> and its <limit lower upper>
+        import re
+        txt = Path(args.urdf_path).read_text()
+        print("URDF joint limits (deg):")
+        for name in joint_names:
+            # Find joint block
+            pattern = rf"<joint[^>]*name=\"{re.escape(name)}\"[\s\S]*?<limit[^>]*lower=\"([^\"]+)\"[^>]*upper=\"([^\"]+)\""
+            m = re.search(pattern, txt)
+            if not m:
+                print(f"  {name}: NOT FOUND")
+                continue
+            lo_rad = float(m.group(1))
+            hi_rad = float(m.group(2))
+            lo_deg = lo_rad * 180.0 / math.pi
+            hi_deg = hi_rad * 180.0 / math.pi
+            if lo_deg > hi_deg:
+                lo_deg, hi_deg = hi_deg, lo_deg
+            print(f"  {name}: [{lo_deg:.2f}, {hi_deg:.2f}]")
         robot.disconnect()
         return
 
