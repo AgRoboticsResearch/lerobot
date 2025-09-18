@@ -104,6 +104,10 @@ def main():
     parser.add_argument("--ramp_orientation", action="store_true", help="If set, ramp orientation weight from 0 to --orientation_weight during ramp-in")
     parser.add_argument("--out_dir", type=str, default="./ik_track_hw_out")
     parser.add_argument("--joint_traj_npz", type=str, default=None, help="Path to NPZ with precomputed joint trajectory (keys: ik_joints_deg or commanded_joints_deg)")
+    parser.add_argument("--snap_to_first", action="store_true", help="When using --joint_traj_npz, move to first joint target and wait within tolerance before playback")
+    parser.add_argument("--snap_tolerance_deg", type=float, default=2.0)
+    parser.add_argument("--snap_timeout_s", type=float, default=10.0)
+    parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -233,6 +237,28 @@ def main():
                 measured_joints.append(q_meas.copy())
 
         if precomputed_joint_traj is not None:
+            # Optional snap-to-first target to ensure deterministic start
+            if args.snap_to_first and precomputed_joint_traj.shape[0] > 0:
+                q_first = precomputed_joint_traj[0]
+                old_limit = robot.config.max_relative_target
+                try:
+                    if args.snap_boost_max_relative_target_deg is not None:
+                        robot.config.max_relative_target = args.snap_boost_max_relative_target_deg
+
+                    action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_first)}
+                    action["gripper.pos"] = gripper_pos
+                    robot.send_action(action)
+
+                    t0 = time.perf_counter()
+                    while time.perf_counter() - t0 < args.snap_timeout_s:
+                        present_meas = robot.bus.sync_read("Present_Position")
+                        q_now = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                        if np.max(np.abs(q_now - q_first)) <= args.snap_tolerance_deg:
+                            break
+                        time.sleep(0.02)
+                finally:
+                    robot.config.max_relative_target = old_limit
+
             # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
             for i, q_cmd in enumerate(precomputed_joint_traj):
                 step_start = time.perf_counter()
