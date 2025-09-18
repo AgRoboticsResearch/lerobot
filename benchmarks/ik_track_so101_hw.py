@@ -154,7 +154,9 @@ def main():
             cal = robot.bus.calibration[motor_name]
             mid = (cal.range_min + cal.range_max) / 2.0
             # model resolution is ticks per 360 deg
-            max_res = robot.bus.model_resolution_table[robot.bus._name_to_model(motor_name)] - 1
+            motor_id = robot.bus.motors[motor_name].id
+            model = robot.bus._id_to_model(motor_id)
+            max_res = robot.bus.model_resolution_table[model] - 1
             return (raw - mid) * 360.0 / max_res
 
         print("Calibrated joint limits (deg):")
