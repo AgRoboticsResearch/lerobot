@@ -428,32 +428,17 @@ def main():
                     pts.append(T[:3, 3].copy())
                 planned_full_xyz = np.asarray(pts)
             else:
-                # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
-                for i, q_cmd in enumerate(precomputed_joint_traj):
-                    step_start = time.perf_counter()
-
-                    # Predicted EE pose from joints (planned)
-                    T_cmd = kin.forward_kinematics(q_cmd)
-
-                    action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
-                    action["gripper.pos"] = gripper_pos
-                    robot.send_action(action)
-
-                    remaining = dt - (time.perf_counter() - step_start)
-                    if remaining > 0:
-                        time.sleep(remaining)
-
-                    present_meas = robot.bus.sync_read("Present_Position")
-                    q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
-                    T_meas = kin.forward_kinematics(q_meas)
-
-                    desired_xyz.append(T_cmd[:3, 3].copy())
-                    achieved_xyz.append(T_meas[:3, 3].copy())
-                    expected_xyz.append(T_cmd[:3, 3].copy())
-                    commanded_joints.append(q_cmd.copy())
-                    measured_joints.append(q_meas.copy())
-                # Full planned curve equals the desired path we just executed
-                planned_full_xyz = np.asarray(desired_xyz)
+                # Do NOT execute the full curve. Only visualize it and ask user to select points.
+                if planned_full_xyz is None:
+                    pts = []
+                    for q in precomputed_joint_traj:
+                        T = kin.forward_kinematics(q)
+                        pts.append(T[:3, 3].copy())
+                    planned_full_xyz = np.asarray(pts)
+                robot.disconnect()
+                raise ValueError(
+                    "Full-curve playback is disabled. Provide --sample_points or --test_point_indices to execute selected points only."
+                )
         else:
             for i, T_des in enumerate(desired_poses):
                 step_start = time.perf_counter()
