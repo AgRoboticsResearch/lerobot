@@ -254,10 +254,11 @@ def main():
 
                     action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_first)}
                     action["gripper.pos"] = gripper_pos
-                    robot.send_action(action)
 
                     t0 = time.perf_counter()
                     while time.perf_counter() - t0 < args.snap_timeout_s:
+                        # Continuously command the first pose until within tolerance
+                        robot.send_action(action)
                         present_meas = robot.bus.sync_read("Present_Position")
                         q_now = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
                         if np.max(np.abs(q_now - q_first)) <= args.snap_tolerance_deg:
