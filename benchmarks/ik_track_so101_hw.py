@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--snap_tolerance_deg", type=float, default=2.0)
     parser.add_argument("--snap_timeout_s", type=float, default=10.0)
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
+    parser.add_argument("--snap_to_degrees", type=str, default=None, help="Comma-separated degrees d1,..,d5 to snap to before execution")
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
     parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
@@ -191,6 +192,36 @@ def main():
             print(f"  {name}: [{lo_deg:.2f}, {hi_deg:.2f}]")
         robot.disconnect()
         return
+
+    # Optional: snap to explicit degrees before any execution
+    if args.snap_to_degrees is not None:
+        try:
+            q_target = np.array([float(x) for x in args.snap_to_degrees.split(",")], dtype=np.float64)
+        except Exception as e:
+            robot.disconnect()
+            raise ValueError(f"Invalid --snap_to_degrees: {e}")
+        if q_target.shape[0] != len(joint_names):
+            robot.disconnect()
+            raise ValueError("--snap_to_degrees must have exactly 5 values for the 5 joints")
+
+        old_limit = robot.config.max_relative_target
+        try:
+            if args.snap_boost_max_relative_target_deg is not None:
+                robot.config.max_relative_target = args.snap_boost_max_relative_target_deg
+
+            action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_target)}
+            action["gripper.pos"] = gripper_pos
+
+            t0 = time.perf_counter()
+            while time.perf_counter() - t0 < args.snap_timeout_s:
+                robot.send_action(action)
+                present_meas = robot.bus.sync_read("Present_Position")
+                q_now = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                if np.max(np.abs(q_now - q_target)) <= args.snap_tolerance_deg:
+                    break
+                time.sleep(0.02)
+        finally:
+            robot.config.max_relative_target = old_limit
 
     # Start pose is whatever is measured now
 
