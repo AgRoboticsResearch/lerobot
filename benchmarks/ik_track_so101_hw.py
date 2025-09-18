@@ -115,6 +115,8 @@ def main():
     parser.add_argument("--sample_seed", type=int, default=0)
     parser.add_argument("--reach_tolerance_deg", type=float, default=2.0, help="Tolerance to accept a target as reached (max abs joint error)")
     parser.add_argument("--reach_timeout_s", type=float, default=3.0, help="Max time per target")
+    # Deterministic reach test of specific indices
+    parser.add_argument("--test_point_indices", type=str, default=None, help="Comma-separated indices into the NPZ joint trajectory to test deterministically")
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
     parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
@@ -357,10 +359,18 @@ def main():
             commanded_joints.clear(); measured_joints.clear()
 
             # If sampling is requested, pick random targets and test reachability; else play full trajectory
-            if args.sample_points:
+            # Determine which indices to test
+            test_indices = None
+            if args.test_point_indices:
+                try:
+                    test_indices = [int(x) for x in args.test_point_indices.split(",")]
+                except Exception as e:
+                    robot.disconnect()
+                    raise ValueError(f"Invalid --test_point_indices: {e}")
+            elif args.sample_points:
                 rng = np.random.default_rng(args.sample_seed)
                 N = precomputed_joint_traj.shape[0]
-                idxs = rng.choice(N, size=min(args.sample_points, N), replace=False)
+                test_indices = sorted(rng.choice(N, size=min(args.sample_points, N), replace=False).tolist())
                 # Log file for reach test
                 reach_csv = out_dir / "reach_test.csv"
                 with open(reach_csv, "w", newline="") as f:
@@ -368,7 +378,7 @@ def main():
                     w = _csv.writer(f)
                     w.writerow(["idx","reached","max_abs_err_deg"])  # per-point summary
 
-                    for i in sorted(idxs.tolist()):
+                    for i in test_indices:
                         q_cmd = precomputed_joint_traj[i]
                         # Command target repeatedly until tolerance or timeout
                         t0 = time.perf_counter()
@@ -387,7 +397,7 @@ def main():
                                 break
                             time.sleep(0.02)
 
-                        # Log kinematics and record
+                        # Visualize planned vs achieved for this point (single-step)
                         T_cmd = kin.forward_kinematics(q_cmd)
                         T_meas = kin.forward_kinematics(q_meas)
                         desired_xyz.append(T_cmd[:3, 3].copy())
