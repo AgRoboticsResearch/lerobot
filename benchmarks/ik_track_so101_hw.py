@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--snap_timeout_s", type=float, default=10.0)
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
     parser.add_argument("--snap_to_degrees", type=str, default=None, help="Comma-separated degrees d1,..,d5 to snap to before execution")
+    parser.add_argument("--hold_after_snap_s", type=float, default=0.2, help="Optional settle/hold time after snap completes before recording starts")
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
     parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
@@ -343,6 +344,12 @@ def main():
                         time.sleep(0.02)
                 finally:
                     robot.config.max_relative_target = old_limit
+
+            # After any snap phase, optionally hold a moment and clear any pre-existing buffers
+            if args.hold_after_snap_s > 0:
+                time.sleep(args.hold_after_snap_s)
+            achieved_xyz.clear(); desired_xyz.clear(); expected_xyz.clear()
+            commanded_joints.clear(); measured_joints.clear()
 
             # Execute precomputed joint trajectory directly (no IK, no encoder seeding)
             for i, q_cmd in enumerate(precomputed_joint_traj):
