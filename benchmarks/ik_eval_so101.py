@@ -30,6 +30,9 @@ class EvalConfig:
     # Middle joint configuration in degrees (same length as joint_names)
     mid_joints_deg: list[float] | None = None
     # Trajectory params
+    traj_type: str = "circle"  # circle | line
+    line_axis: str = "x"  # x | y | z
+    line_amplitude_m: float = 0.05
     num_points: int = 200
     radius_m: float = 0.03
     z_amplitude_m: float = 0.02
@@ -43,25 +46,40 @@ class EvalConfig:
 
 def generate_traj(center_T: np.ndarray, cfg: EvalConfig) -> np.ndarray:
     """
-    Generate a simple closed 3D path around the center position:
-    - XY circle with radius
-    - Z sinusoidal modulation
+    Generate a trajectory around/along the center pose.
 
-    Returns: array of shape (N, 4, 4) of desired EE poses.
+    traj_type = circle:
+      - XY circle with radius and Z sinusoidal modulation
+    traj_type = line:
+      - Straight line along chosen axis (x|y|z) with sinusoidal progression
     """
     N = cfg.num_points
     poses = np.repeat(center_T[None, :, :], N, axis=0)
     center_pos = center_T[:3, 3].copy()
-    theta = np.linspace(0.0, 2.0 * math.pi * cfg.cycles, N, endpoint=False)
 
+    if cfg.traj_type == "line":
+        t = np.linspace(0.0, 2.0 * math.pi * cfg.cycles, N, endpoint=False)
+        delta = cfg.line_amplitude_m * np.sin(t)
+        xyz = np.tile(center_pos, (N, 1))
+        if cfg.line_axis == "x":
+            xyz[:, 0] += delta
+        elif cfg.line_axis == "y":
+            xyz[:, 1] += delta
+        else:
+            xyz[:, 2] += delta
+        poses[:, 0, 3] = xyz[:, 0]
+        poses[:, 1, 3] = xyz[:, 1]
+        poses[:, 2, 3] = xyz[:, 2]
+        return poses
+
+    # circle (default)
+    theta = np.linspace(0.0, 2.0 * math.pi * cfg.cycles, N, endpoint=False)
     x = center_pos[0] + cfg.radius_m * np.cos(theta)
     y = center_pos[1] + cfg.radius_m * np.sin(theta)
     z = center_pos[2] + cfg.z_amplitude_m * np.sin(2.0 * theta)
-
     poses[:, 0, 3] = x
     poses[:, 1, 3] = y
     poses[:, 2, 3] = z
-    # Keep orientation equal to center_T
     return poses
 
 
@@ -190,6 +208,9 @@ def main():
     parser.add_argument("--target_frame_name", type=str, default="gripper_frame_link")
     parser.add_argument("--joint_names", type=str, default="shoulder_pan,shoulder_lift,elbow_flex,wrist_flex,wrist_roll")
     parser.add_argument("--mid_joints_deg", type=str, default=None, help="Comma-separated degrees. Defaults to zeros.")
+    parser.add_argument("--traj_type", type=str, choices=["circle", "line"], default="circle")
+    parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
+    parser.add_argument("--line_amplitude_m", type=float, default=0.05)
     parser.add_argument("--num_points", type=int, default=200)
     parser.add_argument("--radius_m", type=float, default=0.03)
     parser.add_argument("--z_amplitude_m", type=float, default=0.02)
@@ -209,6 +230,9 @@ def main():
         target_frame_name=args.target_frame_name,
         joint_names=joint_names,
         mid_joints_deg=mid_joints,
+        traj_type=args.traj_type,
+        line_axis=args.line_axis,
+        line_amplitude_m=args.line_amplitude_m,
         num_points=args.num_points,
         radius_m=args.radius_m,
         z_amplitude_m=args.z_amplitude_m,
