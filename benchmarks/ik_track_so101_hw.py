@@ -108,6 +108,7 @@ def main():
     parser.add_argument("--snap_tolerance_deg", type=float, default=2.0)
     parser.add_argument("--snap_timeout_s", type=float, default=10.0)
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=None, help="Temporarily increase max_relative_target during snap phase")
+    parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -138,6 +139,12 @@ def main():
     present = robot.bus.sync_read("Present_Position")
     q_meas = np.array([present[n] for n in joint_names], dtype=np.float64)
     gripper_pos = float(present["gripper"])  # keep gripper constant
+
+    if args.print_present:
+        print("Present joints (degrees) in order", joint_names)
+        print(q_meas.tolist())
+        robot.disconnect()
+        return
 
     # Start pose is whatever is measured now
 
