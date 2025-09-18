@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=45.0)
     parser.add_argument("--out_dir", type=str, default="./fk_compare_out")
     parser.add_argument("--plot_units", type=str, choices=["m", "cm"], default="cm", help="Units for plot axes (keeps JSON in meters)")
+    parser.add_argument("--context_box_cm", type=float, default=20.0, help="Context cube size around point (cm) for the context plot")
+    parser.add_argument("--zoom_box_cm", type=float, default=3.0, help="Zoom cube size (cm) around the points for the zoom plot")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -111,25 +113,50 @@ def main():
             import matplotlib.pyplot as plt
             from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-            fig = plt.figure(figsize=(6, 6))
-            ax = fig.add_subplot(111, projection="3d")
             # Convert to desired units for plotting
             scale = 100.0 if args.plot_units == "cm" else 1.0
             unit_label = "cm" if args.plot_units == "cm" else "m"
             pt = p_target * scale
             pm = p_meas * scale
-            ax.scatter([pt[0]], [pt[1]], [pt[2]], c="C0", s=60, label="target (URDF FK)")
-            ax.scatter([pm[0]], [pm[1]], [pm[2]], c="C2", s=60, label="measured (enc FK)")
-            ax.plot([pt[0], pm[0]], [pt[1], pm[1]], [pt[2], pm[2]], c="C2", alpha=0.6, label="delta")
-            ax.set_xlabel(f"X [{unit_label}]")
-            ax.set_ylabel(f"Y [{unit_label}]")
-            ax.set_zlabel(f"Z [{unit_label}]")
-            # Annotate error magnitude
-            ax.text(pm[0], pm[1], pm[2], f"|Δ|={np.linalg.norm(pos_err)*scale:.2f} {unit_label}", color="C2")
-            ax.legend()
-            fig.tight_layout()
-            fig.savefig(out_dir / "fk_compare_plot.png", dpi=150)
-            plt.close(fig)
+            delta_norm = float(np.linalg.norm(pos_err) * scale)
+
+            def set_box(ax, center, size):
+                half = size / 2.0
+                for i, label in enumerate(["x", "y", "z"]):
+                    ax.set(**{f"set_{label}lim": (center[i] - half, center[i] + half)})
+
+            # Context plot with fixed large cube
+            fig1 = plt.figure(figsize=(6, 6))
+            ax1 = fig1.add_subplot(111, projection="3d")
+            ax1.scatter([pt[0]], [pt[1]], [pt[2]], c="C0", s=60, label="target (URDF FK)")
+            ax1.scatter([pm[0]], [pm[1]], [pm[2]], c="C2", s=60, label="measured (enc FK)")
+            ax1.plot([pt[0], pm[0]], [pt[1], pm[1]], [pt[2], pm[2]], c="C2", alpha=0.6, label=f"delta {delta_norm:.2f} {unit_label}")
+            ax1.set_xlabel(f"X [{unit_label}]")
+            ax1.set_ylabel(f"Y [{unit_label}]")
+            ax1.set_zlabel(f"Z [{unit_label}]")
+            center = (pt + pm) / 2.0
+            box_size = args.context_box_cm if args.plot_units == "cm" else args.context_box_cm / 100.0
+            set_box(ax1, center, box_size)
+            ax1.legend()
+            fig1.tight_layout()
+            fig1.savefig(out_dir / "fk_compare_plot_context.png", dpi=150)
+            plt.close(fig1)
+
+            # Zoom plot with small cube around the points
+            fig2 = plt.figure(figsize=(6, 6))
+            ax2 = fig2.add_subplot(111, projection="3d")
+            ax2.scatter([pt[0]], [pt[1]], [pt[2]], c="C0", s=60, label="target (URDF FK)")
+            ax2.scatter([pm[0]], [pm[1]], [pm[2]], c="C2", s=60, label="measured (enc FK)")
+            ax2.plot([pt[0], pm[0]], [pt[1], pm[1]], [pt[2], pm[2]], c="C2", alpha=0.8, linewidth=2.0, label=f"delta {delta_norm:.2f} {unit_label}")
+            ax2.set_xlabel(f"X [{unit_label}]")
+            ax2.set_ylabel(f"Y [{unit_label}]")
+            ax2.set_zlabel(f"Z [{unit_label}]")
+            zoom_size = args.zoom_box_cm if args.plot_units == "cm" else args.zoom_box_cm / 100.0
+            set_box(ax2, center, zoom_size)
+            ax2.legend()
+            fig2.tight_layout()
+            fig2.savefig(out_dir / "fk_compare_plot_zoom.png", dpi=150)
+            plt.close(fig2)
         except Exception as e:
             print(f"[WARN] Plotting failed: {e}")
 
