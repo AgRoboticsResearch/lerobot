@@ -30,9 +30,10 @@ class EvalConfig:
     # Middle joint configuration in degrees (same length as joint_names)
     mid_joints_deg: list[float] | None = None
     # Trajectory params
-    traj_type: str = "circle"  # circle | line
+    traj_type: str = "circle"  # circle | line | line_xyz
     line_axis: str = "x"  # x | y | z
     line_amplitude_m: float = 0.05
+    num_points_per_axis: int | None = None
     num_points: int = 200
     radius_m: float = 0.03
     z_amplitude_m: float = 0.02
@@ -71,6 +72,34 @@ def generate_traj(center_T: np.ndarray, cfg: EvalConfig) -> np.ndarray:
         poses[:, 1, 3] = xyz[:, 1]
         poses[:, 2, 3] = xyz[:, 2]
         return poses
+
+    if cfg.traj_type == "line_xyz":
+        # Split points among X, Y, Z
+        if cfg.num_points_per_axis is None:
+            base = max(1, N // 3)
+            remainder = max(0, N - base * 3)
+            counts = [base, base, base]
+            for i in range(remainder):
+                counts[i] += 1
+        else:
+            counts = [cfg.num_points_per_axis] * 3
+        segs = []
+        for axis, n in zip(["x", "y", "z"], counts, strict=False):
+            t = np.linspace(0.0, 2.0 * math.pi * cfg.cycles, n, endpoint=False)
+            delta = cfg.line_amplitude_m * np.sin(t)
+            xyz = np.tile(center_pos, (n, 1))
+            if axis == "x":
+                xyz[:, 0] += delta
+            elif axis == "y":
+                xyz[:, 1] += delta
+            else:
+                xyz[:, 2] += delta
+            seg = np.repeat(center_T[None, :, :], n, axis=0)
+            seg[:, 0, 3] = xyz[:, 0]
+            seg[:, 1, 3] = xyz[:, 1]
+            seg[:, 2, 3] = xyz[:, 2]
+            segs.append(seg)
+        return np.concatenate(segs, axis=0)
 
     # circle (default)
     theta = np.linspace(0.0, 2.0 * math.pi * cfg.cycles, N, endpoint=False)
@@ -211,6 +240,7 @@ def main():
     parser.add_argument("--traj_type", type=str, choices=["circle", "line"], default="circle")
     parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
     parser.add_argument("--line_amplitude_m", type=float, default=0.05)
+    parser.add_argument("--num_points_per_axis", type=int, default=None)
     parser.add_argument("--num_points", type=int, default=200)
     parser.add_argument("--radius_m", type=float, default=0.03)
     parser.add_argument("--z_amplitude_m", type=float, default=0.02)
@@ -233,6 +263,7 @@ def main():
         traj_type=args.traj_type,
         line_axis=args.line_axis,
         line_amplitude_m=args.line_amplitude_m,
+        num_points_per_axis=args.num_points_per_axis,
         num_points=args.num_points,
         radius_m=args.radius_m,
         z_amplitude_m=args.z_amplitude_m,
