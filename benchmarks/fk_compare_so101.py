@@ -43,6 +43,7 @@ def main():
     parser.add_argument("--snap_timeout_s", type=float, default=10.0)
     parser.add_argument("--snap_boost_max_relative_target_deg", type=float, default=45.0)
     parser.add_argument("--out_dir", type=str, default="./fk_compare_out")
+    parser.add_argument("--plot_units", type=str, choices=["m", "cm"], default="cm", help="Units for plot axes (keeps JSON in meters)")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -112,12 +113,19 @@ def main():
 
             fig = plt.figure(figsize=(6, 6))
             ax = fig.add_subplot(111, projection="3d")
-            ax.scatter([p_target[0]], [p_target[1]], [p_target[2]], c="C0", s=60, label="target (URDF FK)")
-            ax.scatter([p_meas[0]], [p_meas[1]], [p_meas[2]], c="C2", s=60, label="measured (enc FK)")
-            ax.plot([p_target[0], p_meas[0]], [p_target[1], p_meas[1]], [p_target[2], p_meas[2]], c="C2", alpha=0.6, label="delta")
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
+            # Convert to desired units for plotting
+            scale = 100.0 if args.plot_units == "cm" else 1.0
+            unit_label = "cm" if args.plot_units == "cm" else "m"
+            pt = p_target * scale
+            pm = p_meas * scale
+            ax.scatter([pt[0]], [pt[1]], [pt[2]], c="C0", s=60, label="target (URDF FK)")
+            ax.scatter([pm[0]], [pm[1]], [pm[2]], c="C2", s=60, label="measured (enc FK)")
+            ax.plot([pt[0], pm[0]], [pt[1], pm[1]], [pt[2], pm[2]], c="C2", alpha=0.6, label="delta")
+            ax.set_xlabel(f"X [{unit_label}]")
+            ax.set_ylabel(f"Y [{unit_label}]")
+            ax.set_zlabel(f"Z [{unit_label}]")
+            # Annotate error magnitude
+            ax.text(pm[0], pm[1], pm[2], f"|Δ|={np.linalg.norm(pos_err)*scale:.2f} {unit_label}", color="C2")
             ax.legend()
             fig.tight_layout()
             fig.savefig(out_dir / "fk_compare_plot.png", dpi=150)
