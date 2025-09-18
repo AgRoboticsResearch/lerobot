@@ -579,8 +579,8 @@ def main():
                     ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c="C0", s=30, marker="o", label="chosen_points")
             except Exception:
                 pass
-        # Achieved trajectory in red
-        ax.plot(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="r")
+        # Achieved measurements as points (no connecting line)
+        ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="r", s=30, marker="x")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Z [m]")
