@@ -382,7 +382,8 @@ def main():
             elif args.sample_points:
                 rng = np.random.default_rng(args.sample_seed)
                 N = precomputed_joint_traj.shape[0]
-                test_indices = sorted(rng.choice(N, size=min(args.sample_points, N), replace=False).tolist())
+                # Use random order (no sorting) so we don't travel along the curve in sequence
+                test_indices = rng.choice(N, size=min(args.sample_points, N), replace=False).tolist()
                 tested_indices = list(test_indices)
                 # Log file for reach test
                 reach_csv = out_dir / "reach_test.csv"
