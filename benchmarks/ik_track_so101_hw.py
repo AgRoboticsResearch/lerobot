@@ -428,17 +428,14 @@ def main():
                     pts.append(T[:3, 3].copy())
                 planned_full_xyz = np.asarray(pts)
             else:
-                # Do NOT execute the full curve. Only visualize it and ask user to select points.
+                # Do NOT execute the full curve. Only visualize it and continue to plotting.
                 if planned_full_xyz is None:
                     pts = []
                     for q in precomputed_joint_traj:
                         T = kin.forward_kinematics(q)
                         pts.append(T[:3, 3].copy())
                     planned_full_xyz = np.asarray(pts)
-                robot.disconnect()
-                raise ValueError(
-                    "Full-curve playback is disabled. Provide --sample_points or --test_point_indices to execute selected points only."
-                )
+                # Leave desired/achieved/expected empty so the plot shows only the curve
         else:
             for i, T_des in enumerate(desired_poses):
                 step_start = time.perf_counter()
@@ -483,14 +480,15 @@ def main():
     finally:
         robot.disconnect()
 
-    achieved_xyz = np.stack(achieved_xyz, axis=0)
-    desired_xyz = np.stack(desired_xyz, axis=0)
-    expected_xyz = np.stack(expected_xyz, axis=0)
-    commanded_joints = np.stack(commanded_joints, axis=0)
-    measured_joints = np.stack(measured_joints, axis=0)
+    # Stack only if non-empty; otherwise create empty arrays for plotting
+    achieved_xyz = np.stack(achieved_xyz, axis=0) if len(achieved_xyz) else np.zeros((0,3))
+    desired_xyz = np.stack(desired_xyz, axis=0) if len(desired_xyz) else np.zeros((0,3))
+    expected_xyz = np.stack(expected_xyz, axis=0) if len(expected_xyz) else np.zeros((0,3))
+    commanded_joints = np.stack(commanded_joints, axis=0) if len(commanded_joints) else np.zeros((0, len(joint_names)))
+    measured_joints = np.stack(measured_joints, axis=0) if len(measured_joints) else np.zeros((0, len(joint_names)))
 
-    pos_err = achieved_xyz - desired_xyz
-    pos_err_norm = np.linalg.norm(pos_err, axis=1)
+    pos_err = achieved_xyz - desired_xyz if achieved_xyz.size and desired_xyz.size else np.zeros((0,3))
+    pos_err_norm = np.linalg.norm(pos_err, axis=1) if pos_err.size else np.zeros((0,))
     stats = {
         "mean_pos_err_m": float(pos_err_norm.mean()),
         "median_pos_err_m": float(np.median(pos_err_norm)),
@@ -514,9 +512,16 @@ def main():
             row = [
                 i,
                 desired_xyz[i, 0], desired_xyz[i, 1], desired_xyz[i, 2],
-                achieved_xyz[i, 0], achieved_xyz[i, 1], achieved_xyz[i, 2],
-                expected_xyz[i, 0], expected_xyz[i, 1], expected_xyz[i, 2],
-                pos_err[i, 0], pos_err[i, 1], pos_err[i, 2], pos_err_norm[i],
+                (achieved_xyz[i, 0] if i < achieved_xyz.shape[0] else ''),
+                (achieved_xyz[i, 1] if i < achieved_xyz.shape[0] else ''),
+                (achieved_xyz[i, 2] if i < achieved_xyz.shape[0] else ''),
+                (expected_xyz[i, 0] if i < expected_xyz.shape[0] else ''),
+                (expected_xyz[i, 1] if i < expected_xyz.shape[0] else ''),
+                (expected_xyz[i, 2] if i < expected_xyz.shape[0] else ''),
+                (pos_err[i, 0] if i < pos_err.shape[0] else ''),
+                (pos_err[i, 1] if i < pos_err.shape[0] else ''),
+                (pos_err[i, 2] if i < pos_err.shape[0] else ''),
+                (pos_err_norm[i] if i < pos_err_norm.shape[0] else ''),
             ] + list(commanded_joints[i]) + list(measured_joints[i])
             writer.writerow(row)
 
@@ -565,7 +570,8 @@ def main():
             except Exception:
                 pass
         # Achieved measurements as points (no connecting line)
-        ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="g", s=36, marker="o")
+        if achieved_xyz.shape[0] > 0:
+            ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="g", s=36, marker="o")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Z [m]")
