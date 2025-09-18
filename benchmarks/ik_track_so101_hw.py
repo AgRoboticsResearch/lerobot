@@ -572,6 +572,16 @@ def main():
         # Achieved measurements as points (no connecting line)
         if achieved_xyz.shape[0] > 0:
             ax.scatter(achieved_xyz[:, 0], achieved_xyz[:, 1], achieved_xyz[:, 2], label="achieved", c="g", s=36, marker="o")
+            # Draw connection lines from chosen (planned) to achieved for clarity
+            n = min(desired_xyz.shape[0], achieved_xyz.shape[0])
+            for k in range(n):
+                xs = [desired_xyz[k, 0], achieved_xyz[k, 0]]
+                ys = [desired_xyz[k, 1], achieved_xyz[k, 1]]
+                zs = [desired_xyz[k, 2], achieved_xyz[k, 2]]
+                if k == 0:
+                    ax.plot(xs, ys, zs, c="g", alpha=0.4, linewidth=1.5, label="connection")
+                else:
+                    ax.plot(xs, ys, zs, c="g", alpha=0.4, linewidth=1.5)
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
         ax.set_zlabel("Z [m]")
