@@ -8,44 +8,19 @@ from pathlib import Path
 import numpy as np
 
 
-def try_start_viewer(robot):
-    """
-    Try to start the Placo web viewer bound to this RobotWrapper in-process.
-    We attempt a few known entry points from placo_utils. If none work, we continue without a viewer.
-    """
+def try_build_visualizer(robot):
+    """Try to construct a viewer bound to this RobotWrapper using placo_utils.visualization."""
     try:
-        import placo_utils.view as view_mod
+        from placo_utils.visualization import robot_viz, robot_frame_viz  # noqa: F401
 
-        # Some versions expose a function to launch a viewer with an existing robot
-        if hasattr(view_mod, "start"):
-            view_mod.start(robot)
-            return True
-        if hasattr(view_mod, "run"):
-            # non-blocking run if available
-            try:
-                view_mod.run(robot, blocking=False)
-            except TypeError:
-                # Fallback: run() may not accept blocking arg
-                view_mod.run(robot)
-            return True
+        viz = robot_viz(robot)
+        return viz, robot_frame_viz
     except Exception:
-        pass
-
-    try:
-        import placo_utils.viewer as viewer_mod
-
-        # Some versions provide a Viewer class taking a robot
-        if hasattr(viewer_mod, "Viewer"):
-            v = viewer_mod.Viewer(robot)
-            if hasattr(v, "start"):
-                v.start()
-                return True
-    except Exception:
-        pass
-
-    print("[WARN] Could not start Placo viewer in-process."
-          " If you want visualization, run `python -m placo_utils.view <urdf>` in another terminal.")
-    return False
+        print(
+            "[WARN] Could not initialize placo_utils.visualization viewer.\n"
+            "       You can still run headless, or start: python -m placo_utils.view <urdf>"
+        )
+        return None, None
 
 
 def main():
@@ -54,11 +29,13 @@ def main():
     parser.add_argument("--npz_path", type=str, required=True, help="NPZ file containing ik_joints_deg")
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--loop", action="store_true", help="Loop the animation")
+    parser.add_argument("--target_frame_name", type=str, default="gripper_frame_link")
+    parser.add_argument("--show_effector", action="store_true")
     args = parser.parse_args()
 
     try:
         import placo
-    except Exception as e:
+    except Exception:
         print("[ERROR] placo is required. Install with `pip install placo placo_utils`", file=sys.stderr)
         raise
 
@@ -78,11 +55,50 @@ def main():
     solver = placo.KinematicsSolver(robot)
     solver.mask_fbase(True)
 
-    # Start viewer bound to this robot (best effort)
-    try_start_viewer(robot)
+    viz, frame_viz = try_build_visualizer(robot)
 
     joint_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
 
+    # Try to use ischedule-based loop if available (smooth GUI updates)
+    try:
+        from ischedule import schedule, run_loop
+
+        idx = {"k": 0}
+        dt = 1.0 / max(1, args.fps)
+
+        @schedule(interval=dt)
+        def loop():  # noqa: D401
+            i = idx["k"]
+            q_deg = q_traj[i]
+            for jn, qd in zip(joint_names, q_deg):
+                robot.set_joint(jn, np.deg2rad(qd))
+            robot.update_kinematics()
+            if viz is not None:
+                try:
+                    viz.display(robot.state.q)
+                except Exception:
+                    pass
+            if args.show_effector and frame_viz is not None:
+                try:
+                    frame_viz(robot, args.target_frame_name)
+                except Exception:
+                    pass
+
+            i += 1
+            if i >= len(q_traj):
+                if args.loop:
+                    i = 0
+                else:
+                    # Stop the schedule loop by exiting the process cleanly
+                    raise SystemExit
+            idx["k"] = i
+
+        run_loop()
+        return
+    except Exception:
+        pass
+
+    # Fallback: simple time.sleep loop
     dt = 1.0 / max(1, args.fps)
     try:
         while True:
@@ -90,6 +106,16 @@ def main():
                 for jn, qd in zip(joint_names, q_deg):
                     robot.set_joint(jn, np.deg2rad(qd))
                 robot.update_kinematics()
+                if viz is not None:
+                    try:
+                        viz.display(robot.state.q)
+                    except Exception:
+                        pass
+                if args.show_effector and frame_viz is not None:
+                    try:
+                        frame_viz(robot, args.target_frame_name)
+                    except Exception:
+                        pass
                 time.sleep(dt)
             if not args.loop:
                 break
