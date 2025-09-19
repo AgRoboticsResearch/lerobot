@@ -148,6 +148,8 @@ def main():
             measured_q = np.asarray(measured_q)
             pos_err = achieved_xyz - chosen_xyz
             pos_err_norm = np.linalg.norm(pos_err, axis=1)
+            joint_err_deg = measured_q - chosen_q
+            abs_joint_err_deg = np.abs(joint_err_deg)
 
             # Save CSV summary
             import csv as _csv
@@ -155,7 +157,7 @@ def main():
                 w = _csv.writer(f)
                 header = [
                     "idx","t_x","t_y","t_z","m_x","m_y","m_z","e_x","e_y","e_z","e_norm",
-                ] + [f"t_q{i}" for i in range(chosen_q.shape[1])] + [f"m_q{i}" for i in range(measured_q.shape[1])]
+                ] + [f"t_q{i}" for i in range(chosen_q.shape[1])] + [f"m_q{i}" for i in range(measured_q.shape[1])] + [f"e_q{i}" for i in range(joint_err_deg.shape[1])]
                 w.writerow(header)
                 for row_i, idx in enumerate(indices):
                     w.writerow([
@@ -166,6 +168,7 @@ def main():
                         float(pos_err_norm[row_i]),
                         *chosen_q[row_i].tolist(),
                         *measured_q[row_i].tolist(),
+                        *joint_err_deg[row_i].tolist(),
                     ])
 
             # Plot overlay: planned curve (blue), chosen points (red), achieved (green) + connections
@@ -197,17 +200,46 @@ def main():
                 print(f"[WARN] Plotting failed: {e}")
 
             # Save JSON aggregate
+            joint_mean_abs_deg = abs_joint_err_deg.mean(axis=0).tolist()
+            joint_median_abs_deg = np.median(abs_joint_err_deg, axis=0).tolist()
+            joint_max_abs_deg = abs_joint_err_deg.max(axis=0).tolist()
+            joint_rmse_deg = np.sqrt((joint_err_deg ** 2).mean(axis=0)).tolist()
+
             summary = {
                 "indices": indices,
                 "mean_err_m": float(pos_err_norm.mean()),
                 "median_err_m": float(np.median(pos_err_norm)),
                 "max_err_m": float(pos_err_norm.max()),
                 "min_err_m": float(pos_err_norm.min()),
+                "joint_names": joint_names,
+                "joint_mean_abs_err_deg": joint_mean_abs_deg,
+                "joint_median_abs_err_deg": joint_median_abs_deg,
+                "joint_max_abs_err_deg": joint_max_abs_deg,
+                "joint_rmse_deg": joint_rmse_deg,
             }
             (out_dir / "fk_compare_multi.json").write_text(json.dumps(summary, indent=2))
 
             print(json.dumps(summary, indent=2))
             print("Output dir:", out_dir)
+
+            # Optional: per-joint error bar plot (deg)
+            try:
+                import matplotlib.pyplot as plt
+                x = np.arange(len(joint_names))
+                fig = plt.figure(figsize=(7, 4))
+                ax = fig.add_subplot(111)
+                ax.bar(x - 0.2, joint_mean_abs_deg, width=0.4, label="mean |err|")
+                ax.bar(x + 0.2, joint_max_abs_deg, width=0.4, label="max |err|")
+                ax.set_xticks(x)
+                ax.set_xticklabels(joint_names, rotation=20)
+                ax.set_ylabel("Error [deg]")
+                ax.set_title("Per-joint absolute position error (deg)")
+                ax.legend()
+                fig.tight_layout()
+                fig.savefig(out_dir / "fk_compare_joint_error_deg.png", dpi=150)
+                plt.close(fig)
+            except Exception as e:
+                print(f"[WARN] Joint error plotting failed: {e}")
 
             return
         # ---- Single-point mode below ----
