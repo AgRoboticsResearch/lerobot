@@ -199,6 +199,37 @@ def main():
             except Exception as e:
                 print(f"[WARN] Plotting failed: {e}")
 
+            # Joint-space 3D PCA plot: IK (chosen_q) vs measured_q, with connections
+            try:
+                import matplotlib.pyplot as plt
+                from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+                # PCA via SVD on concatenated joint data (centered)
+                X = np.vstack([chosen_q, measured_q])  # shape (2N, D)
+                mean = X.mean(axis=0, keepdims=True)
+                Xc = X - mean
+                U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+                W = Vt[:3].T  # D x 3
+                ch3 = (chosen_q - mean) @ W
+                me3 = (measured_q - mean) @ W
+
+                fig = plt.figure(figsize=(7, 7))
+                ax = fig.add_subplot(111, projection="3d")
+                ax.scatter(ch3[:,0], ch3[:,1], ch3[:,2], c="r", s=36, label="IK joints (chosen)")
+                ax.scatter(me3[:,0], me3[:,1], me3[:,2], c="g", s=36, label="Measured joints")
+                for k in range(ch3.shape[0]):
+                    ax.plot([ch3[k,0], me3[k,0]],[ch3[k,1], me3[k,1]],[ch3[k,2], me3[k,2]], c="gray", alpha=0.4)
+                ax.set_xlabel("PC1 [deg]")
+                ax.set_ylabel("PC2 [deg]")
+                ax.set_zlabel("PC3 [deg]")
+                ax.set_title("Joint-space (PCA-3D): IK vs Measured")
+                ax.legend()
+                fig.tight_layout()
+                fig.savefig(out_dir / "fk_compare_joint_space_pca.png", dpi=150)
+                plt.close(fig)
+            except Exception as e:
+                print(f"[WARN] Joint-space PCA plotting failed: {e}")
+
             # Save JSON aggregate
             joint_mean_abs_deg = abs_joint_err_deg.mean(axis=0).tolist()
             joint_median_abs_deg = np.median(abs_joint_err_deg, axis=0).tolist()
