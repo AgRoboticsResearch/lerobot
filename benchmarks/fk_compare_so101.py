@@ -230,6 +230,56 @@ def main():
             except Exception as e:
                 print(f"[WARN] Joint-space PCA plotting failed: {e}")
 
+            # Per-joint parity plots: measured vs IK (y vs x) with y=x reference
+            try:
+                import matplotlib.pyplot as plt
+
+                cols = 3
+                rows = 2
+                fig, axes = plt.subplots(rows, cols, figsize=(12, 8))
+                axes = axes.flatten()
+                for j, name in enumerate(joint_names):
+                    ax = axes[j]
+                    x = chosen_q[:, j]
+                    y = measured_q[:, j]
+                    mn = float(min(x.min(), y.min()))
+                    mx = float(max(x.max(), y.max()))
+                    pad = 0.05 * (mx - mn + 1e-6)
+                    ax.plot([mn - pad, mx + pad], [mn - pad, mx + pad], c="k", lw=1, ls="--", alpha=0.6, label="y=x")
+                    ax.scatter(x, y, c="tab:green", s=18, alpha=0.9)
+                    ax.set_xlabel("IK [deg]")
+                    ax.set_ylabel("Measured [deg]")
+                    ax.set_title(name)
+                for k in range(len(joint_names), rows * cols):
+                    fig.delaxes(axes[k])
+                fig.suptitle("Per-joint parity: measured vs IK (deg)")
+                fig.tight_layout()
+                fig.savefig(out_dir / "fk_compare_joint_parity.png", dpi=150)
+                plt.close(fig)
+            except Exception as e:
+                print(f"[WARN] Joint parity plotting failed: {e}")
+
+            # Per-joint series plots across sampled points: IK vs measured with connections
+            try:
+                import matplotlib.pyplot as plt
+
+                fig, axes = plt.subplots(5, 1, figsize=(10, 10), sharex=True)
+                idx = np.arange(len(indices))
+                for j, name in enumerate(joint_names):
+                    ax = axes[j]
+                    ax.plot(idx, chosen_q[:, j], "o-", c="r", ms=4, lw=1, label="IK")
+                    ax.plot(idx, measured_q[:, j], "o-", c="g", ms=4, lw=1, label="Measured")
+                    ax.set_ylabel(f"{name} [deg]")
+                    ax.grid(True, alpha=0.3)
+                    if j == 0:
+                        ax.legend(loc="upper right")
+                axes[-1].set_xlabel("sample index")
+                fig.tight_layout()
+                fig.savefig(out_dir / "fk_compare_joint_series.png", dpi=150)
+                plt.close(fig)
+            except Exception as e:
+                print(f"[WARN] Joint series plotting failed: {e}")
+
             # Save JSON aggregate
             joint_mean_abs_deg = abs_joint_err_deg.mean(axis=0).tolist()
             joint_median_abs_deg = np.median(abs_joint_err_deg, axis=0).tolist()
