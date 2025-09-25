@@ -120,6 +120,10 @@ def main():
     parser.add_argument("--print_present", action="store_true", help="Connect, print current joint degrees, and exit")
     parser.add_argument("--print_calibration_limits", action="store_true", help="Print calibrated joint min/max in degrees and exit")
     parser.add_argument("--print_urdf_limits", action="store_true", help="Parse URDF joint <limit> lower/upper (rad) convert to deg and exit")
+    # Execution options for precomputed joint trajectories
+    parser.add_argument("--execute_full_curve", action="store_true", help="If set with --joint_traj_npz, play the entire joint trajectory at --fps")
+    parser.add_argument("--execute_stride", type=int, default=1, help="Subsample precomputed trajectory by this stride when executing full curve")
+    parser.add_argument("--execute_repeat", type=int, default=1, help="Repeat each executed step this many frames to slow down playback")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -420,22 +424,41 @@ def main():
                         commanded_joints.append(q_cmd.copy())
                         measured_joints.append(q_meas.copy())
                         w.writerow([i, int(reached), max_err if max_err is not None else "NA"])  # noqa: T201
-            # Ensure we have the full curve for overlay
+            # Prepare the full planned curve for plotting
             if planned_full_xyz is None:
                 pts = []
                 for q in precomputed_joint_traj:
                     T = kin.forward_kinematics(q)
                     pts.append(T[:3, 3].copy())
                 planned_full_xyz = np.asarray(pts)
-            else:
-                # Do NOT execute the full curve. Only visualize it and continue to plotting.
-                if planned_full_xyz is None:
-                    pts = []
-                    for q in precomputed_joint_traj:
-                        T = kin.forward_kinematics(q)
-                        pts.append(T[:3, 3].copy())
-                    planned_full_xyz = np.asarray(pts)
-                # Leave desired/achieved/expected empty so the plot shows only the curve
+
+            # Optionally execute the full precomputed joint trajectory
+            if args.execute_full_curve:
+                stride = max(1, int(args.execute_stride))
+                repeat = max(1, int(args.execute_repeat))
+                for i in range(0, precomputed_joint_traj.shape[0], stride):
+                    q_cmd = precomputed_joint_traj[i]
+                    T_cmd = kin.forward_kinematics(q_cmd)
+                    for _ in range(repeat):
+                        step_start = time.perf_counter()
+                        action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_cmd)}
+                        action["gripper.pos"] = gripper_pos
+                        robot.send_action(action)
+
+                        remaining = dt - (time.perf_counter() - step_start)
+                        if remaining > 0:
+                            time.sleep(remaining)
+
+                        present_meas = robot.bus.sync_read("Present_Position")
+                        q_meas = np.array([present_meas[n] for n in joint_names], dtype=np.float64)
+                        T_meas = kin.forward_kinematics(q_meas)
+
+                        desired_xyz.append(T_cmd[:3, 3].copy())
+                        achieved_xyz.append(T_meas[:3, 3].copy())
+                        expected_xyz.append(T_cmd[:3, 3].copy())
+                        commanded_joints.append(q_cmd.copy())
+                        measured_joints.append(q_meas.copy())
+            # Else keep arrays empty so we only visualize the curve
         else:
             for i, T_des in enumerate(desired_poses):
                 step_start = time.perf_counter()
