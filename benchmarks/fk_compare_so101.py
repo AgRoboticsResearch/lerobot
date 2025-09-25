@@ -58,6 +58,8 @@ def main():
     parser.add_argument("--isolate_values_deg", type=str, default=None, help="Comma-separated explicit values for the isolated joint (deg)")
     parser.add_argument("--isolate_span_deg", type=str, default=None, help="min,max in deg for the isolated joint sweep")
     parser.add_argument("--isolate_steps", type=int, default=11, help="Number of steps if --isolate_span_deg is used")
+    # Plot control
+    parser.add_argument("--series_ylim_abs_deg", type=float, default=None, help="If set, apply symmetric y-limits +/- this value to all series subplots [deg]")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -328,6 +330,9 @@ def main():
                     ax.plot(idx, chosen_q[:, j], "o-", c="r", ms=4, lw=1, label="IK")
                     ax.plot(idx, measured_q[:, j], "o-", c="g", ms=4, lw=1, label="Measured")
                     ax.set_ylabel(f"{name} [deg]")
+                    if args.series_ylim_abs_deg is not None:
+                        lim = float(args.series_ylim_abs_deg)
+                        ax.set_ylim(-lim, lim)
                     ax.grid(True, alpha=0.3)
                     if j == 0:
                         ax.legend(loc="upper right")
