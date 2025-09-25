@@ -55,6 +55,9 @@ def main():
     parser.add_argument("--isolate_joint_name", type=str, default=None, help="If set, only this joint moves; others fixed to base pose")
     parser.add_argument("--base_degrees", type=str, default=None, help="Comma-separated base joint degrees when isolating a joint")
     parser.add_argument("--use_measured_as_base", action="store_true", help="Use current measured joints as base when isolating a joint")
+    parser.add_argument("--isolate_values_deg", type=str, default=None, help="Comma-separated explicit values for the isolated joint (deg)")
+    parser.add_argument("--isolate_span_deg", type=str, default=None, help="min,max in deg for the isolated joint sweep")
+    parser.add_argument("--isolate_steps", type=int, default=11, help="Number of steps if --isolate_span_deg is used")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -141,13 +144,43 @@ def main():
                 else:
                     base_q = traj[indices[0]].copy()
 
-            for i in indices:
-                q_t_full = traj[i]
-                if iso_idx is not None:
-                    q_t = base_q.copy()
-                    q_t[iso_idx] = q_t_full[iso_idx]
+            # Build target sequence, possibly overriding with isolated joint sweep
+            target_q_list = []
+            if iso_idx is not None and (args.isolate_values_deg or args.isolate_span_deg):
+                if args.isolate_values_deg:
+                    iso_values = np.asarray([float(x) for x in args.isolate_values_deg.split(",")], dtype=np.float64)
                 else:
-                    q_t = q_t_full
+                    lo, hi = [float(x) for x in args.isolate_span_deg.split(",")]
+                    steps = max(2, int(args.isolate_steps))
+                    iso_values = np.linspace(lo, hi, steps)
+                for val in iso_values:
+                    q_t = base_q.copy()
+                    q_t[iso_idx] = float(val)
+                    target_q_list.append(q_t)
+                indices = list(range(len(target_q_list)))
+            else:
+                # Use NPZ-selected points; if isolated joint has negligible variation, warn and create a small ±10 deg sweep
+                if iso_idx is not None:
+                    q_vals = traj[indices, iso_idx]
+                    if float(np.ptp(q_vals)) < 1e-3:
+                        print(f"[WARN] Isolated joint '{args.isolate_joint_name}' has ~no variation in NPZ selection; creating ±10 deg sweep around base")
+                        iso_values = np.linspace(base_q[iso_idx] - 10.0, base_q[iso_idx] + 10.0, 11)
+                        for val in iso_values:
+                            q_t = base_q.copy()
+                            q_t[iso_idx] = float(val)
+                            target_q_list.append(q_t)
+                        indices = list(range(len(target_q_list)))
+                if not target_q_list:
+                    for i in indices:
+                        q_t_full = traj[i]
+                        if iso_idx is not None:
+                            q_t = base_q.copy()
+                            q_t[iso_idx] = q_t_full[iso_idx]
+                        else:
+                            q_t = q_t_full
+                        target_q_list.append(q_t)
+
+            for q_t in target_q_list:
                 action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_t)}
                 action["gripper.pos"] = gripper_pos
 
