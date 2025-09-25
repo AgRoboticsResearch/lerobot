@@ -237,7 +237,7 @@ def main():
     parser.add_argument("--target_frame_name", type=str, default="gripper_frame_link")
     parser.add_argument("--joint_names", type=str, default="shoulder_pan,shoulder_lift,elbow_flex,wrist_flex,wrist_roll")
     parser.add_argument("--mid_joints_deg", type=str, default=None, help="Comma-separated degrees. Defaults to zeros.")
-    parser.add_argument("--traj_type", type=str, choices=["circle", "line"], default="circle")
+    parser.add_argument("--traj_type", type=str, choices=["circle", "line", "line_xyz"], default="circle")
     parser.add_argument("--line_axis", type=str, choices=["x", "y", "z"], default="x")
     parser.add_argument("--line_amplitude_m", type=float, default=0.05)
     parser.add_argument("--num_points_per_axis", type=int, default=None)
