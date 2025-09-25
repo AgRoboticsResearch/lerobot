@@ -60,6 +60,15 @@ def main():
     parser.add_argument("--isolate_steps", type=int, default=11, help="Number of steps if --isolate_span_deg is used")
     # Plot control
     parser.add_argument("--series_ylim_abs_deg", type=float, default=None, help="If set, apply symmetric y-limits +/- this value to all series subplots [deg]")
+    parser.add_argument(
+        "--series_ylim_deg",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated per-joint symmetric y-limits [deg] in joint_names order. "
+            "Example for 5 DoF: '10,30,30,15,3' sets ±10, ±30, ±30, ±15, ±3."
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -325,12 +334,25 @@ def main():
 
                 fig, axes = plt.subplots(5, 1, figsize=(10, 10), sharex=True)
                 idx = np.arange(len(indices))
+                per_joint_limits = None
+                if args.series_ylim_deg is not None:
+                    try:
+                        vals = [float(x) for x in args.series_ylim_deg.split(",")]
+                        if len(vals) != len(joint_names):
+                            raise ValueError
+                        per_joint_limits = vals
+                    except Exception:
+                        print("[WARN] --series_ylim_deg must have one value per joint; ignoring")
+                        per_joint_limits = None
                 for j, name in enumerate(joint_names):
                     ax = axes[j]
                     ax.plot(idx, chosen_q[:, j], "o-", c="r", ms=4, lw=1, label="IK")
                     ax.plot(idx, measured_q[:, j], "o-", c="g", ms=4, lw=1, label="Measured")
                     ax.set_ylabel(f"{name} [deg]")
-                    if args.series_ylim_abs_deg is not None:
+                    if per_joint_limits is not None:
+                        lim = float(per_joint_limits[j])
+                        ax.set_ylim(-lim, lim)
+                    elif args.series_ylim_abs_deg is not None:
                         lim = float(args.series_ylim_abs_deg)
                         ax.set_ylim(-lim, lim)
                     ax.grid(True, alpha=0.3)
