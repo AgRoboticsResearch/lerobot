@@ -1,1 +1,10 @@
-python /Users/moky/Codes/lerobot/benchmarks/fk_compare_so101.py   --urdf_path /Users/moky/Codes/lerobot/SO101/so101_new_calib.urdf   --port /dev/tty.usbmodem5A680133071   --joint_traj_npz /Users/moky/Codes/lerobot/ik_eval_out/ik_eval_results.npz   --sample_points 20 --sample_seed 0   --plot_units cm   --out_dir /Users/moky/Codes/lerobot/fk_compare_out
+python /Users/moky/Codes/lerobot/benchmarks/fk_compare_so101.py   --urdf_path /Users/moky/Codes/lerobot/SO101/so101_new_calib.urdf   --port /dev/tty.usbmodem5A7A0586491   --joint_traj_npz /Users/moky/Codes/lerobot/ik_eval_out_circle/ik_eval_results.npz   --sample_points 20 --sample_seed 0   --plot_units cm   --out_dir /Users/moky/Codes/lerobot/fk_compare_out_new_urdf
+
+
+
+python /Users/moky/Codes/lerobot/benchmarks/ik_track_so101_hw.py \
+  --urdf_path /Users/moky/Codes/lerobot/SO101/so101_new_calib.urdf \
+  --port /dev/tty.usbmodem5A680107401 --print_calibration_limits
+python /Users/moky/Codes/lerobot/benchmarks/ik_track_so101_hw.py \
+  --urdf_path /Users/moky/Codes/lerobot/SO101/so101_new_calib.urdf \
+  --port /dev/tty.usbmodem5A680107401 --print_urdf_limits
