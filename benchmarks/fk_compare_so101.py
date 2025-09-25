@@ -51,6 +51,10 @@ def main():
     parser.add_argument("--sample_points", type=int, default=None, help="Randomly sample K indices from NPZ trajectory")
     parser.add_argument("--test_point_indices", type=str, default=None, help="Comma-separated indices into the NPZ joint trajectory")
     parser.add_argument("--sample_seed", type=int, default=0)
+    # Joint isolation (e.g., only move wrist_roll)
+    parser.add_argument("--isolate_joint_name", type=str, default=None, help="If set, only this joint moves; others fixed to base pose")
+    parser.add_argument("--base_degrees", type=str, default=None, help="Comma-separated base joint degrees when isolating a joint")
+    parser.add_argument("--use_measured_as_base", action="store_true", help="Use current measured joints as base when isolating a joint")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -121,8 +125,29 @@ def main():
             measured_q = []
 
             gripper_pos = robot.bus.sync_read("Present_Position")["gripper"]
+
+            # Isolation setup
+            iso_idx = None
+            base_q = None
+            if args.isolate_joint_name:
+                if args.isolate_joint_name not in joint_names:
+                    raise ValueError(f"isolate_joint_name '{args.isolate_joint_name}' not in joint_names {joint_names}")
+                iso_idx = joint_names.index(args.isolate_joint_name)
+                if args.base_degrees is not None:
+                    base_q = parse_degrees_list(args.base_degrees, expected_len=len(joint_names))
+                elif args.use_measured_as_base:
+                    present0 = robot.bus.sync_read("Present_Position")
+                    base_q = np.array([present0[n] for n in joint_names], dtype=np.float64)
+                else:
+                    base_q = traj[indices[0]].copy()
+
             for i in indices:
-                q_t = traj[i]
+                q_t_full = traj[i]
+                if iso_idx is not None:
+                    q_t = base_q.copy()
+                    q_t[iso_idx] = q_t_full[iso_idx]
+                else:
+                    q_t = q_t_full
                 action = {f"{name}.pos": float(val) for name, val in zip(joint_names, q_t)}
                 action["gripper.pos"] = gripper_pos
 
