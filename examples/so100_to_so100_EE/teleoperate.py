@@ -39,9 +39,9 @@ FPS = 30
 
 # Initialize the robot and teleoperator config
 follower_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
+    port="/dev/ttyACM0", id="so101_follower", use_degrees=True
 )
-leader_config = SO100LeaderConfig(port="/dev/tty.usbmodem5A460819811", id="my_awesome_leader_arm")
+leader_config = SO100LeaderConfig(port="/dev/ttyACM1", id="so101_leader")
 
 # Initialize the robot and teleoperator
 follower = SO100Follower(follower_config)
@@ -49,14 +49,14 @@ leader = SO100Leader(leader_config)
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 follower_kinematics_solver = RobotKinematics(
-    urdf_path="./SO101/so101_new_calib.urdf",
+    urdf_path="./SO-ARM100/Simulation/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(follower.bus.motors.keys()),
 )
 
 # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 leader_kinematics_solver = RobotKinematics(
-    urdf_path="./SO101/so101_new_calib.urdf",
+    urdf_path="./SO-ARM100/Simulation/SO101/so101_new_calib.urdf",
     target_frame_name="gripper_frame_link",
     joint_names=list(leader.bus.motors.keys()),
 )
@@ -108,10 +108,11 @@ while True:
 
     # teleop joints -> teleop EE action
     leader_ee_act = leader_to_ee(leader_joints_obs)
+    print("leader_ee_act: ", leader_ee_act)
 
     # teleop EE -> robot joints
     follower_joints_act = ee_to_follower_joints((leader_ee_act, robot_obs))
-
+    print("follower_joints_act: ", follower_joints_act)
     # Send action to robot
     _ = follower.send_action(follower_joints_act)
 

@@ -37,19 +37,22 @@ import draccus
 import numpy as np
 
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.robots import (  # noqa: F401
-    RobotConfig,
-    koch_follower,
-    make_robot_from_config,
-    so100_follower,
-)
-from lerobot.teleoperators import (  # noqa: F401
-    TeleoperatorConfig,
-    gamepad,
-    koch_leader,
-    make_teleoperator_from_config,
-    so100_leader,
-)
+from lerobot.robots import RobotConfig, make_robot_from_config  # noqa: F401
+from lerobot.robots import koch_follower, so100_follower  # noqa: F401
+
+# Optional: register external robots (like Piper) if the package is available
+try:  # noqa: SIM105
+    from lerobot_robot_piper import PiperConfig  # noqa: F401
+except ImportError:  # pragma: no cover
+    PiperConfig = None  # type: ignore[assignment]
+from lerobot.teleoperators import TeleoperatorConfig, make_teleoperator_from_config  # noqa: F401
+from lerobot.teleoperators import gamepad, koch_leader, so100_leader  # noqa: F401
+
+# Import SO101 leader teleop so `--teleop.type=so101_leader` is available
+try:  # noqa: SIM105
+    from lerobot.teleoperators import so101_leader  # noqa: F401
+except ImportError:  # pragma: no cover
+    so101_leader = None  # type: ignore[assignment]
 from lerobot.utils.robot_utils import busy_wait
 
 
