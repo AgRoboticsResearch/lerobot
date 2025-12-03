@@ -23,6 +23,7 @@ venv.bak/
 __pypackages__/
 node_modules/
 lerobot_robot_piper/
+example_demo_session/
 
 # Lock files
 poetry.lock

@@ -119,20 +119,59 @@ class IOSPhone(BasePhone, Teleoperator):
             A tuple containing the position (np.ndarray) and rotation (Rotation) of the phone at the
             moment the trigger was activated.
         """
+        last_warning_time = 0.0
+        warning_interval = 3.0  # Print warning every 3 seconds
+        start_time = time.time()
+        last_button_state = False
+        
         while True:
             has_pose, position, rotation, fb_pose = self._read_current_pose()
-            if not has_pose:
-                time.sleep(0.01)
-                continue
-
-            io = getattr(fb_pose, "io", None)
-            button_b = getattr(io, "b", None) if io is not None else None
+            
+            # Check button state (this works even without ARKit)
             button_b1_pressed = False
-            if button_b is not None:
-                button_b1_pressed = bool(button_b.get_int(1))
-            if button_b1_pressed:
-                return position, rotation
-
+            if fb_pose is not None:
+                io = getattr(fb_pose, "io", None)
+                button_b = getattr(io, "b", None) if io is not None else None
+                if button_b is not None:
+                    try:
+                        button_b1_pressed = bool(button_b.get_int(1))
+                    except Exception:
+                        pass
+            
+            current_time = time.time()
+            
+            # Detect button press
+            if button_b1_pressed and not last_button_state:
+                print("✓ B1 button pressed!")
+                if has_pose:
+                    print("✓ ARKit pose data available!")
+                    return position, rotation
+                else:
+                    print(
+                        f"\n⚠️  B1 detected, but ARKit pose data is missing!\n"
+                        f"   Troubleshooting:\n"
+                        f"   1. Enable ARKit in HEBI Mobile I/O app settings\n"
+                        f"   2. Grant Camera: iOS Settings → HEBI Mobile I/O → Camera\n"
+                        f"   3. Point camera at textured surface (ARKit needs visual features)\n"
+                        f"   4. Keep app in FOREGROUND\n"
+                        f"   5. Try restarting HEBI Mobile I/O app\n"
+                    )
+            elif button_b1_pressed and not has_pose:
+                # Button held but still no ARKit
+                if current_time - last_warning_time >= warning_interval:
+                    print("⚠️  Still waiting for ARKit data... (keep B1 pressed)")
+                    last_warning_time = current_time
+            elif not has_pose and current_time - last_warning_time >= warning_interval:
+                # No button and no pose - periodic status
+                elapsed = current_time - start_time
+                print(
+                    f"\n⏳ Waiting... (elapsed: {elapsed:.0f}s)\n"
+                    f"   Status: No ARKit data | B1: {'PRESSED' if button_b1_pressed else 'not pressed'}\n"
+                    f"   Action: Press and HOLD B1 in HEBI Mobile I/O app\n"
+                )
+                last_warning_time = current_time
+            
+            last_button_state = button_b1_pressed
             time.sleep(0.01)
 
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
@@ -151,12 +190,21 @@ class IOSPhone(BasePhone, Teleoperator):
             - The orientation as a `Rotation` object, or None if not available.
             - The raw HEBI feedback object for accessing other data like button presses.
         """
-        fbk = self._group.get_next_feedback()
-        pose = fbk[0]
+        try:
+            # Use timeout to avoid blocking indefinitely
+            fbk = self._group.get_next_feedback(receive_timeout_ms=100)
+            if fbk is None:
+                return False, None, None, None
+            pose = fbk[0]
+        except Exception as e:
+            # If feedback fails, return no data
+            return False, None, None, None
+        
         ar_pos = getattr(pose, "ar_position", None)
         ar_quat = getattr(pose, "ar_orientation", None)
         if ar_pos is None or ar_quat is None:
-            return False, None, None, None
+            # Return False for has_pose, but still return the pose object so we can check buttons
+            return False, None, None, pose
         # HEBI provides orientation in w, x, y, z format.
         # Scipy's Rotation expects x, y, z, w.
         quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw

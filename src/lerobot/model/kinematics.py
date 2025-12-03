@@ -14,6 +14,8 @@
 
 import numpy as np
 
+from lerobot.utils.rotation import Rotation
+
 
 class RobotKinematics:
     """Robot kinematics using placo library for forward and inverse kinematics."""
@@ -84,7 +86,8 @@ class RobotKinematics:
         orientation_weight: float = 0.01,
     ) -> np.ndarray:
         """
-        Compute inverse kinematics using placo solver.
+        Compute inverse kinematics using placo solver with multi-start optimization
+        to find solutions close to the initial guess.
 
         Args:
             current_joint_pos: Current joint positions in degrees (used as initial guess)
@@ -95,38 +98,97 @@ class RobotKinematics:
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
-
         # Convert current joint positions to radians for initial guess
         current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
-
-        # Set current joint positions as initial guess
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, current_joint_rad[i])
+        current_joint_deg = current_joint_pos[: len(self.joint_names)].copy()
 
         # Update the target pose for the frame task
         self.tip_frame.T_world_frame = desired_ee_pose
 
-        # Configure the task based on position_only flag
+        # Configure the task
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Multi-start approach: try multiple initial guesses and select the best
+        # This helps avoid converging to distant solution branches
+        best_solution = None
+        best_cost = float('inf')
+        
+        # Generate initial guesses: original + small perturbations
+        initial_guesses = [
+            current_joint_rad,  # Original guess
+        ]
+        
+        # Add small perturbations (in radians) to explore nearby solutions
+        perturbation_magnitudes = [0.05, 0.1, 0.2]  # ~3°, 6°, 11° in degrees
+        for pert_mag in perturbation_magnitudes:
+            for _ in range(3):  # 3 random perturbations per magnitude
+                perturbation = np.random.uniform(-pert_mag, pert_mag, size=len(current_joint_rad))
+                initial_guesses.append(current_joint_rad + perturbation)
 
-        # Extract joint positions
-        joint_pos_rad = []
-        for joint_name in self.joint_names:
-            joint = self.robot.get_joint(joint_name)
-            joint_pos_rad.append(joint)
+        # Try each initial guess
+        for initial_guess_rad in initial_guesses:
+            # Set initial guess
+            for i, joint_name in enumerate(self.joint_names):
+                self.robot.set_joint(joint_name, initial_guess_rad[i])
 
-        # Convert back to degrees
-        joint_pos_deg = np.rad2deg(joint_pos_rad)
+            # Solve IK with multiple iterations
+            max_solve_iterations = 10
+            for _ in range(max_solve_iterations):
+                self.solver.solve(True)
+                self.robot.update_kinematics()
+                
+                # Check convergence
+                current_pose = self.robot.get_T_world_frame(self.target_frame_name)
+                pos_error = np.linalg.norm(desired_ee_pose[:3, 3] - current_pose[:3, 3])
+                
+                if pos_error < 1e-4:  # 0.1mm tolerance
+                    break
+
+            # Extract solution
+            joint_pos_rad = []
+            for joint_name in self.joint_names:
+                joint = self.robot.get_joint(joint_name)
+                joint_pos_rad.append(joint)
+            
+            joint_pos_deg = np.rad2deg(joint_pos_rad)
+            
+            # Compute achieved pose
+            achieved_pose = self.robot.get_T_world_frame(self.target_frame_name)
+            
+            # Compute errors
+            pos_error = np.linalg.norm(desired_ee_pose[:3, 3] - achieved_pose[:3, 3])
+            
+            # Rotation error using rotation vectors
+            rot_desired = Rotation.from_matrix(desired_ee_pose[:3, :3])
+            rot_achieved = Rotation.from_matrix(achieved_pose[:3, :3])
+            rot_error = np.linalg.norm((rot_desired.inv() * rot_achieved).as_rotvec())
+            
+            # Joint deviation from initial guess (penalize large changes)
+            joint_deviation = np.linalg.norm(joint_pos_deg - current_joint_deg)
+            
+            # Combined cost: prioritize position and orientation accuracy, 
+            # but also penalize large joint deviations
+            # Weights: position (mm), rotation (degrees), joint deviation (degrees)
+            cost = (
+                pos_error * 1000.0 +  # Position error in mm
+                np.degrees(rot_error) * 10.0 +  # Rotation error in degrees (weighted more)
+                joint_deviation * 0.1  # Joint deviation penalty (small weight)
+            )
+            
+            # Update best solution if this is better
+            if cost < best_cost:
+                best_cost = cost
+                best_solution = joint_pos_deg.copy()
+
+        # If no solution found (shouldn't happen), use the last one
+        if best_solution is None:
+            best_solution = joint_pos_deg.copy()
 
         # Preserve gripper position if present in current_joint_pos
         if len(current_joint_pos) > len(self.joint_names):
             result = np.zeros_like(current_joint_pos)
-            result[: len(self.joint_names)] = joint_pos_deg
+            result[: len(self.joint_names)] = best_solution
             result[len(self.joint_names) :] = current_joint_pos[len(self.joint_names) :]
             return result
         else:
-            return joint_pos_deg
+            return best_solution

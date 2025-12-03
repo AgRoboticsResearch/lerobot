@@ -36,7 +36,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 from lerobot.robots.so100_follower.so100_follower import SO100Follower
 from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
 from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.rotation import Rotation
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -166,7 +166,7 @@ try:
         if leader_prev_ee_pose is None:
             leader_prev_ee_pose = leader_ee_pose.copy()
             # Skip this iteration to have a valid previous pose for next iteration
-            busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+            precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
             continue
 
         # Extract positions
@@ -260,7 +260,7 @@ try:
             avg_rot_error = np.mean(recorded_data["rotation_errors"][-30:])
             print(f"Avg position error (last 1s): {avg_pos_error*1000:.2f}mm, Avg rotation error: {np.degrees(avg_rot_error):.2f}°")
 
-        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
 
 # After loop ends (Ctrl+C), visualize and save results
 except KeyboardInterrupt:
