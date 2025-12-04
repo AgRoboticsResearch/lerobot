@@ -24,6 +24,7 @@ __pypackages__/
 node_modules/
 lerobot_robot_piper/
 example_demo_session/
+sroi_vio/
 
 # Lock files
 poetry.lock
