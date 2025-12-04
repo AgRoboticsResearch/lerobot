@@ -18,9 +18,9 @@ def load_robot(robot_name):
         initial_joints = {
             'joint1': 0.0,
             'joint2': 1.0,
-            'joint3': -1.0,
+            'joint3': -0.5,
             'joint4': 0.0,
-            'joint5': -0.2,
+            'joint5': -0.7,
             'joint6': 0.0
         }
     elif robot_name == 'so101':
