@@ -5,9 +5,10 @@ from ischedule import schedule, run_loop
 import os
 import argparse
 from scipy.spatial.transform import Rotation as R
+from lerobot.model.kinematics import RobotKinematics
 
 """
-Replays the relative VIO trajectory on a robot (Piper or SO-101) using IK.
+Replays the relative VIO trajectory on a robot (Piper or SO-101) using LeRobot Kinematics.
 """
 
 def load_robot(robot_name):
@@ -23,6 +24,7 @@ def load_robot(robot_name):
             'joint5': -0.7,
             'joint6': 0.0
         }
+        joint_names = None # Use default from URDF
     elif robot_name == 'so101':
         urdf_path = os.path.join(current_dir, "../SO-ARM100/Simulation/SO101/so101_new_calib.urdf")
         effector_frame = "gripper_frame_link"
@@ -34,21 +36,30 @@ def load_robot(robot_name):
             'wrist_roll': 0.0,
             'gripper': 0.0
         }
+        # Explicitly list joint names if needed, or let RobotKinematics infer
+        joint_names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
     else:
         raise ValueError(f"Unknown robot: {robot_name}")
 
     print(f"Loading robot from: {urdf_path}")
-    robot = placo.RobotWrapper(urdf_path)
     
-    # Set initial configuration
+    kinematics = RobotKinematics(
+        urdf_path=urdf_path,
+        target_frame_name=effector_frame,
+        joint_names=joint_names
+    )
+    
+    # Set initial configuration using the underlying placo robot wrapper
+    # RobotKinematics doesn't expose a direct set_joint method for initialization, 
+    # but we can access .robot
     for joint, value in initial_joints.items():
         try:
-            robot.set_joint(joint, value)
+            kinematics.robot.set_joint(joint, value)
         except KeyError:
             print(f"Warning: Joint {joint} not found in robot")
             
-    robot.update_kinematics()
-    return robot, effector_frame
+    kinematics.robot.update_kinematics()
+    return kinematics, effector_frame, initial_joints
 
 def parse_kitti_trajectory(file_path):
     waypoints = []
@@ -102,16 +113,17 @@ def compute_raw_deltas(waypoints):
     return raw_deltas
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Replay VIO trajectory on robot")
+    parser = argparse.ArgumentParser(description="Replay VIO trajectory on robot using LeRobot Kinematics")
     parser.add_argument("file_path", help="Path to the trajectory file")
     parser.add_argument("--robot", choices=['piper', 'so101'], default='piper', help="Robot to use (piper or so101)")
     args = parser.parse_args()
 
-    # 1. Load Robot
-    robot, effector_frame = load_robot(args.robot)
+    # 1. Load Robot Kinematics
+    kinematics, effector_frame, initial_joints = load_robot(args.robot)
     
     # 2. Get Initial EE Pose (T_curr)
-    T_curr = robot.get_T_world_frame(effector_frame)
+    # Use the underlying robot wrapper to get the initial pose
+    T_curr = kinematics.robot.get_T_world_frame(effector_frame)
     print(f"Initial {effector_frame} pose:\n{T_curr}\n")
     
     # 3. Load Trajectory
@@ -144,47 +156,64 @@ if __name__ == "__main__":
         target_points.append(T_target[:3, 3])
 
     # 5. Visualization Loop
-    viz = robot_viz(robot)
-    solver = placo.KinematicsSolver(robot)
-    
-    solver.mask_fbase(True)
-    
-    # Task: End Effector Pose
-    task_ee = solver.add_frame_task(effector_frame, np.eye(4))
-    task_ee.configure("ee_pose", "soft", 10.0, 1.0)
-    
-    # Task: Regularization
-    task_reg = solver.add_regularization_task(1e-5)
-    
-    # Enable joints velocity limits
-    solver.enable_velocity_limits(True)
+    # We still use placo visualization utils, passing the underlying robot wrapper
+    viz = robot_viz(kinematics.robot)
     
     t = 0
     dt = 0.01
-    solver.dt = dt
     current_idx = 0
     
+    # Initial joint positions (degrees) for IK warm start
+    current_joints_deg = np.zeros(len(kinematics.joint_names))
+    # Fill in initial values
+    for i, name in enumerate(kinematics.joint_names):
+        if name in initial_joints:
+            current_joints_deg[i] = np.rad2deg(initial_joints[name])
+
     @schedule(interval=dt)
     def loop():
-        global t, current_idx
+        global t, current_idx, current_joints_deg
         t += dt
         
         # Update index
         current_idx = int((t * 30) % len(target_poses))
         T_target = target_poses[current_idx]
         
-        # Update Task Target
-        task_ee.T_world_frame = T_target
+        # Solve IK using LeRobot Kinematics
+        # Note: inverse_kinematics takes degrees and returns degrees
         
-        # Solve
-        solver.solve(True)
-        robot.update_kinematics()
+        # Get current joint positions in degrees for warm start
+        # We can read from the robot state, but since we are updating it, 
+        # we can also just use the result from the previous step.
+        # Let's read from robot to be safe and consistent.
+        
+        # Construct current_joints_deg from robot state
+        current_joints_rad = []
+        for name in kinematics.joint_names:
+            current_joints_rad.append(kinematics.robot.get_joint(name))
+        current_joints_deg_read = np.rad2deg(current_joints_rad)
+
+        computed_joints_deg = kinematics.inverse_kinematics(
+            current_joint_pos=current_joints_deg_read,
+            desired_ee_pose=T_target,
+            position_weight=1.0,
+            orientation_weight=1.0 # Enforce orientation as well
+        )
+        
+        # Update robot state for visualization
+        # RobotKinematics.inverse_kinematics doesn't automatically update the robot state
+        # It returns the joint values. We need to set them.
+        computed_joints_rad = np.deg2rad(computed_joints_deg)
+        for i, name in enumerate(kinematics.joint_names):
+            kinematics.robot.set_joint(name, computed_joints_rad[i])
+            
+        kinematics.robot.update_kinematics()
         
         # Update Visualization
-        viz.display(robot.state.q)
+        viz.display(kinematics.robot.state.q)
         
         # Visualize Target Frame
-        robot_frame_viz(robot, effector_frame)
+        robot_frame_viz(kinematics.robot, effector_frame)
         frame_viz("target", T_target)
         
         # Visualize Trajectory

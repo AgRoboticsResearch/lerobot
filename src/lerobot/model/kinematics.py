@@ -48,6 +48,8 @@ class RobotKinematics:
 
         self.target_frame_name = target_frame_name
 
+        self.target_frame_name = target_frame_name
+
         # Set joint names
         self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
 
