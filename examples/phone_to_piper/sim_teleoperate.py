@@ -17,6 +17,7 @@
 import time
 import argparse
 import numpy as np
+import copy  # Added copy
 
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
@@ -39,8 +40,9 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 # Placo visualization
+# Placo visualization
 import placo
-from placo_utils.visualization import robot_viz
+from placo_utils.visualization import robot_viz, robot_frame_viz
 
 FPS = 30
 
@@ -65,6 +67,9 @@ def main():
     # Initialize Teleoperator (Real Phone)
     teleop_device = Phone(teleop_config)
     teleop_device.connect()
+    
+    # Initialize the processor to handle mapping
+    mapper = MapPhoneActionToRobotAction(platform=phone_os_enum)
 
     # Initialize Robot Kinematics (Simulated Robot)
     # Using local path assumption similar to other scripts
@@ -107,11 +112,15 @@ def main():
             # 1. Get Teleop Action
             phone_obs = teleop_device.get_action()
             
-            # Check enabled state from raw inputs (since we parse it manually now)
-            # Note: teleop_device.get_action() returns a dict with 'phone.pos', etc.
-            # but 'enabled' is derived. We can respect 'phone.enabled'.
+            # Use the mapper to convert phone coordinates to robot coordinates
+            # We use deepcopy because mapper modifies the dictionary in-place (pops keys)
+            if not phone_obs:
+                time.sleep(0.01)
+                continue
+                
+            robot_action = mapper.action(copy.deepcopy(phone_obs))
             
-            enabled = phone_obs.get("phone.enabled", False)
+            enabled = robot_action.get("enabled", False)
             
             if enabled:
                 if not is_latched:
@@ -120,86 +129,82 @@ def main():
                     is_latched = True
                     print("Latched origin.")
 
-                # 2. Extract Deltas
-                pos = phone_obs.get("phone.pos") # [x, y, z]
-                rot = phone_obs.get("phone.rot") # Rotation object
+                # 2. Extract Deltas (already mapped by processor)
+                # We apply a 90-degree rotation around Z to align Phone frame with Robot frame
+                # Mapping: Phone (x, y, z) -> Robot (y, -x, z)
+                
+                # Translation:
+                # Phone Forward (+Y) -> Robot Forward (+X)
+                # robot_action['target_x'] is -PhoneY, so we negate it to get +PhoneY
+                dx = -robot_action.get("target_x", 0.0)
+                
+                # Phone Left (-X) -> Robot Left (+Y)
+                # robot_action['target_y'] is +PhoneX, so we negate it to get -PhoneX
+                dy = -robot_action.get("target_y", 0.0)
+                
+                dz = robot_action.get("target_z", 0.0)
+                
+                # Rotation:
+                # Must follow the same mapping as translation!
+                # Robot Wx = Phone Wy
+                twx = robot_action.get("target_wx", 0.0)
+                
+                # Robot Wy = -Phone Wx
+                twy = -robot_action.get("target_wy", 0.0)
+                
+                # Robot Wz = Phone Wz
+                # robot_action['target_wz'] is -PhoneWz, so we negate it to get +PhoneWz
+                twz = -robot_action.get("target_wz", 0.0)
 
-                if pos is not None and rot is not None:
-                    # 3. Construct Delta Transform
-                    # Apply mapping: Phone -> Robot
-                    # Phone: X, Y, Z. Robot: X (fwd), Y (left), Z (up).
-                    # Mapping from phone_processor.py:
-                    # tx = -pos[1] (Phone -Y -> Robot X)
-                    # ty = pos[0]  (Phone X -> Robot Y)
-                    # tz = pos[2]  (Phone Z -> Robot Z)
-                    
-                    dx = -pos[1]
-                    dy = pos[0]
-                    dz = pos[2]
-                    
-                    # Rotation Mapping
-                    rvec = rot.as_rotvec()
-                    twx = rvec[1]
-                    twy = rvec[0]
-                    twz = -rvec[2]
-                    
-                    # Construct T_delta
-                    # Position delta
-                    T_delta = np.eye(4)
-                    T_delta[:3, 3] = [dx, dy, dz]
-                    
-                    # Rotation delta
-                    from scipy.spatial.transform import Rotation
-                    # Create rotation matrix from mapped rotvec
-                    R_delta = Rotation.from_rotvec([twx, twy, twz]).as_matrix()
-                    T_delta[:3, :3] = R_delta
-                    
-                    # 4. Apply Delta to Origin
-                    # We treat T_delta as a displacement in the world frame relative to the origin.
-                    # R_target = R_delta * R_origin (Apply rotation change)
-                    # P_target = P_origin + P_delta (Apply position change)
-                    
-                    T_target = np.eye(4)
-                    # Apply rotation: R_target = R_delta @ R_origin (rotate the original frame by delta)
-                    # Or R_target = R_origin @ R_delta?
-                    # Phone rotation is "delta from calibration". 
-                    # If I tilt phone right, I want robot to tilt right.
-                    # Assuming R_delta represents the absolute rotation of the phone relative to calibration (Identity).
-                    # So we apply this rotation to the robot's origin rotation.
-                    
-                    # If R_origin is "neutral" (Identity-ish), R_target = R_delta * R_origin.
-                    # Let's try: T_target.R = R_delta @ T_origin.R
-                    
-                    T_target[:3, :3] = R_delta @ T_origin[:3, :3]
-                    
-                    # Apply position: T_target.P = T_origin.P + [dx, dy, dz]
-                    T_target[:3, 3] = T_origin[:3, 3] + [dx, dy, dz]
-                    
-                    # 5. Solve IK
-                    # Get current joints in degrees for seed
-                    current_joints_rad = []
-                    for name in robot_config.joint_names:
-                        current_joints_rad.append(kinematics_solver.robot.get_joint(name))
-                    current_joints_deg = np.rad2deg(current_joints_rad)
+                # 3. Construct Delta Transform
+                # Position delta
+                T_delta = np.eye(4)
+                T_delta[:3, 3] = [dx, dy, dz]
+                
+                # Rotation delta
+                from scipy.spatial.transform import Rotation
+                # Create rotation matrix from mapped rotvec
+                R_delta = Rotation.from_rotvec([twx, twy, twz]).as_matrix()
+                T_delta[:3, :3] = R_delta
+                
+                # 4. Apply Delta to Origin
+                # We treat T_delta as a displacement in the world frame relative to the origin.
+                
+                T_target = np.eye(4)
+                # Apply rotation: R_target = R_delta @ R_origin
+                T_target[:3, :3] = R_delta @ T_origin[:3, :3]
+                
+                # Apply position: T_target.P = T_origin.P + [dx, dy, dz]
+                T_target[:3, 3] = T_origin[:3, 3] + [dx, dy, dz]
+                
+                # 5. Solve IK
+                # Get current joints in degrees for seed
+                current_joints_rad = []
+                for name in robot_config.joint_names:
+                    current_joints_rad.append(kinematics_solver.robot.get_joint(name))
+                current_joints_deg = np.rad2deg(current_joints_rad)
 
-                    computed_joints_deg = kinematics_solver.inverse_kinematics(
-                        current_joint_pos=current_joints_deg,
-                        desired_ee_pose=T_target,
-                        position_weight=1.0,
-                        orientation_weight=0.1 # Relax orientation for position control test
-                    )
+                computed_joints_deg = kinematics_solver.inverse_kinematics(
+                    current_joint_pos=current_joints_deg,
+                    desired_ee_pose=T_target,
+                    position_weight=1.0,
+                    orientation_weight=0.1 # Relax orientation for position control test
+                )
 
-                    # 6. Update Robot
-                    computed_joints_rad = np.deg2rad(computed_joints_deg)
-                    for i, name in enumerate(robot_config.joint_names):
-                        kinematics_solver.robot.set_joint(name, computed_joints_rad[i])
-                    kinematics_solver.robot.update_kinematics()
+                # 6. Update Robot
+                computed_joints_rad = np.deg2rad(computed_joints_deg)
+                for i, name in enumerate(robot_config.joint_names):
+                    kinematics_solver.robot.set_joint(name, computed_joints_rad[i])
+                kinematics_solver.robot.update_kinematics()
 
             else:
                 is_latched = False
 
             # 7. Visualize
             viz.display(kinematics_solver.robot.state.q)
+            
+            # Visualize the gripper frame
+            robot_frame_viz(kinematics_solver.robot, "gripper_base")
             
             # Optional: Log to Rerun if desired, but user focused on Placo
             # log_rerun_data(...) 
