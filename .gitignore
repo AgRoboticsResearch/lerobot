@@ -25,6 +25,7 @@ node_modules/
 lerobot_robot_piper/
 example_demo_session/
 sroi_vio/
+piper_sdk/
 
 # Lock files
 poetry.lock
