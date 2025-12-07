@@ -191,10 +191,22 @@ class IOSPhone(BasePhone, Teleoperator):
             - The raw HEBI feedback object for accessing other data like button presses.
         """
         try:
-            # Use timeout to avoid blocking indefinitely
-            fbk = self._group.get_next_feedback(receive_timeout_ms=100)
-            if fbk is None:
+            # Drain the queue to get the latest feedback
+            fbk = self._group.get_next_feedback(timeout_ms=0)
+            last_fbk = fbk
+            while fbk is not None:
+                last_fbk = fbk
+                fbk = self._group.get_next_feedback(timeout_ms=0)
+            
+            # If queue was empty, wait a bit for new data
+            if last_fbk is None:
+                last_fbk = self._group.get_next_feedback(timeout_ms=100)
+
+            if last_fbk is None:
                 return False, None, None, None
+            
+            # Use the last feedback received
+            fbk = last_fbk
             pose = fbk[0]
         except Exception as e:
             # If feedback fails, return no data
@@ -204,13 +216,16 @@ class IOSPhone(BasePhone, Teleoperator):
         ar_quat = getattr(pose, "ar_orientation", None)
         if ar_pos is None or ar_quat is None:
             # Return False for has_pose, but still return the pose object so we can check buttons
-            return False, None, None, pose
+            # Return 'fbk' (GroupFeedback) instead of 'pose' (ModuleFeedback) to match debug_phone.py
+            return False, None, None, fbk
         # HEBI provides orientation in w, x, y, z format.
         # Scipy's Rotation expects x, y, z, w.
         quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
         rot = Rotation.from_quat(quat_xyzw)
         pos = ar_pos - rot.apply(self.config.camera_offset)
-        return True, pos, rot, pose
+        
+        # Return 'fbk' (GroupFeedback) instead of 'pose' (ModuleFeedback)
+        return True, pos, rot, fbk
 
     def get_action(self) -> dict:
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
@@ -227,13 +242,28 @@ class IOSPhone(BasePhone, Teleoperator):
                     if bank_a.has_float(ch):
                         raw_inputs[f"a{ch}"] = float(bank_a.get_float(ch))
             if bank_b:
-                for ch in range(1, 9):
-                    if bank_b.has_int(ch):
-                        raw_inputs[f"b{ch}"] = int(bank_b.get_int(ch))
-                    elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
-                        raw_inputs[f"b{ch}"] = int(bank_b.get_bool(ch))
+                # Force read B1 as has_int(1) can be unreliable on some devices
+                try:
+                    val = bank_b.get_int(1)
+                    if val is not None:
+                        raw_inputs["b1"] = int(val)
+                except Exception:
+                    pass
+                
+                for ch in range(2, 9):
+                    # Try getting int value directly as has_int might be flaky for some buttons
+                    try:
+                        val = bank_b.get_int(ch)
+                        if val is not None:
+                            raw_inputs[f"b{ch}"] = int(val)
+                    except Exception:
+                        pass
+                    
+                    # Fallback or additional check for boolean
+                    if f"b{ch}" not in raw_inputs and hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
+                         raw_inputs[f"b{ch}"] = int(bank_b.get_bool(ch))
 
-        enable = bool(raw_inputs.get("b1", 0))
+        enable = any(raw_inputs.get(f"b{i}", 0) for i in range(1, 9))
 
         # Rising edge then re-capture calibration immediately from current raw pose
         if enable and not self._enabled:
