@@ -74,7 +74,7 @@ try:
 except ImportError:
     HAS_RERUN = False
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Logger will be configured in main() based on --debug flag
 logger = logging.getLogger(__name__)
 
 FPS = 30
@@ -104,8 +104,18 @@ def main():
                         help="Disable rerun visualization")
     parser.add_argument("--verbose", action="store_true", 
                         help="Print debug info every frame")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable DEBUG level logging for gripper/pipeline debugging")
     
     args = parser.parse_args()
+
+    # Configure logging based on --debug flag
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Also set debug level for lerobot_robot_piper modules
+    if args.debug:
+        logging.getLogger("lerobot_robot_piper").setLevel(logging.DEBUG)
 
     # Initialize the robot configuration
     # NOTE: joint_names must match SDK format (joint_1, joint_2, ...) for real robot
@@ -217,7 +227,10 @@ def main():
     logger.info(f"  Max Joint Step: {args.max_joint_step:.1f} °/frame")
     logger.info(f"  EE Step Scale: {args.ee_step_scale}")
     logger.info("=" * 60)
-    logger.info("Press B1 on phone to Enable and Latch origin.")
+    logger.info("Controls:")
+    logger.info("  B1 button: Enable teleoperation & latch origin")
+    logger.info("  A3 slider: Gripper control (up=open, down=close)")
+    logger.info("  Move phone: Control arm position/orientation")
     logger.info("Press Ctrl+C to safely stop.")
     logger.info("=" * 60)
 
@@ -266,19 +279,25 @@ def main():
                     raw_inputs = phone_obs.get("phone.raw_inputs", {})
                     gripper = float(raw_inputs.get("a3", 0.0))  # iOS gripper
                     
+                    # Always print gripper if it's non-zero (slider moved)
+                    if abs(gripper) > 0.001:
+                        print(f"[GRIPPER] a3 slider value: {gripper:.4f}")
+                    
                     if enabled or frame_count % 30 == 0:  # Print when enabled or every 30 frames
                         print(f"\n{'='*70}")
                         print(f"Frame {frame_count} | Enabled: {enabled}")
-                        print(f"  (raw_inputs b1={raw_inputs.get('b1', 'N/A')})")
+                        print(f"  (raw_inputs b1={raw_inputs.get('b1', 'N/A')}, a3={raw_inputs.get('a3', 'N/A')})")
+                        # Print all raw_inputs to see what we're getting
+                        print(f"  All raw_inputs: {list(raw_inputs.keys())}")
                         print(f"{'='*70}")
                         print(f"[PHONE INPUT] (raw, before pipeline transform)")
                         print(f"  Position: x={pos[0]:.4f}, y={pos[1]:.4f}, z={pos[2]:.4f}")
                         print(f"  Rotation: rx={rotvec[0]:.4f}, ry={rotvec[1]:.4f}, rz={rotvec[2]:.4f}")
-                        print(f"  Gripper vel: {gripper:.2f}")
+                        print(f"  Gripper vel (a3): {gripper:.3f}")
                         print(f"[ROBOT OBS] (degrees)")
                         obs_str = ", ".join([f"j{i+1}={robot_obs.get(f'joint_{i+1}.pos', 0):.1f}" for i in range(6)])
                         print(f"  Joints: {obs_str}")
-                        print(f"  Gripper: {robot_obs.get('gripper.pos', 0):.1f} mm")
+                        print(f"  Gripper pos: {robot_obs.get('gripper.pos', 0):.2f} mm")
                 
                 joint_action = pipeline((phone_obs_copy, robot_obs))
                 
@@ -290,7 +309,9 @@ def main():
                         print(f"[PIPELINE OUTPUT] (degrees)")
                         action_str = ", ".join([f"j{i+1}={joint_action.get(f'joint_{i+1}.pos', 0):.1f}" for i in range(6)])
                         print(f"  Target joints: {action_str}")
-                        print(f"  Gripper: {joint_action.get('gripper.pos', 0):.1f} mm")
+                        gripper_target = joint_action.get('gripper.pos', 0)
+                        gripper_current = robot_obs.get('gripper.pos', 0)
+                        print(f"  Gripper target: {gripper_target:.1f} mm (delta: {gripper_target - gripper_current:+.1f})")
                         
                         # Calculate and show delta from current
                         print(f"[DELTA] (target - current)")
