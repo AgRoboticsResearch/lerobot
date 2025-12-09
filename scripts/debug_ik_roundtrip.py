@@ -9,7 +9,7 @@ at the initial position using RobotKinematics directly.
 import os
 import numpy as np
 from scipy.spatial.transform import Rotation
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_original import RobotKinematics
 
 # Configuration - use path relative to this script
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
