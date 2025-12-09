@@ -20,7 +20,7 @@ import argparse
 import numpy as np
 import copy  # Added copy
 
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_fast import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
