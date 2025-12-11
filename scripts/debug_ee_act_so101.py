@@ -27,15 +27,15 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so101_follower.so101_follower import SO101Follower
+from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 from lerobot.utils.utils import log_say
 # from lerobot.utils.robot_utils import busy_wait # Removed as it caused ImportError
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
 # --- Configuration ---
 URDF_PATH = "./SO-ARM100/Simulation/SO101/so101_new_calib.urdf" # Relative to workspace root
-CONTROL_FREQ = 30  # Hz
+CONTROL_FREQ = 5  # Hz
 FPS = 30
 
 MOTOR_NAMES = [
@@ -46,6 +46,8 @@ MOTOR_NAMES = [
     "wrist_roll",
     "gripper",
 ]
+
+IK_MOTOR_NAMES = [n for n in MOTOR_NAMES if n != "gripper"]
 
 # Reset pose (Safe starting position)
 RESET_POSE = {
@@ -116,8 +118,8 @@ def main():
     # Mock camera config since we aren't using policy
     camera_config = {"camera": OpenCVCameraConfig(index_or_path=0, width=320, height=240, fps=FPS)}
     
-    robot_config = SO100FollowerConfig(port=args.port, id="so101_vio_replay", use_degrees=True, cameras=camera_config)
-    robot = SO100Follower(robot_config)
+    robot_config = SO101FollowerConfig(port=args.port, id="so101_vio_replay", use_degrees=True, cameras=camera_config)
+    robot = SO101Follower(robot_config)
     try:
         robot.connect()
     except Exception as e:
@@ -129,19 +131,19 @@ def main():
     kinematics_solver = RobotKinematics(
         urdf_path=URDF_PATH,
         target_frame_name="gripper_frame_link",
-        joint_names=MOTOR_NAMES,
+        joint_names=IK_MOTOR_NAMES,
     )
 
     # FK/IK Processors
     # IK: EE Pose + Current Observation -> Joint Positions
     ee_to_joints_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[InverseKinematicsEEToJoints(kinematics=kinematics_solver, motor_names=MOTOR_NAMES, initial_guess_current_joints=True)],
+        steps=[InverseKinematicsEEToJoints(kinematics=kinematics_solver, motor_names=IK_MOTOR_NAMES, initial_guess_current_joints=True)],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )
     # FK: Observation (Joints) -> EE Pose
     robot_joints_to_ee_pose_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
-        steps=[ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=MOTOR_NAMES)],
+        steps=[ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=IK_MOTOR_NAMES)],
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
     )
@@ -207,6 +209,7 @@ def main():
             # C. Solve IK
             try:
                 joint_action = ee_to_joints_processor((ee_action, obs))
+                joint_action["gripper.pos"] = 0.0
                 
                 # --- NEW: Calculate IK Theoretical Pose (FK on commanded joints) ---
                 # Construct a mock observation from the commanded joints to feed into FK
