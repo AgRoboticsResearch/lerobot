@@ -6,7 +6,7 @@ import csv
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial.transform import Rotation as R
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 from lerobot.robots.so101_follower.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 

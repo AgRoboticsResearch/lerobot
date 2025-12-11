@@ -8,7 +8,16 @@ import math
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial.transform import Rotation as R
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
+
+# LeRobot Imports
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
+from lerobot.processor.converters import (
+    observation_to_transition,
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+    transition_to_observation,
+)
 
 # Initial joints configuration (in radians)
 PIPER_INITIAL_JOINTS = {
@@ -24,11 +33,19 @@ PIPER_INITIAL_JOINTS = {
 try:
     from lerobot_robot_piper.piper import Piper
     from lerobot_robot_piper.config_piper import PiperConfig
+    from lerobot_robot_piper.robot_kinematic_processor import (
+        PiperForwardKinematicsJointsToEEObservation,
+        PiperInverseKinematicsEEToJoints,
+    )
 except ImportError:
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), "../lerobot_robot_piper"))
     from lerobot_robot_piper.piper import Piper
     from lerobot_robot_piper.config_piper import PiperConfig
+    from lerobot_robot_piper.robot_kinematic_processor import (
+        PiperForwardKinematicsJointsToEEObservation,
+        PiperInverseKinematicsEEToJoints,
+    )
 
 def parse_kitti_trajectory(file_path):
     waypoints = []
@@ -83,7 +100,14 @@ def move_to_initial_configuration(robot, joint_names):
     # Wait for the robot to reach the position
     time.sleep(4.0)
 
-def replay_trajectory(robot, kinematics, file_path, speed=0.5, joint_names=None, effector_frame="gripper_base"):
+def pose_dict_to_matrix(pose_dict):
+    T = np.eye(4)
+    T[:3, 3] = [pose_dict["ee.x"], pose_dict["ee.y"], pose_dict["ee.z"]]
+    r = R.from_rotvec([pose_dict["ee.wx"], pose_dict["ee.wy"], pose_dict["ee.wz"]])
+    T[:3, :3] = r.as_matrix()
+    return T
+
+def replay_trajectory(robot, ik_processor, fk_processor, file_path, speed=0.5, joint_names=None):
     print(f"--- Replaying: {os.path.basename(os.path.dirname(file_path))} ---")
     waypoints = parse_kitti_trajectory(file_path)
     if not waypoints:
@@ -92,15 +116,10 @@ def replay_trajectory(robot, kinematics, file_path, speed=0.5, joint_names=None,
 
     raw_deltas = compute_raw_deltas(waypoints)
 
-    # Get Initial Pose
+    # Get Initial Pose using FK Processor
     obs = robot.get_observation()
-    current_joints_deg = [obs.get(f"{name}.pos", 0.0) for name in joint_names]
-    
-    current_joints_rad = np.deg2rad(current_joints_deg)
-    for i, name in enumerate(joint_names):
-        kinematics.robot.set_joint(name, current_joints_rad[i])
-    kinematics.robot.update_kinematics()
-    T_curr = kinematics.robot.get_T_world_frame(effector_frame)
+    initial_ee_pose = fk_processor(obs)
+    T_curr = pose_dict_to_matrix(initial_ee_pose)
 
     # Compute Targets
     target_poses = [T_curr @ delta for delta in raw_deltas]
@@ -123,44 +142,43 @@ def replay_trajectory(robot, kinematics, file_path, speed=0.5, joint_names=None,
         for i, T_target in enumerate(target_poses):
             loop_start = time.time()
             
-            # IK
+            # A. Get Observation
             obs = robot.get_observation()
-            current_joints_deg_read = [obs.get(f"{name}.pos", 0.0) for name in joint_names]
             
-            computed_joints_deg = kinematics.inverse_kinematics(
-                current_joint_pos=current_joints_deg_read,
-                desired_ee_pose=T_target,
-                position_weight=1.0,
-                orientation_weight=1.0
-            )
+            # B. Prepare Target Action
+            target_pos = T_target[:3, 3]
+            target_rot = R.from_matrix(T_target[:3, :3]).as_rotvec()
+            
+            ee_action = {
+                "ee.x": target_pos[0], "ee.y": target_pos[1], "ee.z": target_pos[2],
+                "ee.wx": target_rot[0], "ee.wy": target_rot[1], "ee.wz": target_rot[2],
+                "ee.gripper_pos": 0.0 
+            }
+            
+            # C. Solve IK
+            joint_action = ik_processor((ee_action, obs))
+            # Ensure gripper is handled if needed, though Piper might not use it in this script
+            # joint_action["gripper.pos"] = 0.0 
 
-            # --- Compute IK Pose (Theoretical) ---
-            computed_joints_rad = np.deg2rad(computed_joints_deg)
-            for k, name in enumerate(joint_names):
-                kinematics.robot.set_joint(name, computed_joints_rad[k])
-            kinematics.robot.update_kinematics()
-            T_ik = kinematics.robot.get_T_world_frame(effector_frame)
+            # --- Compute IK Pose (Theoretical) using FK Processor ---
+            cmd_obs = {k: v for k, v in joint_action.items()}
+            ik_ee_pose = fk_processor(cmd_obs)
+            T_ik = pose_dict_to_matrix(ik_ee_pose)
             ik_pos_err, _ = compute_pose_error(T_target, T_ik)
-            # -------------------------------------
+            # ------------------------------------------------------
             
-            # Send Action
-            action = {f"{name}.pos": computed_joints_deg[j] for j, name in enumerate(joint_names)}
-            robot.send_action(action)
+            # D. Send Action
+            robot.send_action(joint_action)
             
             # Wait
             elapsed = time.time() - loop_start
             if elapsed < target_dt:
                 time.sleep(target_dt - elapsed)
             
-            # Record Data
+            # E. Record Data (Actual Pose via FK Processor)
             obs_after = robot.get_observation()
-            actual_joints_deg = [obs_after.get(f"{name}.pos", 0.0) for name in joint_names]
-            
-            actual_joints_rad = np.deg2rad(actual_joints_deg)
-            for k, name in enumerate(joint_names):
-                kinematics.robot.set_joint(name, actual_joints_rad[k])
-            kinematics.robot.update_kinematics()
-            T_actual = kinematics.robot.get_T_world_frame(effector_frame)
+            actual_ee_pose = fk_processor(obs_after)
+            T_actual = pose_dict_to_matrix(actual_ee_pose)
             
             track_pos_err, _ = compute_pose_error(T_target, T_actual)
             
@@ -228,6 +246,19 @@ def main():
             joint_names=joint_names
         )
 
+        # Initialize Processors
+        ik_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+            steps=[PiperInverseKinematicsEEToJoints(kinematics=kinematics, motor_names=joint_names, initial_guess_current_joints=True)],
+            to_transition=robot_action_observation_to_transition,
+            to_output=transition_to_robot_action,
+        )
+        
+        fk_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
+            steps=[PiperForwardKinematicsJointsToEEObservation(kinematics=kinematics, motor_names=joint_names)],
+            to_transition=observation_to_transition,
+            to_output=transition_to_observation,
+        )
+
         all_results = {}
 
         for file_path in files:
@@ -240,7 +271,7 @@ def main():
             time.sleep(1.0)
             
             try:
-                data = replay_trajectory(robot, kinematics, file_path, speed=args.speed, joint_names=joint_names)
+                data = replay_trajectory(robot, ik_processor, fk_processor, file_path, speed=args.speed, joint_names=joint_names)
                 if data:
                     name = os.path.basename(os.path.dirname(file_path)) # Use parent folder name
                     all_results[name] = data

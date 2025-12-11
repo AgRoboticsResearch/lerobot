@@ -27,7 +27,7 @@ import argparse
 import numpy as np
 import copy
 
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 from lerobot.processor import (
     RobotAction,
     RobotObservation,

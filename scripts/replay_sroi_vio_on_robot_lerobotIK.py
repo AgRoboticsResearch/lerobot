@@ -5,7 +5,7 @@ from ischedule import schedule, run_loop
 import os
 import argparse
 from scipy.spatial.transform import Rotation as R
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 
 """
 Replays the relative VIO trajectory on a robot (Piper or SO-101) using LeRobot Kinematics.

@@ -22,7 +22,7 @@ import numpy as np
 import copy
 from dataclasses import dataclass, field
 
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 from lerobot.processor import (
     RobotAction,
     RobotObservation,

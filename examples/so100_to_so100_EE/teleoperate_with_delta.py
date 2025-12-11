@@ -20,7 +20,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,

@@ -10,7 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from lerobot_robot_piper.config_piper import PiperConfig
 from lerobot_robot_piper.piper import Piper
 from lerobot_robot_piper.robot_kinematic_processor import PiperForwardKinematicsJointsToEEObservation
-from lerobot.model.kinematics_fast import RobotKinematics
+from lerobot.model.kinematics import RobotKinematics
 from placo_utils.visualization import robot_viz, frame_viz
 
 # Configure logging

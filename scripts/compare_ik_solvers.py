@@ -3,7 +3,7 @@ import placo
 import argparse
 import os
 from scipy.spatial.transform import Rotation as R
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model.kinematics_bac import RobotKinematics
 
 def load_robot_config(robot_name):
     current_dir = os.path.dirname(os.path.abspath(__file__))
