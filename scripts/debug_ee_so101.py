@@ -35,7 +35,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
 # --- Configuration ---
 URDF_PATH = "./SO-ARM100/Simulation/SO101/so101_new_calib.urdf" # Relative to workspace root
-CONTROL_FREQ = 5  # Hz
+CONTROL_FREQ = 10  # Hz
 FPS = 30
 
 MOTOR_NAMES = [
@@ -116,7 +116,7 @@ def main():
     # 1. Connect to Robot
     print(f"Connecting to robot on {args.port}...")
     # Mock camera config since we aren't using policy
-    camera_config = {"camera": OpenCVCameraConfig(index_or_path=0, width=320, height=240, fps=FPS)}
+    camera_config = {"camera": OpenCVCameraConfig(index_or_path=2, width=320, height=240, fps=FPS)}
     
     robot_config = SO101FollowerConfig(port=args.port, id="so101_vio_replay", use_degrees=True, cameras=camera_config)
     robot = SO101Follower(robot_config)
