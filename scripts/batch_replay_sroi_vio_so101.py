@@ -137,7 +137,9 @@ def replay_trajectory(robot, ik_processor, fk_processor, file_path, speed=0.5, j
         'ik_x': [], 'ik_y': [], 'ik_z': [],
         'actual_x': [], 'actual_y': [], 'actual_z': [],
         'track_errors': [],
-        'ik_errors': []
+        'ik_errors': [],
+        'ik_joints': [],
+        'actual_joints': []
     }
     
     target_freq = 30.0
@@ -203,6 +205,12 @@ def replay_trajectory(robot, ik_processor, fk_processor, file_path, speed=0.5, j
             trajectory_data['track_errors'].append(track_pos_err)
             trajectory_data['ik_errors'].append(ik_pos_err)
 
+            # Record Joints
+            ik_vals = [joint_action[f"{name}.pos"] for name in joint_names]
+            act_vals = [obs_after.get(f"{name}.pos", 0.0) for name in joint_names]
+            trajectory_data['ik_joints'].append(ik_vals)
+            trajectory_data['actual_joints'].append(act_vals)
+
     except KeyboardInterrupt:
         print("Interrupted!")
         raise
@@ -221,6 +229,7 @@ def main():
     search_pattern = os.path.join(args.root_dir, "**", "CameraTrajectory.txt")
     files = glob.glob(search_pattern, recursive=True)
     files.sort()
+    files = files[:5]
     
     if not files:
         print(f"No CameraTrajectory.txt files found in {args.root_dir}")
@@ -342,6 +351,39 @@ def main():
         plt.tight_layout()
         plt.savefig(args.output_plot)
         print(f"Plots saved to {args.output_plot}")
+
+        # --- Joints Plot ---
+        print("Plotting joint comparisons...")
+        fig_joints = plt.figure(figsize=(12, 4 * n_plots))
+        
+        for idx, (name, data) in enumerate(all_results.items()):
+            ax = fig_joints.add_subplot(n_plots, 1, idx + 1)
+            
+            ik_joints = np.array(data['ik_joints']) # (N, n_joints)
+            actual_joints = np.array(data['actual_joints']) # (N, n_joints)
+            steps = np.arange(len(ik_joints))
+            
+            colors = ['r', 'g', 'b', 'c', 'm', 'y']
+            for j_idx, j_name in enumerate(joint_names):
+                color = colors[j_idx % len(colors)]
+                # Plot IK
+                ax.plot(steps, ik_joints[:, j_idx], linestyle='--', color=color, alpha=0.6)
+                # Plot Actual
+                ax.plot(steps, actual_joints[:, j_idx], linestyle='-', color=color, label=j_name)
+            
+            ax.set_title(f"{name} - Joints (Solid=Actual, Dashed=IK)")
+            ax.set_ylabel("Angle (deg)")
+            ax.set_xlabel("Step")
+            ax.grid(True, alpha=0.3)
+            
+            if idx == 0:
+                # Legend only has actual labels (to save space), but explanation in title covers it
+                ax.legend(loc='upper right', ncol=len(joint_names), fontsize='small')
+
+        joints_plot_file = args.output_plot.replace(".png", "_joints.png")
+        plt.tight_layout()
+        plt.savefig(joints_plot_file)
+        print(f"Joint plots saved to {joints_plot_file}")
 
 if __name__ == "__main__":
     main()

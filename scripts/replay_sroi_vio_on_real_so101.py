@@ -201,7 +201,8 @@ if __name__ == "__main__":
             
             real_robot.send_action(action)
             
-            # d. Wait to maintain target frequency
+
+            # Additional sleep if needed to respect minimum dt
             elapsed = time.time() - loop_start
             if elapsed < target_dt:
                 time.sleep(target_dt - elapsed)

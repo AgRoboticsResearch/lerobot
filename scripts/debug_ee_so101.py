@@ -106,7 +106,7 @@ def main():
     parser = argparse.ArgumentParser(description="Replay VIO on SO101 using Processor Pipeline")
     parser.add_argument("vio_file", help="Path to VIO CameraTrajectory.txt")
     parser.add_argument("--port", default="/dev/ttyACM0", help="Robot serial port")
-    parser.add_argument("--scale", type=float, default=1.0, help="VIO scaling factor")
+    parser.add_argument("--scale", type=float, default=1.0, help="Percentage of trajectory points to replay (0.0 - 1.0)")
     parser.add_argument("--output", default="vio_replay_log.csv", help="Output CSV log")
     parser.add_argument("--speed", type=float, default=1.0, help="Replay speed factor")
     args = parser.parse_args()
@@ -150,7 +150,14 @@ def main():
 
     # 3. Load VIO Trajectory
     vio_waypoints = parse_kitti_trajectory(args.vio_file)
-    vio_deltas = compute_raw_deltas(vio_waypoints, scale=args.scale)
+    
+    # Truncate based on scale
+    if args.scale < 1.0 and args.scale > 0.0:
+        cutoff = int(len(vio_waypoints) * args.scale)
+        print(f"Truncating trajectory to {args.scale*100:.0f}%: {cutoff} / {len(vio_waypoints)} steps")
+        vio_waypoints = vio_waypoints[:cutoff]
+
+    vio_deltas = compute_raw_deltas(vio_waypoints, scale=1.0) # Reset delta scale to 1.0 (or add a separate arg if needed later)
     print(f"Loaded {len(vio_deltas)} VIO steps.")
 
     if not vio_deltas:
