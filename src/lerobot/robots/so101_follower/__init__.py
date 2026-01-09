@@ -15,4 +15,8 @@
 # limitations under the License.
 
 from .config_so101_follower import SO101FollowerConfig
+from .relative_ee_processor import (
+    Relative10DAccumulatedToAbsoluteEE,
+    Relative10DToAbsoluteEE,
+)
 from .so101_follower import SO101Follower
