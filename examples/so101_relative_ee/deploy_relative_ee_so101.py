@@ -410,16 +410,20 @@ def main():
     # Initialize history buffer for observations
     history_buffer = None
 
+    # Reset policy and processors to ensure clean state
+    policy.reset()
+    preprocessor.reset()
+    postprocessor.reset()
+
     # ========================================================================
     # Main Control Loop
     # ========================================================================
     logger.info("Starting control loop...")
     logger.info(f"Control frequency: {args.fps} Hz")
-    logger.info(f"Actions per prediction: {args.n_action_steps}")
+    logger.info(f"Actions per prediction: {policy.config.n_action_steps}")
 
     step_count = 0
-    action_chunk = None
-    action_idx_in_chunk = 0
+    actions_processed_in_chunk = 0
     accumulated_ee_pose = None
 
     try:
@@ -434,62 +438,69 @@ def main():
             current_gripper = obs_dict["gripper.pos"] / 100.0  # Convert to [0,1]
 
             # -------------------------------------------------------------------
-            # Predict new action chunk if needed
+            # Check if we're starting a new chunk
+            # The policy's select_action manages an internal queue and predicts
+            # a new chunk when the queue is empty. We detect chunk boundaries
+            # to reset the accumulated EE pose.
             # -------------------------------------------------------------------
-            if action_chunk is None or action_idx_in_chunk >= args.n_action_steps:
-                # Get current EE pose via FK (base for new prediction)
+            if actions_processed_in_chunk == 0:
+                # New chunk starting - reset accumulated pose to current actual EE pose
                 current_ee_T = kinematics.forward_kinematics(current_joints)
-
-                # Create relative observation (UMI-style: identity at current)
-                obs_state, history_buffer = create_relative_observation(
-                    current_ee_T=current_ee_T,
-                    gripper_pos=current_gripper,
-                    obs_state_horizon=args.obs_state_horizon,
-                    history_buffer=history_buffer,
-                )
-
-                # Prepare batch for policy
-                batch = {
-                    "observation.state": torch.from_numpy(obs_state).unsqueeze(0).to(device),
-                }
-
-                # Add camera images if available
-                for cam_name in cameras.keys():
-                    img = obs_dict.get(cam_name)
-                    if img is not None:
-                        # Convert from uint8 [0, 255] to float32 [0, 1]
-                        img = img.astype(np.float32) / 255.0
-                        # Convert from HWC to CHW format expected by policy
-                        img = np.transpose(img, (2, 0, 1))  # HWC -> CHW
-                        batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
-
-                # Predict action chunk
-                with torch.no_grad():
-                    processed_batch = preprocessor(batch)
-                    action_chunk = policy.select_action(processed_batch)
-                    action_chunk = postprocessor(action_chunk)
-
-                # action_chunk shape: (1, 1) or (1, chunk_size, 10)
-                if action_chunk.ndim == 2:
-                    action_chunk = action_chunk.unsqueeze(1)
-                action_chunk = action_chunk[0].cpu().numpy()  # (chunk_size or 1, 10)
-
-                action_idx_in_chunk = 0
-
-                # Reset accumulated pose to current EE pose for new chunk
                 accumulated_ee_pose = current_ee_T.copy()
 
-                logger.debug(f"Predicted new chunk with {action_chunk.shape[0]} actions")
+            # -------------------------------------------------------------------
+            # Prepare observation for policy
+            # -------------------------------------------------------------------
+            # Create relative observation (UMI-style: identity at current)
+            obs_state, history_buffer = create_relative_observation(
+                current_ee_T=current_ee_T if actions_processed_in_chunk == 0 else accumulated_ee_pose,
+                gripper_pos=current_gripper,
+                obs_state_horizon=policy.config.n_obs_steps,
+                history_buffer=history_buffer,
+            )
+
+            # Prepare batch for policy
+            # obs_state shape: (n_obs_steps, 10) -> squeeze to (10,) -> add batch dim: (1, 10)
+            # The model expects (batch, state_dim) not (batch, n_obs_steps, state_dim)
+            if obs_state.shape[0] == 1:
+                state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)  # (1, 10)
+            else:
+                state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)  # (1, 10)
+
+            batch = {
+                "observation.state": state_tensor,
+            }
+
+            # Add camera images if available
+            for cam_name in cameras.keys():
+                img = obs_dict.get(cam_name)
+                if img is not None:
+                    # Convert from uint8 [0, 255] to float32 [0, 1]
+                    img = img.astype(np.float32) / 255.0
+                    # Convert from HWC to CHW format expected by policy
+                    img = np.transpose(img, (2, 0, 1))  # HWC -> CHW
+                    batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
 
             # -------------------------------------------------------------------
-            # Get current action from chunk and prepare for execution
+            # Predict action using policy (select_action manages chunking internally)
             # -------------------------------------------------------------------
-            rel_action_10d = action_chunk[action_idx_in_chunk]  # (10,)
+            with torch.no_grad():
+                processed_batch = preprocessor(batch)
+                # select_action returns a single action: (batch, action_dim)
+                action_output = policy.select_action(processed_batch)
+                # postprocessor converts PolicyAction to dict format
+                action_output = postprocessor(action_output)
 
+            # Extract the action tensor from the postprocessor output
+            # The output is a dict with "action" key containing (batch, action_dim) tensor
+            if isinstance(action_output, dict):
+                rel_action_10d = action_output["action"][0].cpu().numpy()  # (10,)
+            else:
+                rel_action_10d = action_output[0].cpu().numpy()  # (10,)
+
+            # -------------------------------------------------------------------
             # Update accumulated pose (UMI-style chaining within chunk)
-            if accumulated_ee_pose is None:
-                accumulated_ee_pose = kinematics.forward_kinematics(current_joints)
-
+            # -------------------------------------------------------------------
             rel_T = pose10d_to_mat(rel_action_10d[:9])
             accumulated_ee_pose = accumulated_ee_pose @ rel_T
 
@@ -504,23 +515,30 @@ def main():
                 f"{name}.pos": obs_dict[f"{name}.pos"] for name in MOTOR_NAMES
             }
 
-            # Create transition with complementary data (accumulated pose)
+            # Create transition with complementary data (accumulated_ee_pose)
+            # The pipeline needs this to convert relative EE to absolute EE
             transition = robot_action_observation_to_transition((action_dict, robot_obs))
             transition[TransitionKey.COMPLEMENTARY_DATA] = {
                 "accumulated_ee_pose": accumulated_ee_pose.copy()
             }
 
             # Run pipeline: relative -> absolute -> bounds -> IK -> joints
-            transition = ee_to_joints_pipeline(transition)
-            joints_action = transition_to_robot_action(transition)
+            # We call _forward and to_output manually to avoid re-converting the tuple
+            processed_transition = ee_to_joints_pipeline._forward(transition)
+            joints_action = transition_to_robot_action(processed_transition)
 
             # -------------------------------------------------------------------
             # Send action to robot
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
 
-            action_idx_in_chunk += 1
+            # Update counters
+            actions_processed_in_chunk += 1
             step_count += 1
+
+            # Reset chunk counter when we've processed n_action_steps actions
+            if actions_processed_in_chunk >= policy.config.n_action_steps:
+                actions_processed_in_chunk = 0
 
             # -------------------------------------------------------------------
             # Maintain timing
