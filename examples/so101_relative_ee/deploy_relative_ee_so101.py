@@ -43,7 +43,10 @@ from typing import Any
 
 import numpy as np
 import torch
+import yaml
 
+from lerobot.cameras import CameraConfig
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
@@ -61,7 +64,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )
-from lerobot.utils import init_logging
+from lerobot.utils.utils import init_logging
 from lerobot.utils.robot_utils import precise_sleep
 
 # Motor names for SO101
@@ -85,6 +88,44 @@ RESET_POSE_DEG = np.array([
 ])
 
 FPS = 10  # Control loop frequency
+
+
+def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
+    """
+    Parse cameras configuration from YAML string.
+
+    Args:
+        cameras_str: YAML-formatted string like "{ wrist: {type: intelrealsense, ...} }"
+
+    Returns:
+        Dictionary mapping camera names to CameraConfig objects
+    """
+    if not cameras_str or cameras_str.strip() == "":
+        return {}
+
+    # Parse YAML string to dict
+    cameras_dict = yaml.safe_load(cameras_str)
+
+    if not isinstance(cameras_dict, dict):
+        raise ValueError(f"Cameras config should be a dict, got {type(cameras_dict)}")
+
+    # Convert each camera config to CameraConfig object
+    cameras: dict[str, CameraConfig] = {}
+    for name, config in cameras_dict.items():
+        if not isinstance(config, dict):
+            raise ValueError(f"Camera '{name}' config should be a dict, got {type(config)}")
+
+        camera_type = config.pop("type", None)
+        if camera_type is None:
+            raise ValueError(f"Camera '{name}' missing 'type' field")
+
+        # Get the CameraConfig subclass for this type
+        camera_config_class = CameraConfig.get_choice_class(camera_type)
+
+        # Create the config object
+        cameras[name] = camera_config_class(**config)
+
+    return cameras
 
 
 def find_latest_checkpoint(model_path: str) -> str:
@@ -175,7 +216,7 @@ def main():
     parser.add_argument(
         "--robot_port",
         type=str,
-        default="/dev/ttyUSB0",
+        default="/dev/ttyACM0",
         help="Serial port for SO101 robot connection",
     )
     parser.add_argument(
@@ -233,6 +274,12 @@ def main():
         type=float,
         default=0.05,
         help="Maximum EE step size in meters (safety)",
+    )
+    parser.add_argument(
+        "--cameras",
+        type=str,
+        default=None,
+        help='Camera configuration in YAML format, e.g. \'{ wrist: {type: intelrealsense, serial_number_or_name: "031522070877", width: 640, height: 480, fps: 30} }\'',
     )
 
     args = parser.parse_args()
@@ -318,10 +365,15 @@ def main():
     # ========================================================================
     logger.info("Connecting to SO101 robot...")
 
+    # Parse cameras configuration
+    cameras = parse_cameras_config(args.cameras)
+    if cameras:
+        logger.info(f"Configured cameras: {list(cameras.keys())}")
+
     robot_config = SO101FollowerConfig(
         port=args.robot_port,
         use_degrees=True,
-        cameras={},
+        cameras=cameras,
     )
 
     robot = SO101Follower(robot_config)
@@ -337,9 +389,19 @@ def main():
         robot.send_action(reset_action)
         time.sleep(2.0)
 
-    # Get current joint positions
-    obs_dict = robot.get_observation()
-    current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+    # Use fixed safe joint positions for error recovery
+    initial_safe_joints = np.array([
+        -7.91,    # shoulder_pan
+        -106.51,  # shoulder_lift
+        87.91,    # elbow_flex
+        70.74,    # wrist_flex
+        -0.53,    # wrist_roll
+        1.18,     # gripper
+    ], dtype=np.float64)
+    logger.info(f"Using fixed safe pose: {initial_safe_joints}")
+    print(f"Using fixed safe pose: {initial_safe_joints}")
+
+    current_joints = initial_safe_joints.copy()
 
     # Get initial EE pose via FK
     current_ee_T = kinematics.forward_kinematics(current_joints)
@@ -390,6 +452,16 @@ def main():
                 batch = {
                     "observation.state": torch.from_numpy(obs_state).unsqueeze(0).to(device),
                 }
+
+                # Add camera images if available
+                for cam_name in cameras.keys():
+                    img = obs_dict.get(cam_name)
+                    if img is not None:
+                        # Convert from uint8 [0, 255] to float32 [0, 1]
+                        img = img.astype(np.float32) / 255.0
+                        # Convert from HWC to CHW format expected by policy
+                        img = np.transpose(img, (2, 0, 1))  # HWC -> CHW
+                        batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
 
                 # Predict action chunk
                 with torch.no_grad():
@@ -464,6 +536,24 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
+        # Return to safe pose
+        logger.info("Returning to safe initial pose...")
+        safe_action = {f"{name}.pos": val for name, val in zip(MOTOR_NAMES, initial_safe_joints)}
+        robot.send_action(safe_action)
+        time.sleep(1.0)
+
+    except Exception as e:
+        logger.error(f"Error during control loop: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return to safe pose
+        logger.info("Returning to safe initial pose...")
+        try:
+            safe_action = {f"{name}.pos": val for name, val in zip(MOTOR_NAMES, initial_safe_joints)}
+            robot.send_action(safe_action)
+            time.sleep(1.0)
+        except Exception as e2:
+            logger.error(f"Error returning to safe pose: {e2}")
 
     finally:
         # Disconnect robot
