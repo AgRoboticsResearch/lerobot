@@ -128,28 +128,6 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
     return cameras
 
 
-def find_latest_checkpoint(model_path: str) -> str:
-    """Find the latest checkpoint directory in the model path."""
-    model_path = Path(model_path)
-    checkpoints_dir = model_path / "checkpoints"
-
-    if not checkpoints_dir.exists():
-        raise FileNotFoundError(f"No checkpoints directory found at {checkpoints_dir}")
-
-    checkpoint_dirs = [d for d in checkpoints_dir.iterdir() if d.is_dir() and d.name.isdigit()]
-
-    if not checkpoint_dirs:
-        raise FileNotFoundError(f"No checkpoint directories found in {checkpoints_dir}")
-
-    latest = max(checkpoint_dirs, key=lambda x: int(x.name))
-    pretrained_path = latest / "pretrained_model"
-
-    if not pretrained_path.exists():
-        raise FileNotFoundError(f"No pretrained_model found at {pretrained_path}")
-
-    return str(pretrained_path)
-
-
 def create_relative_observation(
     current_ee_T: np.ndarray,
     gripper_pos: float,
@@ -292,12 +270,7 @@ def main():
     # ========================================================================
     logger.info("Loading trained policy...")
 
-    pretrained_path = args.pretrained_path
-    if (Path(pretrained_path) / "config.json").exists():
-        model_path = pretrained_path
-    else:
-        model_path = find_latest_checkpoint(pretrained_path)
-
+    model_path = args.pretrained_path
     logger.info(f"Loading from: {model_path}")
 
     policy = ACTPolicy.from_pretrained(model_path, local_files_only=True)
