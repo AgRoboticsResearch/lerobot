@@ -1,0 +1,3 @@
+[submodule "urdf"]
+	path = urdf
+	url = https://github.com/TheRobotStudio/SO-ARM100.git
