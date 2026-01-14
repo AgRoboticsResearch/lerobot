@@ -79,12 +79,12 @@ MOTOR_NAMES = [
 
 # Default RESET pose (starting position)
 RESET_POSE_DEG = np.array([
-    0.0,    # shoulder_pan
-    -80.0,  # shoulder_lift
-    50.0,   # elbow_flex
-    40.0,   # wrist_flex
-    0.0,    # wrist_roll
-    0.0,    # gripper
+    -5.54,    # shoulder_pan
+    -114.59,  # shoulder_lift
+    104.44,   # elbow_flex
+    7.84,    # wrist_flex
+    -5.19,    # wrist_roll
+    35.13,    # gripper
 ])
 
 FPS = 10  # Control loop frequency
@@ -196,6 +196,12 @@ def main():
         type=str,
         default="/dev/ttyACM0",
         help="Serial port for SO101 robot connection",
+    )
+    parser.add_argument(
+        "--robot_id",
+        type=str,
+        default="so101",
+        help="Robot ID for loading/saving calibration files",
     )
     parser.add_argument(
         "--reset_pose",
@@ -344,6 +350,7 @@ def main():
         logger.info(f"Configured cameras: {list(cameras.keys())}")
 
     robot_config = SO101FollowerConfig(
+        id=args.robot_id,
         port=args.robot_port,
         use_degrees=True,
         cameras=cameras,

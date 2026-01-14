@@ -14,6 +14,7 @@
 
 ### Environments & Dependencies ###
 claude_chat/
+deploy_viz_output/
 .env
 .venv
 env/
