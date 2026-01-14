@@ -13,6 +13,7 @@
 # limitations under the License.
 
 ### Environments & Dependencies ###
+tmp/
 claude_chat/
 deploy_viz_output/
 .env
