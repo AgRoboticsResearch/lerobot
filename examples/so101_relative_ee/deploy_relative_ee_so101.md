@@ -22,41 +22,47 @@ When deploying a relative EE policy on a real robot:
 2. **Robot expects**: Joint positions
 3. **Need**: IK (inverse kinematics) to convert EE → joints
 
-But there's a subtlety with **action chunking**:
+### RelativeEEDataset Action Format
+
+**IMPORTANT**: In `RelativeEEDataset`, ALL actions in a chunk are relative to the SAME base observation (the EE pose at chunk start):
 
 ```
 Predicted chunk: [action_0, action_1, action_2, ...]
-Each action is: "move by delta from CURRENT pose"
+
+Where:
+action_0 = T_base^(-1) @ T_1  (from base to step 1)
+action_1 = T_base^(-1) @ T_2  (from base to step 2)
+action_t = T_base^(-1) @ T_(t+1)  (from base to step t+1)
+
+Each action is: "move from BASE to target", NOT "move from previous step"
 ```
 
-As the robot executes actions, its pose changes. If you naively execute `action_5` directly, it was computed relative to the pose at prediction time, not the current pose.
+To execute action at step t: `T_target = T_base @ action_t`
 
 ## Design Logic
 
-### UMI's Solution (from their codebase)
-
-UMI handles this elegantly:
+### Deployment Solution
 
 1. **Each chunk is independent** - Always predict from the ACTUAL current robot pose
-2. **Within a chunk: Chain actions** - Each action builds on the accumulated pose
+2. **Within a chunk: Apply from base** - Each action is applied from the chunk base pose
 
 ```python
 # At prediction time (once per chunk)
 current_pose = get_actual_robot_pose()  # From FK
-chunk = policy.predict(observation)      # All relative to current_pose
+chunk_base_pose = current_pose  # Store as base for all actions in this chunk
+chunk = policy.predict(observation)      # All relative to chunk_base_pose
 
 # During execution (for each action in chunk)
-accumulated_pose = current_pose
 for action in chunk:
-    # Chain: T_new = T_accumulated @ T_action
-    accumulated_pose = accumulated_pose @ action
-    execute(accumulated_pose)
+    # Apply from base: T_target = T_base @ T_action
+    target_pose = chunk_base_pose @ action
+    execute(target_pose)
 ```
 
 This approach:
-- ✅ Avoids complex cross-chunk re-chaining
+- ✅ Matches RelativeEEDataset format (all actions relative to base)
 - ✅ Handles drift naturally (each chunk starts fresh from actual pose)
-- ✅ Matches UMI's proven deployment pattern
+- ✅ Correctly interprets each action independently
 
 ## Architecture
 
@@ -65,14 +71,14 @@ This approach:
 ```
 ┌─────────────────┐
 │  ACT Policy     │  Outputs (chunk_size, 10) relative poses
-│  (RelativeEED)  │
+│  (RelativeEED)  │  All actions relative to chunk base
 └────────┬────────┘
          │
          ▼
 ┌─────────────────────────────────────────┐
 │  Relative10DAccumulatedToAbsoluteEE     │
-│  - Gets accumulated pose from state     │
-│  - Chains: T_target = T_acc @ T_rel     │
+│  - Gets chunk_base_pose from state     │
+│  - Applies: T_target = T_base @ T_rel  │
 │  - Outputs absolute ee.x/y/z/wx/wy/wz   │
 └────────┬────────────────────────────────┘
          │
@@ -170,19 +176,19 @@ def create_relative_observation(current_ee_T, gripper_pos, obs_state_horizon=2):
     return stack_with_history(current_obs, history_buffer)
 ```
 
-### Action Chaining Logic
+### Action Application Logic
 
 ```python
 # When new chunk is predicted
 current_ee_T = kinematics.forward_kinematics(current_joints)
-accumulated_ee_pose = current_ee_T  # Start from actual pose
+chunk_base_pose = current_ee_T  # All actions relative to this base
 
 # For each action in chunk
 rel_T = pose10d_to_mat(action_10d[:9])
-accumulated_ee_pose = accumulated_ee_pose @ rel_T  # Chain!
+target_ee_pose = chunk_base_pose @ rel_T  # Apply from base (NOT chaining)
 
 # Convert to joints and execute
-target_joints = kinematics.inverse_kinematics(current_joints, accumulated_ee_pose)
+target_joints = kinematics.inverse_kinematics(current_joints, target_ee_pose)
 robot.send_action(target_joints)
 ```
 
@@ -239,6 +245,10 @@ ee_to_joints_pipeline = RobotProcessorPipeline[
 - Verify checkpoint was trained with `RelativeEEDataset`
 - Check `obs_state_horizon` matches training
 - Ensure dataset has correct 10D format
+
+### Robot trajectory doesn't match expected
+- Verify action chaining uses `chunk_base_pose` not sequential accumulation
+- Check that `chunk_base_pose` is set once at chunk start, not updated
 
 ## References
 

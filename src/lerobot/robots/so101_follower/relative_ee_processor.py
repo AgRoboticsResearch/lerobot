@@ -205,19 +205,21 @@ class Relative10DToAbsoluteEE(RobotActionProcessorStep):
 @dataclass
 class Relative10DAccumulatedToAbsoluteEE(RobotActionProcessorStep):
     """
-    Converts 10D relative EE actions to absolute EE poses with accumulated chaining.
+    Converts 10D relative EE actions to absolute EE poses using chunk base pose.
 
     This variant is designed for UMI-style action chunking where:
-    - Each action in a chunk is relative to the original prediction timestep
-    - Actions within a chunk are accumulated/chained
-    - A separate "accumulated_ee_pose" is maintained in complementary_data
+    - Each action in a chunk is relative to the SAME base pose (chunk start)
+    - Actions are NOT accumulated/chained sequentially
+    - A "chunk_base_pose" is maintained in complementary_data (set at chunk start)
 
     The processor:
-    1. Gets the accumulated EE pose from complementary_data
+    1. Gets the chunk base pose from complementary_data
     2. Converts the 10D relative action to a transformation matrix
-    3. Chains: T_new = T_accumulated @ T_rel
-    4. Updates the accumulated pose in complementary_data
-    5. Outputs absolute EE pose with keys: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos
+    3. Applies: T_target = T_base @ T_rel (where T_base is the chunk start pose)
+    4. Outputs absolute EE pose with keys: ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos
+
+    Note: Despite the class name containing "Accumulated", this does NOT accumulate.
+    For RelativeEEDataset format, all actions in a chunk are relative to the base.
 
     Attributes:
         gripper_scale: Scale factor for gripper (default 100 for [0,1] -> [0,100]).
@@ -226,14 +228,18 @@ class Relative10DAccumulatedToAbsoluteEE(RobotActionProcessorStep):
     gripper_scale: float = 100.0
 
     def action(self, action: RobotAction) -> RobotAction:
-        """Convert 10D relative action to absolute EE pose with accumulation."""
-        # Get accumulated EE pose from complementary data
+        """Convert 10D relative action to absolute EE pose using chunk base."""
+        # Get chunk base pose from complementary data
         complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        t_accumulated = complementary_data.get("accumulated_ee_pose")
+        t_base = complementary_data.get("chunk_base_pose")
 
-        if t_accumulated is None:
+        # Fallback to old key name for backward compatibility
+        if t_base is None:
+            t_base = complementary_data.get("accumulated_ee_pose")
+
+        if t_base is None:
             raise ValueError(
-                "accumulated_ee_pose not found in complementary_data. "
+                "chunk_base_pose not found in complementary_data. "
                 "Make sure to set it before calling this processor."
             )
 
@@ -257,12 +263,9 @@ class Relative10DAccumulatedToAbsoluteEE(RobotActionProcessorStep):
         # Convert relative 10D to transformation matrix
         t_rel = pose10d_to_mat(rel_pose_10d)
 
-        # Chain: T_new = T_accumulated @ T_rel (UMI-style accumulation)
-        t_target = t_accumulated @ t_rel
-
-        # Update accumulated pose in complementary data
-        complementary_data["accumulated_ee_pose"] = t_target
-        self.transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+        # Apply from base: T_target = T_base @ T_rel
+        # All actions in the chunk are relative to T_base, NOT chained sequentially
+        t_target = t_base @ t_rel
 
         # Extract position and rotation (as rotation vector)
         target_pos = t_target[:3, 3]

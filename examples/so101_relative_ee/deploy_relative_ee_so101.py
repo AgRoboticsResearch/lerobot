@@ -397,7 +397,7 @@ def main():
 
     step_count = 0
     actions_processed_in_chunk = 0
-    accumulated_ee_pose = None
+    chunk_base_pose = None  # Base pose for the current chunk (all actions relative to this)
 
     try:
         while args.num_steps == 0 or step_count < args.num_steps:
@@ -414,19 +414,19 @@ def main():
             # Check if we're starting a new chunk
             # The policy's select_action manages an internal queue and predicts
             # a new chunk when the queue is empty. We detect chunk boundaries
-            # to reset the accumulated EE pose.
+            # to set the chunk base pose.
             # -------------------------------------------------------------------
             if actions_processed_in_chunk == 0:
-                # New chunk starting - reset accumulated pose to current actual EE pose
+                # New chunk starting - all actions in this chunk are relative to this base pose
                 current_ee_T = kinematics.forward_kinematics(current_joints)
-                accumulated_ee_pose = current_ee_T.copy()
+                chunk_base_pose = current_ee_T.copy()
 
             # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
             # Create relative observation (UMI-style: identity at current)
             obs_state, history_buffer = create_relative_observation(
-                current_ee_T=current_ee_T if actions_processed_in_chunk == 0 else accumulated_ee_pose,
+                current_ee_T=current_ee_T if actions_processed_in_chunk == 0 else chunk_base_pose,
                 gripper_pos=current_gripper,
                 obs_state_horizon=policy.config.n_obs_steps,
                 history_buffer=history_buffer,
@@ -472,10 +472,12 @@ def main():
                 rel_action_10d = action_output[0].cpu().numpy()  # (10,)
 
             # -------------------------------------------------------------------
-            # Update accumulated pose (UMI-style chaining within chunk)
+            # Apply action from chunk base pose (UMI-style: all actions relative to base)
+            # Each action in the chunk is relative to chunk_base_pose, not chained sequentially.
+            # action[t] = T_base^(-1) @ T_target, so we compute T_target = T_base @ action[t]
             # -------------------------------------------------------------------
             rel_T = pose10d_to_mat(rel_action_10d[:9])
-            accumulated_ee_pose = accumulated_ee_pose @ rel_T
+            target_ee_pose = chunk_base_pose @ rel_T  # Apply from base, don't chain
 
             # -------------------------------------------------------------------
             # Convert to joint actions via pipeline
@@ -488,11 +490,11 @@ def main():
                 f"{name}.pos": obs_dict[f"{name}.pos"] for name in MOTOR_NAMES
             }
 
-            # Create transition with complementary data (accumulated_ee_pose)
-            # The pipeline needs this to convert relative EE to absolute EE
+            # Create transition with complementary data (chunk_base_pose)
+            # The processor needs this to convert relative EE to absolute EE
             transition = robot_action_observation_to_transition((action_dict, robot_obs))
             transition[TransitionKey.COMPLEMENTARY_DATA] = {
-                "accumulated_ee_pose": accumulated_ee_pose.copy()
+                "chunk_base_pose": chunk_base_pose.copy()
             }
 
             # Run pipeline: relative -> absolute -> bounds -> IK -> joints
@@ -522,7 +524,7 @@ def main():
                 precise_sleep(sleep_time)
 
             if step_count % 100 == 0:
-                pos = accumulated_ee_pose[:3, 3]
+                pos = target_ee_pose[:3, 3]
                 logger.info(f"Step {step_count}: EE pos {pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}")
 
     except KeyboardInterrupt:
