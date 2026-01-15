@@ -68,7 +68,7 @@ RESET_POSE_DEG = np.array([
     -5.54,    # shoulder_pan
     -114.59,  # shoulder_lift
     80.44,    # elbow_flex
-    7.84,     # wrist_flex
+    15.84,     # wrist_flex
     -5.19,    # wrist_roll
     35.13,    # gripper
 ])
@@ -78,7 +78,7 @@ SAFE_POSE_DEG = np.array([
     -7.91,    # shoulder_pan
     -106.51,  # shoulder_lift
     87.91,    # elbow_flex
-    70.74,    # wrist_flex
+    15.74,    # wrist_flex
     -0.53,    # wrist_roll
     1.18,     # gripper
 ])
