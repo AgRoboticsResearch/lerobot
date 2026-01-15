@@ -81,7 +81,7 @@ MOTOR_NAMES = [
 RESET_POSE_DEG = np.array([
     -5.54,    # shoulder_pan
     -114.59,  # shoulder_lift
-    104.44,   # elbow_flex
+    80.44,   # elbow_flex
     7.84,    # wrist_flex
     -5.19,    # wrist_roll
     35.13,    # gripper
