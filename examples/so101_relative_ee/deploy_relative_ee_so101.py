@@ -400,7 +400,7 @@ def main():
     # ========================================================================
     logger.info("Starting control loop...")
     logger.info(f"Control frequency: {args.fps} Hz")
-    logger.info(f"Actions per prediction: {policy.config.n_action_steps}")
+    logger.info(f"Actions per prediction: {args.n_action_steps}")
 
     step_count = 0
     actions_processed_in_chunk = 0
@@ -427,6 +427,7 @@ def main():
                 # New chunk starting - all actions in this chunk are relative to this base pose
                 current_ee_T = kinematics.forward_kinematics(current_joints)
                 chunk_base_pose = current_ee_T.copy()
+                print(f"New chunk base pose at step {step_count}: pos {chunk_base_pose[:3,3]}")
 
             # -------------------------------------------------------------------
             # Prepare observation for policy
@@ -517,9 +518,12 @@ def main():
             # Update counters
             actions_processed_in_chunk += 1
             step_count += 1
+            print("actions_processed_in_chunk:", actions_processed_in_chunk)
+            print("policy.config.n_action_steps:", policy.config.n_action_steps)
 
             # Reset chunk counter when we've processed n_action_steps actions
-            if actions_processed_in_chunk >= policy.config.n_action_steps:
+            if actions_processed_in_chunk >= args.n_action_steps:
+                print(f"Completed {actions_processed_in_chunk} actions in chunk at step {step_count}")
                 actions_processed_in_chunk = 0
 
             # -------------------------------------------------------------------
