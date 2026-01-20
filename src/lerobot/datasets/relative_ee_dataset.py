@@ -76,7 +76,18 @@ def mat_to_pose10d(mat: np.ndarray) -> np.ndarray:
     """
     pos = mat[..., :3, 3]
     rotmat = mat[..., :3, :3]
-    rot6d = rotmat[..., :2, :].reshape(rotmat.shape[:-2] + (6,))
+    # Take first two COLUMNS (not rows) to match rot6d_to_mat expectations
+    # rot6d[:3] = first column [R[0,0], R[1,0], R[2,0]], rot6d[3:] = second column [R[0,1], R[1,1], R[2,1]]
+    # Reshape from (..., 3, 2) to (..., 6) in column-major order
+    if rotmat.ndim == 2:
+        rot6d = rotmat[:, :2].T.reshape(-1)
+    else:
+        # For batched: reshape to (..., 2, 3) then flatten
+        shape = rotmat.shape[:-2]  # batch shape
+        n_batch = np.prod(shape) if shape else 1
+        rotmat_reshaped = rotmat.reshape(-1, 3, 2)  # (n_batch, 3, 2)
+        rot6d_reshaped = rotmat_reshaped.transpose(0, 2, 1).reshape(n_batch, 6)  # (n_batch, 6)
+        rot6d = rot6d_reshaped.reshape(shape + (6,))
     return np.concatenate([pos, rot6d], axis=-1)
 
 
