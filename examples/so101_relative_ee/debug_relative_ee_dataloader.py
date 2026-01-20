@@ -287,10 +287,24 @@ def plot_trajectory_comparison(
     orig_y = [original_traj['current_position'][1]] + list(original_traj['future_positions'][:, 1])
     orig_z = [original_traj['current_position'][2]] + list(original_traj['future_positions'][:, 2])
 
+    # Gripper states (include current gripper)
+    orig_grippers = [original_traj['current_gripper']] + list(original_traj['future_grippers'])
+
     ax1.plot(
         orig_x, orig_y, orig_z,
         "b-", linewidth=2, label="Original (from dataset)", marker="o", markersize=4
     )
+
+    # Overlay different marker for gripper < 0.5 (open gripper)
+    open_gripper_x = [x for x, g in zip(orig_x, orig_grippers) if g < 0.5]
+    open_gripper_y = [y for y, g in zip(orig_y, orig_grippers) if g < 0.5]
+    open_gripper_z = [z for z, g in zip(orig_z, orig_grippers) if g < 0.5]
+
+    if open_gripper_x:
+        ax1.scatter(
+            open_gripper_x, open_gripper_y, open_gripper_z,
+            c="orange", s=80, marker="s", label="Open gripper (<0.5)", zorder=15
+        )
 
     # Reconstructed trajectory (from relative actions reversed)
     # The relative actions start at t+1, so current position is not included

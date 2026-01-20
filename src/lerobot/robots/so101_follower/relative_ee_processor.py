@@ -42,6 +42,9 @@ from lerobot.processor import (
 def rot6d_to_mat(rot6d: np.ndarray) -> np.ndarray:
     """Convert 6D rotation representation to 3x3 rotation matrix.
 
+    Following UMI's row-based convention (axis=-2 for stacking).
+    The Zhou et al. 2019 paper describes columns, but UMI's code uses rows.
+
     Args:
         rot6d: 6D rotation array of shape (..., 6)
 
@@ -51,18 +54,18 @@ def rot6d_to_mat(rot6d: np.ndarray) -> np.ndarray:
     a1 = rot6d[..., :3]
     a2 = rot6d[..., 3:]
 
-    # Normalize first column
+    # Normalize first row
     b1 = a1 / np.linalg.norm(a1, axis=-1, keepdims=True)
 
-    # Make second column orthogonal to first
+    # Make second row orthogonal to first
     b2 = a2 - np.sum(b1 * a2, axis=-1, keepdims=True) * b1
     b2 = b2 / np.linalg.norm(b2, axis=-1, keepdims=True)
 
-    # Third column via cross product
+    # Third row via cross product
     b3 = np.cross(b1, b2, axis=-1)
 
-    # Stack into rotation matrix
-    rotmat = np.stack([b1, b2, b3], axis=-1)
+    # Stack into rotation matrix (axis=-2 = rows, following UMI's convention)
+    rotmat = np.stack([b1, b2, b3], axis=-2)
     return rotmat
 
 

@@ -64,9 +64,12 @@ def mat_to_pose10d(mat: np.ndarray) -> np.ndarray:
 
     The 10D representation consists of:
     - 3D position
-    - 6D rotation (first two columns of rotation matrix)
+    - 6D rotation (first two ROWS of rotation matrix, following UMI's convention)
 
-    The third column of the rotation matrix can be reconstructed via cross product.
+    The third row of the rotation matrix can be reconstructed via cross product.
+
+    Note: The Zhou et al. 2019 paper describes using columns, but UMI's code
+    uses rows. We follow UMI's code convention here for compatibility.
 
     Args:
         mat: 4x4 transformation matrix, shape (..., 4, 4)
@@ -76,26 +79,21 @@ def mat_to_pose10d(mat: np.ndarray) -> np.ndarray:
     """
     pos = mat[..., :3, 3]
     rotmat = mat[..., :3, :3]
-    # Take first two COLUMNS (not rows) to match rot6d_to_mat expectations
-    # rot6d[:3] = first column [R[0,0], R[1,0], R[2,0]], rot6d[3:] = second column [R[0,1], R[1,1], R[2,1]]
-    # Reshape from (..., 3, 2) to (..., 6) in column-major order
-    if rotmat.ndim == 2:
-        rot6d = rotmat[:, :2].T.reshape(-1)
-    else:
-        # For batched: reshape to (..., 2, 3) then flatten
-        shape = rotmat.shape[:-2]  # batch shape
-        n_batch = np.prod(shape) if shape else 1
-        rotmat_reshaped = rotmat.reshape(-1, 3, 2)  # (n_batch, 3, 2)
-        rot6d_reshaped = rotmat_reshaped.transpose(0, 2, 1).reshape(n_batch, 6)  # (n_batch, 6)
-        rot6d = rot6d_reshaped.reshape(shape + (6,))
+    # Take first two ROWS to match UMI's rot6d convention
+    # rot6d[:3] = first row [R[0,0], R[0,1], R[0,2]], rot6d[3:] = second row [R[1,0], R[1,1], R[1,2]]
+    batch_dim = rotmat.shape[:-2]
+    rot6d = rotmat[..., :2, :].copy().reshape(batch_dim + (6,))
     return np.concatenate([pos, rot6d], axis=-1)
 
 
 def rot6d_to_mat(rot6d: np.ndarray) -> np.ndarray:
     """Convert 6D rotation representation to 3x3 rotation matrix.
 
-    This reconstructs the third column via cross product and orthonormalization,
-    following the approach in Zhou et al. 2019.
+    This reconstructs the third row via cross product and orthonormalization,
+    following UMI's actual implementation (row-based convention).
+
+    Note: The Zhou et al. 2019 paper describes using columns, but UMI's code
+    uses rows. We follow UMI's code convention here for compatibility.
 
     Args:
         rot6d: 6D rotation array, shape (..., 6)
@@ -106,18 +104,18 @@ def rot6d_to_mat(rot6d: np.ndarray) -> np.ndarray:
     a1 = rot6d[..., :3]
     a2 = rot6d[..., 3:]
 
-    # Normalize first column
+    # Normalize first row
     b1 = a1 / np.linalg.norm(a1, axis=-1, keepdims=True)
 
-    # Make second column orthogonal to first
+    # Make second row orthogonal to first
     b2 = a2 - np.sum(b1 * a2, axis=-1, keepdims=True) * b1
     b2 = b2 / np.linalg.norm(b2, axis=-1, keepdims=True)
 
-    # Third column via cross product
+    # Third row via cross product
     b3 = np.cross(b1, b2, axis=-1)
 
-    # Stack into rotation matrix
-    rotmat = np.stack([b1, b2, b3], axis=-1)
+    # Stack into rotation matrix (axis=-2 = rows, following UMI's convention)
+    rotmat = np.stack([b1, b2, b3], axis=-2)
     return rotmat
 
 
@@ -197,9 +195,10 @@ class RelativeEEDataset(LeRobotDataset):
       action_horizon is determined by delta_timestamps['action'] (e.g., 100 for ACT's chunk_size)
       Contains: [delta.x, delta.y, delta.z, rot6d.0, ..., rot6d.5, gripper] for each timestep
 
-    The 6D rotation representation (Zhou et al. 2019) takes the first two columns of the
-    rotation matrix. The third column can be reconstructed via cross product and normalization,
-    ensuring the matrix is orthonormal.
+    The 6D rotation representation (Zhou et al. 2019) describes taking the first two columns of the
+    rotation matrix. However, UMI's actual implementation uses the first two ROWS. The third row/column
+    can be reconstructed via cross product and normalization, ensuring the matrix is orthonormal.
+    We follow UMI's row-based convention for compatibility.
 
     Args:
         obs_state_horizon: Number of historical timesteps to include in observation state.
