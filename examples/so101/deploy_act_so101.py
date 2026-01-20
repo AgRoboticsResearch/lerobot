@@ -294,6 +294,7 @@ def main():
     logger.info(f"Control frequency: {args.fps} Hz")
     logger.info(f"Actions per prediction: {policy.config.n_action_steps}")
     logger.info("Press Ctrl+C to stop")
+    time.sleep(1.0)
 
     step_count = 0
 
@@ -359,6 +360,7 @@ def main():
             robot.send_action(action_dict)
 
             step_count += 1
+            print("Step:", step_count, "Action:", action_dict)
 
             # -------------------------------------------------------------------
             # Maintain timing

@@ -46,6 +46,7 @@ import torch
 import yaml
 
 from lerobot.cameras import CameraConfig
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -518,8 +519,9 @@ def main():
             # Update counters
             actions_processed_in_chunk += 1
             step_count += 1
-            print("actions_processed_in_chunk:", actions_processed_in_chunk)
-            print("policy.config.n_action_steps:", policy.config.n_action_steps)
+            print("Step:", step_count, "Action:", rel_action_10d, "Joints Action:", joints_action)
+            # print("actions_processed_in_chunk:", actions_processed_in_chunk)
+            # print("policy.config.n_action_steps:", policy.config.n_action_steps)
 
             # Reset chunk counter when we've processed n_action_steps actions
             if actions_processed_in_chunk >= args.n_action_steps:
