@@ -122,11 +122,58 @@ def compute_error_metrics(
     }
 
 
+def save_trajectory_txt(
+    pred_actions: np.ndarray,
+    gt_actions: np.ndarray,
+    txt_path_prefix: str,
+    base_ee_T: np.ndarray = None,
+):
+    """
+    Save predicted and ground truth trajectories as txt files.
+
+    Args:
+        pred_actions: (T, 10) predicted relative actions
+        gt_actions: (T, 10) ground truth relative actions
+        txt_path_prefix: Path prefix for txt files (will append _pred.txt and _gt.txt)
+        base_ee_T: (4, 4) base EE pose at prediction time (for converting to absolute)
+    """
+    T = min(pred_actions.shape[0], gt_actions.shape[0])
+    pred = pred_actions[:T]
+    gt = gt_actions[:T]
+
+    # Column headers
+    headers = ["dx", "dy", "dz", "r0", "r1", "r2", "r3", "r4", "r5", "gripper"]
+
+    # Save predicted trajectory
+    pred_path = f"{txt_path_prefix}_pred.txt"
+    with open(pred_path, "w") as f:
+        f.write(" ".join(headers) + "\n")
+        for row in pred:
+            f.write(" ".join([f"{v:.6f}" for v in row]) + "\n")
+
+    # Save ground truth trajectory
+    gt_path = f"{txt_path_prefix}_gt.txt"
+    with open(gt_path, "w") as f:
+        f.write(" ".join(headers) + "\n")
+        for row in gt:
+            f.write(" ".join([f"{v:.6f}" for v in row]) + "\n")
+
+    # Save base EE pose if available
+    if base_ee_T is not None:
+        base_path = f"{txt_path_prefix}_base_ee.txt"
+        with open(base_path, "w") as f:
+            # Save as 4x4 matrix
+            for row in base_ee_T:
+                f.write(" ".join([f"{v:.6f}" for v in row]) + "\n")
+        logger.info(f"  Base EE pose saved to: {base_path}")
+
+
 def plot_trajectory_comparison(
     pred_actions: np.ndarray,
     gt_actions: np.ndarray,
     output_path: str,
     sample_idx: int = 0,
+    observation_image: np.ndarray = None,
 ):
     """
     Plot predicted vs ground truth EE trajectory.
@@ -164,10 +211,11 @@ def plot_trajectory_comparison(
     pred_positions = np.array(pred_positions)
     gt_positions = np.array(gt_positions)
 
-    fig = plt.figure(figsize=(14, 10))
+    # Create figure with 3x2 layout (3 cols, 2 rows)
+    fig = plt.figure(figsize=(18, 10))
 
-    # 3D trajectory plot
-    ax1 = fig.add_subplot(2, 2, 1, projection="3d")
+    # 3D trajectory plot (col 1, row 1)
+    ax1 = fig.add_subplot(2, 3, 1, projection="3d")
     ax1.plot(
         pred_positions[:, 0],
         pred_positions[:, 1],
@@ -202,8 +250,8 @@ def plot_trajectory_comparison(
     ax1.set_ylim(y_min - y_pad, y_max + y_pad)
     ax1.set_zlim(z_min - z_pad, z_max + z_pad)
 
-    # Position error over time
-    ax2 = fig.add_subplot(2, 2, 2)
+    # Position error over time (col 1, row 2)
+    ax2 = fig.add_subplot(2, 3, 4)
     metrics = compute_error_metrics(pred_actions, gt_actions)
     ax2.plot(metrics["position_errors"] * 1000, "r-", linewidth=2)
     ax2.set_xlabel("Timestep")
@@ -211,16 +259,16 @@ def plot_trajectory_comparison(
     ax2.set_title("Position Error Over Time")
     ax2.grid(True, alpha=0.3)
 
-    # Rotation error over time
-    ax3 = fig.add_subplot(2, 2, 3)
+    # Rotation error over time (col 2, row 1)
+    ax3 = fig.add_subplot(2, 3, 2)
     ax3.plot(np.degrees(metrics["rotation_errors"]), "g-", linewidth=2)
     ax3.set_xlabel("Timestep")
     ax3.set_ylabel("Rotation Error (degrees)")
     ax3.set_title("Rotation Error Over Time")
     ax3.grid(True, alpha=0.3)
 
-    # Per-dimension error
-    ax4 = fig.add_subplot(2, 2, 4)
+    # Per-dimension error (col 2, row 2)
+    ax4 = fig.add_subplot(2, 3, 5)
     T_min = min(pred_actions.shape[0], gt_actions.shape[0])
     dims = ["dx", "dy", "dz", "r0", "r1", "r2", "r3", "r4", "r5", "gripper"]
     dim_errors = np.abs(pred_actions[:T] - gt_actions[:T]).mean(axis=0)
@@ -230,6 +278,36 @@ def plot_trajectory_comparison(
     ax4.set_ylabel("Mean Absolute Error")
     ax4.set_title("Per-Dimension Mean Absolute Error")
     ax4.grid(True, axis="y", alpha=0.3)
+
+    # Gripper prediction vs ground truth (col 3, row 1)
+    ax5 = fig.add_subplot(2, 3, 3)
+    timesteps = np.arange(T)
+    ax5.plot(timesteps, gt_actions[:T, 9], "b-", linewidth=2, label="Ground Truth", marker="o", markersize=4)
+    ax5.plot(timesteps, pred_actions[:T, 9], "r--", linewidth=2, label="Predicted", marker="x", markersize=4)
+    ax5.set_xlabel("Timestep")
+    ax5.set_ylabel("Gripper State")
+    ax5.set_title("Gripper: Predicted vs Ground Truth")
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+    ax5.set_ylim(-0.1, 1.1)
+
+    # Observation image (col 3, row 2)
+    ax6 = fig.add_subplot(2, 3, 6)
+    if observation_image is not None:
+        # Convert from (C, H, W) to (H, W, C) if needed
+        if observation_image.ndim == 3 and observation_image.shape[0] in [1, 3]:
+            img = observation_image.transpose(1, 2, 0)
+            if img.shape[-1] == 1:
+                img = img.squeeze(-1)
+        else:
+            img = observation_image
+        ax6.imshow(img)
+        ax6.set_title("Observation Image")
+        ax6.axis("off")
+    else:
+        ax6.text(0.5, 0.5, "No Image Available", ha="center", va="center", transform=ax6.transAxes)
+        ax6.set_title("Observation Image")
+        ax6.axis("off")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -470,7 +548,18 @@ def main():
 
         # Plot trajectory comparison
         plot_path = output_dir / f"sample_{idx}_comparison.png"
-        plot_trajectory_comparison(pred_trunc, gt_trunc, str(plot_path), idx)
+        txt_path_prefix = output_dir / f"sample_{idx}"
+        # Extract observation image if available
+        obs_img = None
+        for key in sample.keys():
+            if key.startswith("observation.images"):
+                obs_img = sample[key].cpu().numpy()
+                break
+        plot_trajectory_comparison(pred_trunc, gt_trunc, str(plot_path), idx, obs_img)
+
+        # Save trajectories as txt files
+        save_trajectory_txt(pred_trunc, gt_trunc, str(txt_path_prefix))
+        logger.info(f"  Trajectories saved to: {txt_path_prefix}_pred.txt, {txt_path_prefix}_gt.txt")
 
         # Save results
         all_results.append({
