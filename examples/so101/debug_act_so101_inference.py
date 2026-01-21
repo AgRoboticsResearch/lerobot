@@ -243,91 +243,164 @@ def compute_ee_trajectories(
 def plot_ee_trajectory_3d(
     pred_ee_positions: np.ndarray,
     gt_ee_positions: np.ndarray,
+    pred_actions: np.ndarray,
+    gt_actions: np.ndarray,
     output_path: str,
     sample_idx: int = 0,
 ):
     """
-    Plot predicted vs ground truth end-effector trajectory in 3D.
+    Plot predicted vs ground truth end-effector trajectory with multiple analysis panels.
+
+    Layout matches debug_relative_ee_inference.py style:
+    - 3D EE trajectory plot
+    - Position error over time
+    - Per-axis position comparison
+    - Per-axis error bars
 
     Args:
         pred_ee_positions: (T, 3) predicted EE positions
         gt_ee_positions: (T, 3) ground truth EE positions
+        pred_actions: (T, 6) predicted joint actions
+        gt_actions: (T, 6) ground truth joint actions
         output_path: Path to save the plot
         sample_idx: Sample index for title
     """
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection="3d")
+    T = min(pred_ee_positions.shape[0], gt_ee_positions.shape[0])
+    pred_ee = pred_ee_positions[:T]
+    gt_ee = gt_ee_positions[:T]
+
+    fig = plt.figure(figsize=(14, 10))
+
+    # -----------------------------------------------------------------------
+    # 1. 3D EE Trajectory Plot
+    # -----------------------------------------------------------------------
+    ax1 = fig.add_subplot(2, 2, 1, projection="3d")
 
     # Plot ground truth (blue solid)
-    ax.plot(
-        gt_ee_positions[:, 0],
-        gt_ee_positions[:, 1],
-        gt_ee_positions[:, 2],
-        "b-", linewidth=3, label="Ground Truth", marker="o", markersize=4, alpha=0.8
+    ax1.plot(
+        gt_ee[:, 0], gt_ee[:, 1], gt_ee[:, 2],
+        "b-", linewidth=2, label="Ground Truth", marker="o", markersize=4, alpha=0.8
     )
-    ax.scatter(
-        gt_ee_positions[0, 0],
-        gt_ee_positions[0, 1],
-        gt_ee_positions[0, 2],
-        c="blue", s=100, marker="o", edgecolors="black", label="GT Start"
+    ax1.scatter(
+        [gt_ee[0, 0]], [gt_ee[0, 1]], [gt_ee[0, 2]],
+        c="blue", s=100, marker="o", edgecolors="black", label="GT Start", zorder=10
     )
-    ax.scatter(
-        gt_ee_positions[-1, 0],
-        gt_ee_positions[-1, 1],
-        gt_ee_positions[-1, 2],
-        c="blue", s=100, marker="s", edgecolors="black", label="GT End"
+    ax1.scatter(
+        [gt_ee[-1, 0]], [gt_ee[-1, 1]], [gt_ee[-1, 2]],
+        c="blue", s=100, marker="s", edgecolors="black", label="GT End", zorder=10
     )
 
     # Plot predicted (red dashed)
-    ax.plot(
-        pred_ee_positions[:, 0],
-        pred_ee_positions[:, 1],
-        pred_ee_positions[:, 2],
-        "r--", linewidth=3, label="Predicted", marker="x", markersize=4, alpha=0.8
+    ax1.plot(
+        pred_ee[:, 0], pred_ee[:, 1], pred_ee[:, 2],
+        "r--", linewidth=2, label="Predicted", marker="x", markersize=4, alpha=0.8
     )
-    ax.scatter(
-        pred_ee_positions[0, 0],
-        pred_ee_positions[0, 1],
-        pred_ee_positions[0, 2],
-        c="red", s=100, marker="^", edgecolors="black", label="Pred Start"
+    ax1.scatter(
+        [pred_ee[0, 0]], [pred_ee[0, 1]], [pred_ee[0, 2]],
+        c="red", s=100, marker="^", edgecolors="black", label="Pred Start", zorder=10
     )
-    ax.scatter(
-        pred_ee_positions[-1, 0],
-        pred_ee_positions[-1, 1],
-        pred_ee_positions[-1, 2],
-        c="red", s=100, marker="*", edgecolors="black", label="Pred End"
+    ax1.scatter(
+        [pred_ee[-1, 0]], [pred_ee[-1, 1]], [pred_ee[-1, 2]],
+        c="red", s=100, marker="*", edgecolors="black", label="Pred End", zorder=10
     )
 
     # Add connection lines at intervals to show deviation
-    step = max(1, len(pred_ee_positions) // 10)
-    for i in range(0, len(pred_ee_positions), step):
-        ax.plot(
-            [pred_ee_positions[i, 0], gt_ee_positions[i, 0]],
-            [pred_ee_positions[i, 1], gt_ee_positions[i, 1]],
-            [pred_ee_positions[i, 2], gt_ee_positions[i, 2]],
+    step = max(1, len(pred_ee) // 10)
+    for i in range(0, len(pred_ee), step):
+        ax1.plot(
+            [pred_ee[i, 0], gt_ee[i, 0]],
+            [pred_ee[i, 1], gt_ee[i, 1]],
+            [pred_ee[i, 2], gt_ee[i, 2]],
             "k:", alpha=0.3, linewidth=1
         )
 
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
-    ax.set_zlabel("Z (m)")
-    ax.set_title(f"Sample {sample_idx}: End-Effector Trajectory (via FK)")
-    ax.legend(loc="upper right")
+    ax1.set_xlabel("X (m)")
+    ax1.set_ylabel("Y (m)")
+    ax1.set_zlabel("Z (m)")
+    ax1.set_title(f"Sample {sample_idx}: 3D EE Trajectory (via FK)")
+    ax1.legend(loc="upper right", fontsize="small")
 
     # Set equal aspect ratio and reasonable limits
-    all_pos = np.vstack([pred_ee_positions, gt_ee_positions])
+    all_pos = np.vstack([pred_ee, gt_ee])
     x_min, x_max = all_pos[:, 0].min(), all_pos[:, 0].max()
     y_min, y_max = all_pos[:, 1].min(), all_pos[:, 1].max()
     z_min, z_max = all_pos[:, 2].min(), all_pos[:, 2].max()
 
-    # Add padding
     x_pad = max((x_max - x_min) * 0.1, 0.01)
     y_pad = max((y_max - y_min) * 0.1, 0.01)
     z_pad = max((z_max - z_min) * 0.1, 0.01)
 
-    ax.set_xlim(x_min - x_pad, x_max + x_pad)
-    ax.set_ylim(y_min - y_pad, y_max + y_pad)
-    ax.set_zlim(z_min - z_pad, z_max + z_pad)
+    ax1.set_xlim(x_min - x_pad, x_max + x_pad)
+    ax1.set_ylim(y_min - y_pad, y_max + y_pad)
+    ax1.set_zlim(z_min - z_pad, z_max + z_pad)
+
+    # -----------------------------------------------------------------------
+    # 2. Position Error over time
+    # -----------------------------------------------------------------------
+    ax2 = fig.add_subplot(2, 2, 2)
+
+    pos_errors = np.linalg.norm(pred_ee - gt_ee, axis=1) * 1000  # mm
+
+    ax2.plot(pos_errors, "r-", linewidth=2, marker="o", markersize=4)
+    ax2.set_xlabel("Timestep")
+    ax2.set_ylabel("Position Error (mm)")
+    ax2.set_title("EE Position Error Over Time")
+    ax2.grid(True, alpha=0.3)
+
+    # Add statistics text
+    mean_err = np.mean(pos_errors)
+    max_err = np.max(pos_errors)
+    ax2.text(
+        0.02, 0.98,
+        f"Mean: {mean_err:.2f} mm\nMax: {max_err:.2f} mm",
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5}
+    )
+
+    # -----------------------------------------------------------------------
+    # 3. Per-axis position comparison
+    # -----------------------------------------------------------------------
+    ax3 = fig.add_subplot(2, 2, 3)
+
+    axes = ['X', 'Y', 'Z']
+    colors = ['r', 'g', 'b']
+
+    for i, (axis, color) in enumerate(zip(axes, colors)):
+        ax3.plot(
+            gt_ee[:, i],
+            color=color, linestyle="-", marker="o", markersize=3,
+            label=f"GT {axis}"
+        )
+        ax3.plot(
+            pred_ee[:, i],
+            color=color, linestyle="--", marker="x", markersize=4,
+            label=f"Pred {axis}"
+        )
+
+    ax3.set_xlabel("Timestep")
+    ax3.set_ylabel("Position (m)")
+    ax3.set_title("EE Position Components: GT vs Predicted")
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    # -----------------------------------------------------------------------
+    # 4. Per-axis error bars
+    # -----------------------------------------------------------------------
+    ax4 = fig.add_subplot(2, 2, 4)
+
+    per_axis_errors = np.abs(pred_ee - gt_ee).mean(axis=0) * 1000  # mm
+    bars = ax4.bar(axes, per_axis_errors, color=colors, alpha=0.7)
+    ax4.set_ylabel("Mean Absolute Error (mm)")
+    ax4.set_title("Per-Axis Mean EE Position Error")
+    ax4.grid(True, axis="y", alpha=0.3)
+
+    # Add value labels on bars
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        ax4.text(bar.get_x() + bar.get_width()/2., height,
+                f'{per_axis_errors[i]:.2f}',
+                ha='center', va='bottom', fontsize=9)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -548,7 +621,17 @@ def main():
     # Get valid indices (accounting for action horizon)
     action_horizon = sample['action'].shape[0]
     max_idx = len(dataset) - action_horizon
-    valid_indices = np.random.choice(max_idx, args.num_samples, replace=False)
+
+    # Generate consistent indices across different dataset sizes
+    # Use a deterministic approach that produces the same indices for same seed
+    rng = np.random.default_rng(args.seed)
+    # Generate more random values than needed, then take first N unique values < max_idx
+    random_values = rng.random(max_idx * 2)
+    # Create an array of indices sorted by random values (shuffle by random values)
+    all_indices = np.arange(max_idx)
+    sorted_indices = all_indices[np.argsort(random_values[:max_idx])]
+    # Take first N
+    valid_indices = sorted_indices[:args.num_samples]
 
     all_results = []
 
@@ -603,7 +686,7 @@ def main():
             gt_ee_positions = compute_ee_trajectories(gt_trunc, kinematics)
 
             ee_traj_path = output_dir / f"sample_{idx}_ee_trajectory.png"
-            plot_ee_trajectory_3d(pred_ee_positions, gt_ee_positions, str(ee_traj_path), idx)
+            plot_ee_trajectory_3d(pred_ee_positions, gt_ee_positions, pred_trunc, gt_trunc, str(ee_traj_path), idx)
 
             ee_metrics = compute_ee_error_metrics(pred_ee_positions, gt_ee_positions)
             logger.info(f"  Mean EE error: {ee_metrics['mean_ee_error_mm']:.2f} mm")

@@ -203,9 +203,15 @@ class RelativeEEDataset(LeRobotDataset):
     Args:
         obs_state_horizon: Number of historical timesteps to include in observation state.
             Default is 2, matching UMI's low_dim_obs_horizon.
+        gripper_lower_deg: Lower bound for gripper in degrees (default: 0.0).
+            Stored in metadata for deployment denormalization.
+        gripper_upper_deg: Upper bound for gripper in degrees (default: 100.0).
+            Stored in metadata for deployment denormalization.
     """
 
-    def __init__(self, *args, obs_state_horizon: int = 2, **kwargs):
+    def __init__(self, *args, obs_state_horizon: int = 2,
+                 gripper_lower_deg: float = 0.0,
+                 gripper_upper_deg: float = 100.0, **kwargs):
         """
         Initialize the dataset wrapper and update metadata for the new shapes.
 
@@ -218,6 +224,8 @@ class RelativeEEDataset(LeRobotDataset):
         import torch.utils.data
 
         self.obs_state_horizon = obs_state_horizon
+        self.gripper_lower_deg = gripper_lower_deg
+        self.gripper_upper_deg = gripper_upper_deg
 
         # Extract custom kwargs before passing to parent
         compute_stats = kwargs.pop('compute_stats', True)
@@ -246,6 +254,12 @@ class RelativeEEDataset(LeRobotDataset):
                 'rot6d.0', 'rot6d.1', 'rot6d.2', 'rot6d.3', 'rot6d.4', 'rot6d.5',
                 'gripper'
             ]
+
+        # Store gripper bounds in metadata (following LeRobot's stats pattern)
+        # These are used during deployment to denormalize gripper values correctly
+        if hasattr(self, 'meta') and hasattr(self.meta, 'info'):
+            self.meta.info['gripper_lower_deg'] = self.gripper_lower_deg
+            self.meta.info['gripper_upper_deg'] = self.gripper_upper_deg
 
         # Update normalization stats for the new shapes
         # Following UMI's approach: compute stats from actual transformed data
@@ -309,14 +323,15 @@ class RelativeEEDataset(LeRobotDataset):
         action_delta_indices = delta_indices.get("action", [0])
         action_horizon = len(action_delta_indices)
 
-        # Sample random indices
-        # Adjust num_samples based on available data (accounting for action horizon)
-        available_samples = max(1, len(self.hf_dataset) - max(action_delta_indices))
+        # Sample random indices - use full dataset range, parent class handles padding
+        # Only need to account for obs_state_horizon since we look back in time
+        available_samples = max(1, len(self.hf_dataset) - self.obs_state_horizon)
         num_samples = min(num_samples, available_samples)
         indices = np.random.choice(available_samples, num_samples, replace=False)
 
         obs_list = []
         actions_list = []
+        is_pad_list = []  # Track which action timesteps are padded
 
         for idx in indices:
             # Collect historical observation states
@@ -340,16 +355,37 @@ class RelativeEEDataset(LeRobotDataset):
             # Get current state (most recent observation)
             current_state = obs_states[-1]  # (7,)
 
-            # Get actions across horizon
+            # Get current episode info for boundary checking
+            current_episode = self.hf_dataset[idx]['episode_index']
+            ep = self.meta.episodes[current_episode.item()]
+            ep_start = ep["dataset_from_index"]
+            ep_end = ep["dataset_to_index"]
+
+            # Get actions across horizon - pad with last frame if needed
+            # Respect episode boundaries like parent class does
             actions_for_idx = []
+            is_pad_for_idx = []
+            last_valid_action = None
             for delta_idx in action_delta_indices:
                 target_idx = idx + delta_idx
-                if target_idx < len(self.hf_dataset):
+                # Check if target is within the same episode
+                if target_idx >= ep_start and target_idx < ep_end:
                     target_action = self.hf_dataset[target_idx]['action']
-                    actions_for_idx.append(torch.tensor(target_action, dtype=torch.float32))
-
-            if len(actions_for_idx) < action_horizon:
-                continue
+                    action_tensor = torch.tensor(target_action, dtype=torch.float32)
+                    actions_for_idx.append(action_tensor)
+                    last_valid_action = action_tensor
+                    is_pad_for_idx.append(False)
+                else:
+                    # Pad with last valid action (clamp to episode end)
+                    # Same behavior as parent class's _get_query_indices
+                    if last_valid_action is None:
+                        # Should not happen if delta_indices includes 0
+                        last_valid_action = torch.tensor(
+                            self.hf_dataset[min(ep_end - 1, len(self.hf_dataset) - 1)]['action'],
+                            dtype=torch.float32
+                        )
+                    actions_for_idx.append(last_valid_action)
+                    is_pad_for_idx.append(True)
 
             # Stack actions: (action_horizon, 7)
             actions = torch.stack(actions_for_idx, dim=0)
@@ -399,11 +435,18 @@ class RelativeEEDataset(LeRobotDataset):
             # Stack: (action_horizon, 10)
             relative_actions = np.stack(relative_actions_list, axis=0)
             actions_list.append(relative_actions)
+            is_pad_list.append(is_pad_for_idx)
 
         # Stack all samples
         all_obs = np.stack(obs_list, axis=0)  # (N, 10)
         # Flatten all actions: (N * action_horizon, 10)
         all_actions = np.concatenate(actions_list, axis=0)  # (N * action_horizon, 10)
+        # Flatten is_pad: (N * action_horizon,)
+        all_is_pad = np.concatenate(is_pad_list, axis=0)  # (N * action_horizon,)
+
+        # Filter out padded frames for accurate statistics on real data only
+        # Padded frames have repeated data which would skew statistics
+        valid_actions = all_actions[~all_is_pad]  # Only non-padded frames
 
         def compute_stats(all_data):
             mean = all_data.mean(axis=0)
@@ -427,7 +470,7 @@ class RelativeEEDataset(LeRobotDataset):
 
         stats = {
             'observation.state': compute_stats(all_obs),
-            'action': compute_stats(all_actions),
+            'action': compute_stats(valid_actions),  # Use only non-padded frames for accurate stats
         }
 
         return stats
@@ -453,9 +496,10 @@ class RelativeEEDataset(LeRobotDataset):
             - action: Relative actions of shape (action_horizon, 10)
               action_horizon is determined by delta_timestamps['action'] (e.g., 100 for ACT)
               Each action is a future timestep relative to current
+            - action_is_pad: Boolean tensor indicating padded timesteps
             - All other original keys (images, timestamps, etc.) unchanged
         """
-        # Get original item with temporal batching
+        # Get original item with temporal batching (includes action_is_pad from parent)
         item = LeRobotDataset.__getitem__(self, idx)
 
         # Get current state (most recent observation)
@@ -481,6 +525,10 @@ class RelativeEEDataset(LeRobotDataset):
             actions = actions.unsqueeze(0)
 
         action_horizon = actions.shape[0]
+
+        # Get action_is_pad if provided by parent class
+        # Note: action_is_pad is already in the item from LeRobotDataset
+        # and will be preserved automatically when we return the item
 
         # Current pose (most recent observation)
         current_pose_6d = torch.cat([
@@ -536,5 +584,8 @@ class RelativeEEDataset(LeRobotDataset):
         # Update item with transformed data
         item['observation.state'] = relative_obs
         item['action'] = relative_actions
+
+        # Note: action_is_pad is already in the item from parent class
+        # It indicates which timesteps were padded (clamped to episode boundary)
 
         return item

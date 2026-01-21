@@ -416,7 +416,17 @@ def main():
     # Get valid indices (accounting for action horizon and obs_state_horizon)
     action_horizon = sample['action'].shape[0]
     max_idx = len(dataset) - action_horizon - args.obs_state_horizon
-    valid_indices = np.random.choice(max_idx, args.num_samples, replace=False)
+
+    # Generate consistent indices across different dataset sizes
+    # Use a deterministic approach that produces the same indices for same seed
+    rng = np.random.default_rng(args.seed)
+    # Generate more random values than needed, then take first N unique values < max_idx
+    random_values = rng.random(max_idx * 2)
+    # Create an array of indices sorted by random values (shuffle by random values)
+    all_indices = np.arange(max_idx)
+    sorted_indices = all_indices[np.argsort(random_values[:max_idx])]
+    # Take first N
+    valid_indices = sorted_indices[:args.num_samples]
 
     all_results = []
 

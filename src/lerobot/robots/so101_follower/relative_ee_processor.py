@@ -111,12 +111,14 @@ class Relative10DToAbsoluteEE(RobotActionProcessorStep):
     Attributes:
         kinematics: The robot's kinematic model for forward kinematics.
         motor_names: A list of motor names for getting joint positions.
-        gripper_scale: Scale factor for gripper (default 100 for [0,1] -> [0,100]).
+        gripper_lower_deg: Lower bound for gripper in degrees (default: 0.0).
+        gripper_upper_deg: Upper bound for gripper in degrees (default: 100.0).
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
-    gripper_scale: float = 100.0
+    gripper_lower_deg: float = 0.0
+    gripper_upper_deg: float = 100.0
 
     def action(self, action: RobotAction) -> RobotAction:
         """Convert 10D relative action to absolute EE pose."""
@@ -168,8 +170,10 @@ class Relative10DToAbsoluteEE(RobotActionProcessorStep):
         target_rotmat = t_target[:3, :3]
         target_rotvec = Rotation.from_matrix(target_rotmat).as_rotvec()
 
-        # Scale gripper from [0,1] to [0,100]
-        gripper_pos = np.clip(rel_pose_10d[9] * self.gripper_scale, 0.0, 100.0)
+        # Denormalize gripper from [0,1] to degrees using bounds from metadata
+        gripper_range = self.gripper_upper_deg - self.gripper_lower_deg
+        gripper_pos = rel_pose_10d[9] * gripper_range + self.gripper_lower_deg
+        gripper_pos = np.clip(gripper_pos, self.gripper_lower_deg, self.gripper_upper_deg)
 
         # Output absolute EE pose for downstream processors
         action["ee.x"] = float(target_pos[0])
@@ -225,10 +229,12 @@ class Relative10DAccumulatedToAbsoluteEE(RobotActionProcessorStep):
     For RelativeEEDataset format, all actions in a chunk are relative to the base.
 
     Attributes:
-        gripper_scale: Scale factor for gripper (default 100 for [0,1] -> [0,100]).
+        gripper_lower_deg: Lower bound for gripper in degrees (default: 0.0).
+        gripper_upper_deg: Upper bound for gripper in degrees (default: 100.0).
     """
 
-    gripper_scale: float = 100.0
+    gripper_lower_deg: float = 0.0
+    gripper_upper_deg: float = 100.0
 
     def action(self, action: RobotAction) -> RobotAction:
         """Convert 10D relative action to absolute EE pose using chunk base."""
@@ -275,8 +281,10 @@ class Relative10DAccumulatedToAbsoluteEE(RobotActionProcessorStep):
         target_rotmat = t_target[:3, :3]
         target_rotvec = Rotation.from_matrix(target_rotmat).as_rotvec()
 
-        # Scale gripper from [0,1] to [0,100]
-        gripper_pos = np.clip(rel_pose_10d[9] * self.gripper_scale, 0.0, 100.0)
+        # Denormalize gripper from [0,1] to degrees using bounds from metadata
+        gripper_range = self.gripper_upper_deg - self.gripper_lower_deg
+        gripper_pos = rel_pose_10d[9] * gripper_range + self.gripper_lower_deg
+        gripper_pos = np.clip(gripper_pos, self.gripper_lower_deg, self.gripper_upper_deg)
 
         # Output absolute EE pose for downstream processors
         action["ee.x"] = float(target_pos[0])

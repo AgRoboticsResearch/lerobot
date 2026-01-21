@@ -298,6 +298,28 @@ def main():
     logger.info(f"  n_action_steps: {args.n_action_steps}")
 
     # ========================================================================
+    # Load Gripper Bounds from Dataset Metadata
+    # ========================================================================
+    # Get dataset repo_id from policy config or use pretrained path
+    dataset_repo_id = getattr(policy.config.env, 'dataset_repo_id', None) if hasattr(policy.config, 'env') else None
+    if dataset_repo_id is None:
+        # Try to get from pretrained path (assume it contains the config)
+        dataset_repo_id = args.pretrained_path
+
+    gripper_lower = 0.0
+    gripper_upper = 100.0
+
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+        ds_meta = LeRobotDatasetMetadata(repo_id=dataset_repo_id)
+        gripper_lower = ds_meta.info.get('gripper_lower_deg', 0.0)
+        gripper_upper = ds_meta.info.get('gripper_upper_deg', 100.0)
+        logger.info(f"Loaded gripper bounds from dataset metadata: [{gripper_lower}°, {gripper_upper}°]")
+    except Exception as e:
+        logger.warning(f"Could not load gripper bounds from metadata: {e}")
+        logger.info(f"Using default gripper bounds: [{gripper_lower}°, {gripper_upper}°]")
+
+    # ========================================================================
     # Initialize Kinematics
     # ========================================================================
     logger.info("Initializing kinematics solver...")
@@ -323,7 +345,10 @@ def main():
         tuple[RobotAction, RobotObservation], RobotAction
     ](
         steps=[
-            Relative10DAccumulatedToAbsoluteEE(gripper_scale=100.0),
+            Relative10DAccumulatedToAbsoluteEE(
+                gripper_lower_deg=gripper_lower,
+                gripper_upper_deg=gripper_upper,
+            ),
             EEBoundsAndSafety(
                 end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
                 max_ee_step_m=args.max_ee_step_m,

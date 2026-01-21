@@ -186,6 +186,13 @@ def get_original_trajectory_chunk(
         axis_angle_to_rotmat(aa) for aa in future_axis_angles
     ])  # (action_horizon, 3, 3)
 
+    # Get episode info
+    ep = base_dataset.meta.episodes[current_episode_index.item()]
+    ep_start = ep["dataset_from_index"]
+    ep_end = ep["dataset_to_index"]
+    ep_length = ep_end - ep_start
+    idx_in_episode = idx - ep_start
+
     return {
         'current_position': current_position,
         'current_axis_angle': current_axis_angle,  # Store for debugging
@@ -197,6 +204,8 @@ def get_original_trajectory_chunk(
         'future_grippers': future_grippers,
         'current_episode': current_episode_index,
         'episode_indices_in_action': episode_indices_in_action,
+        'idx_in_episode': idx_in_episode,
+        'ep_length': ep_length,
     }
 
 
@@ -700,7 +709,7 @@ def main():
             str(plot_path),
             idx,
         )
-        all_errors.append(errors)
+        all_errors.append({**errors, 'idx': idx, 'original_traj': original_traj})
 
         logger.info(f"  Mean position error: {errors['mean_position_error']*1000:.4f} mm")
         logger.info(f"  Mean rotation error: {errors['mean_rotation_error']:.4f} deg")
@@ -720,6 +729,17 @@ def main():
     logger.info(f"Std position error: {np.std(all_pos_errors)*1000:.4f} mm")
     logger.info(f"Std rotation error: {np.std(all_rot_errors):.4f} deg")
 
+    # Print per-sample summary with episode info
+    logger.info("\nPer-sample results:")
+    for i, entry in enumerate(all_errors):
+        idx = entry['idx']
+        traj = entry['original_traj']
+        e = {k: v for k, v in entry.items() if k not in ['idx', 'original_traj']}
+        logger.info(f"  Sample {i+1}: idx={idx}, episode={traj['current_episode'].item()}, "
+                   f"frame={traj['idx_in_episode']}/{traj['ep_length']}, "
+                   f"pos_error={e['mean_position_error']*1000:.2f}mm, "
+                   f"rot_error={np.degrees(e['mean_rotation_error']):.2f}deg")
+
     # Save summary to file
     summary_path = output_dir / "dataloader_summary.txt"
     with open(summary_path, "w") as f:
@@ -730,9 +750,13 @@ def main():
         f.write(f"Action horizon: {action_horizon}\n")
         f.write(f"FPS: {args.fps}\n\n")
 
-        for i, idx in enumerate(valid_indices):
+        for i, entry in enumerate(all_errors):
+            idx = entry['idx']
+            traj = entry['original_traj']
             f.write(f"\nSample {i+1} (idx={idx}):\n")
-            e = all_errors[i]
+            f.write(f"  Episode: {traj['current_episode'].item()}\n")
+            f.write(f"  Frame in episode: {traj['idx_in_episode']} / {traj['ep_length']}\n")
+            e = {k: v for k, v in entry.items() if k not in ['idx', 'original_traj']}
             f.write(f"  Mean position error: {e['mean_position_error']*1000:.4f} mm\n")
             f.write(f"  Max position error: {e['max_position_error']*1000:.4f} mm\n")
             f.write(f"  Mean rotation error: {e['mean_rotation_error']:.4f} deg\n")

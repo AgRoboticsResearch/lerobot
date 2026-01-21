@@ -86,6 +86,7 @@ coverage.xml
 logs/
 tmp/
 *.log
+nohup.out
 pip-log.txt
 pip-delete-this-directory.txt
 celerybeat-schedule
