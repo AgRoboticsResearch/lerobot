@@ -307,6 +307,12 @@ def main():
         help="Number of actions to execute from each chunk prediction",
     )
     parser.add_argument(
+        "--skip_first_n_actions",
+        type=int,
+        default=0,
+        help="Skip first N actions in each chunk before executing (e.g., 1 skips action 0, starts from action 1)",
+    )
+    parser.add_argument(
         "--warm_start",
         action="store_true",
         help="Move to reset pose before starting",
@@ -528,34 +534,9 @@ def main():
     postprocessor.reset()
 
     # ========================================================================
-    # FIX: Use fixed state + current camera image (blend_mode=2)
-    # ========================================================================
-    logger.info("FIX: Capturing FIXED state once...")
-
-    fixed_obs_dict = robot.get_observation()
-    fixed_joints = np.array([fixed_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
-    fixed_gripper = fixed_obs_dict["gripper.pos"] / 100.0
-    fixed_ee_T = kinematics.forward_kinematics(fixed_joints)
-
-    # Prepare fixed state
-    fixed_obs_state, fixed_history_buffer = create_relative_observation(
-        current_ee_T=fixed_ee_T,
-        gripper_pos=fixed_gripper,
-        obs_state_horizon=policy.config.n_obs_steps,
-        history_buffer=None,
-    )
-
-    if fixed_obs_state.shape[0] == 1:
-        fixed_state_tensor = torch.from_numpy(fixed_obs_state).squeeze(0).unsqueeze(0).to(device)
-    else:
-        fixed_state_tensor = torch.from_numpy(fixed_obs_state[0]).unsqueeze(0).to(device)
-
-    logger.info("FIXED state captured - will use current camera image")
-
-    # ========================================================================
     # Main Control Loop
     # ========================================================================
-    logger.info("Starting control loop (FIXED state + CURRENT camera)...")
+    logger.info("Starting control loop...")
     logger.info(f"Control frequency: {args.fps} Hz")
     logger.info(f"Actions per prediction: {args.n_action_steps}")
     logger.info(f"Control real robot: {args.control_real_robot}")
@@ -579,19 +560,31 @@ def main():
             # Check if we're starting a new chunk
             # -------------------------------------------------------------------
             if actions_processed_in_chunk == 0:
-                # Update current_joints from robot at chunk start
+                # Sync current_joints from robot at chunk start (handles drift)
                 current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
                 current_ee_T = kinematics.forward_kinematics(current_joints)
                 chunk_base_pose = current_ee_T.copy()
                 chunk_num = step_count // args.n_action_steps
-                print(f"Chunk {chunk_num}: local_joints = {current_joints}")
+                print(f"Chunk {chunk_num}: joints = {current_joints}")
 
             # -------------------------------------------------------------------
-            # Use FIXED state + CURRENT camera
+            # Prepare observation for policy
             # -------------------------------------------------------------------
-            batch = {"observation.state": fixed_state_tensor}
+            obs_state, history_buffer = create_relative_observation(
+                current_ee_T=chunk_base_pose,
+                gripper_pos=obs_dict["gripper.pos"] / 100.0,
+                obs_state_horizon=policy.config.n_obs_steps,
+                history_buffer=history_buffer,
+            )
 
-            # Use CURRENT camera image
+            if obs_state.shape[0] == 1:
+                state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
+            else:
+                state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)
+
+            batch = {"observation.state": state_tensor}
+
+            # Add camera images
             for cam_name in cameras.keys():
                 img = obs_dict.get(cam_name)
                 if img is not None:
@@ -645,11 +638,34 @@ def main():
                 if pred_positions:
                     points_viz("predicted_trajectory", np.array(pred_positions), color=0xff0000)  # Red
 
+                # If skipping actions at chunk start, run them through pipeline to update current_joints
+                # This ensures IK uses the correct initial guess for the first executed action
+                if args.skip_first_n_actions > 0:
+                    for skip_idx in range(min(args.skip_first_n_actions, len(chunk_actions))):
+                        skip_action = chunk_actions[skip_idx]
+                        act_dict = {"rel_pose": skip_action}
+                        rob_obs = {f"{name}.pos": current_joints[i] for i, name in enumerate(MOTOR_NAMES)}
+                        trans = robot_action_observation_to_transition((act_dict, rob_obs))
+                        trans[TransitionKey.COMPLEMENTARY_DATA] = {"chunk_base_pose": chunk_base_pose.copy()}
+                        proc = ee_to_joints_pipeline._forward(trans)
+                        joints = transition_to_robot_action(proc)
+                        current_joints = np.array([joints[f"{name}.pos"] for name in MOTOR_NAMES])
+                    print(f"  After skipping {args.skip_first_n_actions} actions: joints = {current_joints}")
+
             # -------------------------------------------------------------------
             # Get action from the chunk (built by visualization above)
             # This ensures control uses the SAME actions as the visualization
             # -------------------------------------------------------------------
-            rel_action_10d = chunk_actions[actions_processed_in_chunk]
+            # Get action from chunk (with skip offset)
+            action_index = actions_processed_in_chunk + args.skip_first_n_actions
+
+            # Check if we've exhausted the chunk
+            if action_index >= len(chunk_actions):
+                # Move to next chunk
+                actions_processed_in_chunk = 0
+                continue
+
+            rel_action_10d = chunk_actions[action_index]
 
             # -------------------------------------------------------------------
             # Apply action from chunk base pose (UMI-style: all actions relative to base)
@@ -665,9 +681,8 @@ def main():
             # Prepare action dict for pipeline
             action_dict: RobotAction = {"rel_pose": rel_action_10d}
 
-            # Prepare observation dict for pipeline - use local current_joints for IK
-            # This is critical: IK uses current_joints as initial guess, so it must be
-            # consistent with the executed actions, not robot feedback
+            # Prepare observation dict for pipeline
+            # Use current_joints for IK (like so101_deploy_real.py) for smooth motion
             robot_obs: RobotObservation = {
                 f"{name}.pos": current_joints[i] for i, name in enumerate(MOTOR_NAMES)
             }
@@ -680,7 +695,6 @@ def main():
             }
 
             # Run pipeline: relative -> absolute -> bounds -> IK -> joints
-            # We call _forward and to_output manually to avoid re-converting the tuple
             processed_transition = ee_to_joints_pipeline._forward(transition)
             joints_action = transition_to_robot_action(processed_transition)
 
@@ -696,16 +710,9 @@ def main():
                 robot_action = {k: v for k, v in joints_action.items()}
                 robot.send_action(robot_action)
 
-            # Update local current_joints with executed action (open-loop like so101_deploy_real.py)
+            # Update current_joints for next iteration (like so101_deploy_real.py)
             for i, name in enumerate(MOTOR_NAMES):
                 current_joints[i] = float(joints_action[f"{name}.pos"])
-
-            # DEBUG: Print first few actions - match so101_deploy_real.py output format
-            if step_count < 5 or step_count % 10 == 0:
-                rel_T = pose10d_to_mat(rel_action_10d[:9])
-                target_ee_pose = chunk_base_pose @ rel_T
-                pos = target_ee_pose[:3, 3]
-                print(f"Step {step_count}: EE pos {pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}, action={rel_action_10d[:3]}")
 
             # Display EE frame on digital twin
             robot_frame_viz(digital_twin.robot, "gripper_frame_link")

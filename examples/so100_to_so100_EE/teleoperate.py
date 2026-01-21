@@ -23,15 +23,15 @@ from lerobot.processor.converters import (
     robot_action_to_transition,
     transition_to_robot_action,
 )
-from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
+from lerobot.robots.so101_follower.so101_follower import SO101Follower
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.teleoperators.so101_leader.config_so101_leader import SO101LeaderConfig
+from lerobot.teleoperators.so101_leader.so101_leader import SO101Leader
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -40,25 +40,25 @@ FPS = 30
 
 def main():
     # Initialize the robot and teleoperator config
-    follower_config = SO100FollowerConfig(
-        port="/dev/tty.usbmodem5A460814411", id="my_awesome_follower_arm", use_degrees=True
+    follower_config = SO101FollowerConfig(
+        port="/dev/ttyACM0", id="oscar_so101_follower", use_degrees=True
     )
-    leader_config = SO100LeaderConfig(port="/dev/tty.usbmodem5A460819811", id="my_awesome_leader_arm")
+    leader_config = SO101LeaderConfig(port="/dev/ttyACM1", id="oscar_so101_leader")
 
     # Initialize the robot and teleoperator
-    follower = SO100Follower(follower_config)
-    leader = SO100Leader(leader_config)
+    follower = SO101Follower(follower_config)
+    leader = SO101Leader(leader_config)
 
     # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
     follower_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
+        urdf_path="./urdf/Simulation/SO101/so101_new_calib.urdf",
         target_frame_name="gripper_frame_link",
         joint_names=list(follower.bus.motors.keys()),
     )
 
     # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
     leader_kinematics_solver = RobotKinematics(
-        urdf_path="./SO101/so101_new_calib.urdf",
+        urdf_path="./urdf/Simulation/SO101/so101_new_calib.urdf",
         target_frame_name="gripper_frame_link",
         joint_names=list(leader.bus.motors.keys()),
     )
@@ -96,7 +96,7 @@ def main():
     leader.connect()
 
     # Init rerun viewer
-    init_rerun(session_name="so100_so100_EE_teleop")
+    init_rerun(session_name="so101_so101_EE_teleop")
 
     print("Starting teleop loop...")
     while True:
