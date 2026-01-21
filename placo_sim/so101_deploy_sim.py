@@ -77,7 +77,7 @@ INITIAL_SAFE_JOINTS = np.array([
 FPS = 10  # Control loop frequency
 
 # Path to SO101 model directory
-URDF_PATH = "../urdf/Simulation/SO101"
+URDF_PATH = "../urdf/Simulation/SO101/so101_new_calib.urdf"
 
 
 def load_trajectory(file_path: str) -> np.ndarray:
