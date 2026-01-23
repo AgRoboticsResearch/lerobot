@@ -177,7 +177,7 @@ def main():
     parser.add_argument(
         "--max_ee_step_m",
         type=float,
-        default=0.05,
+        default=0.1,
         help="Maximum EE step size in meters (safety)",
     )
     parser.add_argument(

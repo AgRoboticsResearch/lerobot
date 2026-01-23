@@ -425,6 +425,16 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
 
+    # Extract model step from pretrained_path for filename suffix
+    # Expected format: .../checkpoints/010000/pretrained_model
+    model_step = None
+    pretrained_path_obj = Path(args.pretrained_path)
+    if "checkpoints" in pretrained_path_obj.parts:
+        checkpoints_idx = pretrained_path_obj.parts.index("checkpoints")
+        if checkpoints_idx + 1 < len(pretrained_path_obj.parts):
+            model_step = pretrained_path_obj.parts[checkpoints_idx + 1]
+            logger.info(f"Model step: {model_step}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
@@ -547,8 +557,9 @@ def main():
         logger.info(f"  Max position error: {metrics['max_position_error']*1000:.2f} mm")
 
         # Plot trajectory comparison
-        plot_path = output_dir / f"sample_{idx}_comparison.png"
-        txt_path_prefix = output_dir / f"sample_{idx}"
+        step_suffix = f"_{model_step}" if model_step else ""
+        plot_path = output_dir / f"sample_{idx}_comparison{step_suffix}.png"
+        txt_path_prefix = output_dir / f"sample_{idx}{step_suffix}"
         # Extract observation image if available
         obs_img = None
         for key in sample.keys():
@@ -594,7 +605,8 @@ def main():
     logger.info(f"Std rotation error: {np.degrees(np.std(all_rot_errors)):.2f} deg")
 
     # Save summary to file
-    summary_path = output_dir / "summary.txt"
+    step_suffix = f"_{model_step}" if model_step else ""
+    summary_path = output_dir / f"summary{step_suffix}.txt"
     with open(summary_path, "w") as f:
         f.write("RelativeEE ACT Policy Inference Debug Summary\n")
         f.write("=" * 60 + "\n\n")
@@ -629,11 +641,12 @@ def main():
         all_pred = np.stack([r["pred_actions"] for r in all_results], axis=0)  # (N, T, 10)
         all_gt = np.stack([r["gt_actions"] for r in all_results], axis=0)  # (N, T, 10)
 
-        np.save(output_dir / "all_predictions.npy", all_pred)
-        np.save(output_dir / "all_ground_truth.npy", all_gt)
+        step_suffix = f"_{model_step}" if model_step else ""
+        np.save(output_dir / f"all_predictions{step_suffix}.npy", all_pred)
+        np.save(output_dir / f"all_ground_truth{step_suffix}.npy", all_gt)
 
-        logger.info(f"  Predictions: {output_dir / 'all_predictions.npy'}")
-        logger.info(f"  Ground truth: {output_dir / 'all_ground_truth.npy'}")
+        logger.info(f"  Predictions: {output_dir / f'all_predictions{step_suffix}.npy'}")
+        logger.info(f"  Ground truth: {output_dir / f'all_ground_truth{step_suffix}.npy'}")
 
     logger.info("\nDone!")
 
