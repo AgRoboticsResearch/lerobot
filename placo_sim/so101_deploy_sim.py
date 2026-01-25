@@ -74,7 +74,7 @@ INITIAL_SAFE_JOINTS = np.array([
     1.18,     # gripper
 ], dtype=np.float64)
 
-FPS = 10  # Control loop frequency
+FPS = 30  # Control loop frequency (Hz) - must match training fps
 
 # Path to SO101 model directory
 URDF_PATH = "../urdf/Simulation/SO101/so101_new_calib.urdf"

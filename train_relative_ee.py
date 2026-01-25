@@ -68,6 +68,13 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
         revision=cfg.dataset.revision
     )
 
+    # IMPORTANT: Store fps in policy config for inference use
+    # During inference, the model needs to know what fps it was trained with
+    # to correctly compute action horizons and delta timestamps.
+    if not hasattr(cfg.policy, 'fps'):
+        cfg.policy.fps = ds_meta.fps
+        logging.info(f"Set policy.fps = {cfg.policy.fps} Hz (from dataset metadata)")
+
     # Resolve delta timestamps from policy config
     delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
 

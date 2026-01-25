@@ -88,7 +88,7 @@ RESET_POSE_DEG = np.array([
     88.91,    # gripper
 ])
 
-FPS = 10  # Control loop frequency
+FPS = 30  # Control loop frequency (Hz) - must match training fps
 
 
 def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:

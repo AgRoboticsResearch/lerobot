@@ -461,6 +461,20 @@ def main():
     logger.info(f"  n_obs_steps: {policy.config.n_obs_steps}")
     logger.info(f"  n_action_steps: {policy.config.n_action_steps}")
 
+    # Log normalization stats from preprocessor (for verification)
+    logger.info("  Normalization stats from preprocessor:")
+    for step in preprocessor.steps:
+        if 'Normalizer' in type(step).__name__:
+            stats = step.stats
+            if 'action' in stats:
+                action_max = stats['action']['max']
+                action_min = stats['action']['min']
+                logger.info(f"    Position max:   [{action_max[0]:.6f}, {action_max[1]:.6f}, {action_max[2]:.6f}]")
+                logger.info(f"    Position min:   [{action_min[0]:.6f}, {action_min[1]:.6f}, {action_min[2]:.6f}]")
+                logger.info(f"    Gripper max:    {action_max[9]:.6f}")
+                logger.info(f"    Gripper min:    {action_min[9]:.6f}")
+            break
+
     # ========================================================================
     # Load Dataset with RelativeEEDataset wrapper
     # ========================================================================
@@ -471,7 +485,12 @@ def main():
     # Compute delta_timestamps for the action horizon
     # The action horizon should match the policy's chunk_size
     chunk_size = policy.config.chunk_size
-    fps = getattr(policy.config, 'fps', 10)  # Default to 10Hz if not specified
+
+    # IMPORTANT: Get fps from policy config (saved during training)
+    # This ensures consistency between training and inference action horizons.
+    # Fallback to 30Hz (standard control frequency) if not set.
+    fps = getattr(policy.config, 'fps', 30)
+    logger.info(f"  Using fps={fps} Hz ({'from policy config' if hasattr(policy.config, 'fps') else 'default'})")
 
     # Create delta_timestamps for action: [0, 1/fps, 2/fps, ..., (chunk_size-1)/fps]
     action_delta_timestamps = [i / fps for i in range(chunk_size)]
@@ -480,15 +499,23 @@ def main():
     logger.info(f"  Delta timestamps for action: {len(action_delta_timestamps)} timesteps")
     logger.info(f"  Range: 0 to {action_delta_timestamps[-1]:.2f} seconds at {fps} Hz")
 
+    # IMPORTANT: Disable stat recomputation!
+    # The normalization stats should come from the trained model, not be recomputed.
+    # Recomputing stats with different delta_timestamps would change the normalization,
+    # causing inconsistent denormalization of model outputs.
+    # The stats used during normalization/denormalization are in the preprocessor/postprocessor.
     dataset = RelativeEEDataset(
         repo_id=args.dataset_repo_id,
         root=args.dataset_root,
         obs_state_horizon=args.obs_state_horizon,
         delta_timestamps=delta_timestamps,
+        compute_stats=False,  # Use stats from trained model, don't recompute
     )
 
     logger.info(f"Dataset loaded successfully!")
     logger.info(f"  Total samples: {len(dataset)}")
+    logger.info(f"  Normalization: Using stats from trained model (compute_stats=False)")
+    logger.info(f"  This ensures consistent denormalization with training time normalization.")
 
     # Get dataset info
     sample = dataset[0]

@@ -70,7 +70,7 @@ INITIAL_SAFE_JOINTS = np.array([
     1.18,     # gripper
 ], dtype=np.float64)
 
-FPS = 10  # Control loop frequency
+FPS = 30  # Control loop frequency (Hz) - must match training fps
 
 
 def load_trajectory(file_path: str) -> np.ndarray:
