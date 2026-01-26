@@ -251,7 +251,8 @@ class TemporalACTWrapper(nn.Module):
         return actions, (mu, log_sigma_x2)
 
 
-def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 2, num_stat_samples: int = 1000):
+def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 2,
+                              obs_down_sample_steps: int = 1, num_stat_samples: int = 1000):
     """
     Create RelativeEEDataset with proper SE(3) wrist-relative transformation (UMI-style).
 
@@ -263,6 +264,8 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
         cfg: Training pipeline configuration
         obs_state_horizon: Number of historical timesteps in observation state.
             Default is 2, matching UMI's low_dim_obs_horizon.
+        obs_down_sample_steps: Downsampling factor for observation history (UMI-style).
+            Default is 1 (consecutive frames). Use 3 to match UMI's default (~50ms delta).
         num_stat_samples: Number of samples for normalization stats computation.
             0 = use all training samples (UMI-style, slow), default 1000 (fast).
 
@@ -295,11 +298,18 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
         revision=cfg.dataset.revision,
         video_backend=cfg.dataset.video_backend,
         obs_state_horizon=obs_state_horizon,  # UMI-style: historical observations
+        obs_down_sample_steps=obs_down_sample_steps,  # UMI-style: skip frames
         num_stat_samples=num_stat_samples,  # Control stats computation speed
     )
 
     logging.info(f"Created RelativeEEDataset (UMI-style)")
     logging.info(f"  obs_state_horizon: {obs_state_horizon}")
+    logging.info(f"  obs_down_sample_steps: {obs_down_sample_steps}")
+    if obs_down_sample_steps == 1:
+        logging.info(f"  Observation frames: consecutive [t-1, t] - ~{1000/ds_meta.fps:.0f}ms delta at {ds_meta.fps}Hz")
+    else:
+        delta_ms = obs_down_sample_steps * 1000 / ds_meta.fps
+        logging.info(f"  Observation frames: downsampled [t-{obs_down_sample_steps}, t] - ~{delta_ms:.0f}ms delta at {ds_meta.fps}Hz")
     logging.info(f"  observation.state metadata shape: {dataset.meta.info['features']['observation.state']['shape']}")
     logging.info(f"  observation.images.camera metadata shape: {dataset.meta.info['features'].get('observation.images.camera', {}).get('shape', 'N/A')}")
     logging.info(f"  action metadata shape: {dataset.meta.info['features']['action']['shape']}")
@@ -321,9 +331,13 @@ def _make_relative_ee_dataset_wrapper(cfg: TrainPipelineConfig):
     """Wrapper that creates RelativeEEDataset with configurable obs_state_horizon."""
     # Get obs_state_horizon from policy config or use default
     obs_state_horizon = getattr(cfg.policy, 'obs_state_horizon', 2)
+    # Get obs_down_sample_steps from policy config or use default (1 = consecutive frames)
+    obs_down_sample_steps = getattr(cfg.policy, 'obs_down_sample_steps', 1)
     # Get num_stat_samples from training config
     num_stat_samples = getattr(cfg, 'num_stat_samples', 1000)
-    return make_relative_ee_dataset(cfg, obs_state_horizon=obs_state_horizon, num_stat_samples=num_stat_samples)
+    return make_relative_ee_dataset(cfg, obs_state_horizon=obs_state_horizon,
+                                    obs_down_sample_steps=obs_down_sample_steps,
+                                    num_stat_samples=num_stat_samples)
 
 
 train_module.make_dataset = _make_relative_ee_dataset_wrapper

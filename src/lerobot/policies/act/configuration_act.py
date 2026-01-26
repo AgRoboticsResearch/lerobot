@@ -95,6 +95,7 @@ class ACTConfig(PreTrainedConfig):
     chunk_size: int = 100
     n_action_steps: int = 100
     obs_state_horizon: int = 2  # For RelativeEEDataset: number of historical timesteps in observations
+    obs_down_sample_steps: int = 1  # For RelativeEEDataset: skip frames (1=consecutive, 3=UMI default)
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {

@@ -187,6 +187,7 @@ class RelativeEEDataset(LeRobotDataset):
     - Actions: future poses relative to current pose
     - Uses 6D rotation representation for both obs and action
     - Temporal observations: image history and proprio history are provided
+    - UMI-style downsampling: skip frames to increase temporal receptive field
 
     Metadata shapes (for policy architecture):
     - observation.state: (10,) - single timestep dimension
@@ -201,9 +202,16 @@ class RelativeEEDataset(LeRobotDataset):
     - observation.state: (B, T, 10) -> (B*T, 10)
     - observation.images.*: (B, T, C, H, W) -> (B*T, C, H, W)
 
+    Observation History (UMI-style):
+    - With obs_state_horizon=2, obs_down_sample_steps=1: frames [t-1, t] - 16ms delta at 60Hz
+    - With obs_state_horizon=2, obs_down_sample_steps=3: frames [t-3, t] - 50ms delta at 60Hz (UMI default)
+    - Higher obs_down_sample_steps increases temporal receptive field but reduces frame count
+
     Args:
         obs_state_horizon: Number of historical timesteps to include in observation state.
             Default is 2, matching UMI's low_dim_obs_horizon.
+        obs_down_sample_steps: Downsampling factor for observation history (UMI-style).
+            Default is 1 (consecutive frames). Use 3 to match UMI's default.
         gripper_lower_deg: Lower bound for gripper in degrees (default: 0.0).
             Stored in metadata for deployment denormalization.
         gripper_upper_deg: Upper bound for gripper in degrees (default: 100.0).
@@ -211,6 +219,7 @@ class RelativeEEDataset(LeRobotDataset):
     """
 
     def __init__(self, *args, obs_state_horizon: int = 2,
+                 obs_down_sample_steps: int = 1,
                  gripper_lower_deg: float = 0.0,
                  gripper_upper_deg: float = 100.0, **kwargs):
         """
@@ -221,10 +230,19 @@ class RelativeEEDataset(LeRobotDataset):
           Current pose becomes identity: [0,0,0, 1,0,0,0,1,0, gripper]
         - action shape changes from (7,) to (action_horizon, 10) - relative poses for future timesteps
           action_horizon is determined by delta_timestamps['action'], e.g., chunk_size=100 for ACT
+
+        Args:
+            obs_state_horizon: Number of historical timesteps to include in observation state.
+                Default is 2, matching UMI's low_dim_obs_horizon.
+            obs_down_sample_steps: Downsampling factor for observation history (UMI-style).
+                - 1 (default): Consecutive frames [t-1, t]
+                - 3: Skip frames [t-3, t] - provides ~50ms delta at 60Hz (UMI default)
+                - Higher values increase temporal receptive field but reduce frame count
         """
         import torch.utils.data
 
         self.obs_state_horizon = obs_state_horizon
+        self.obs_down_sample_steps = obs_down_sample_steps
         self.gripper_lower_deg = gripper_lower_deg
         self.gripper_upper_deg = gripper_upper_deg
 
@@ -369,10 +387,13 @@ class RelativeEEDataset(LeRobotDataset):
                 progress = (i + 1) / num_samples * 100
                 print(f"  Progress: {i + 1}/{num_samples} ({progress:.1f}%)")
                 next_print = min(i + print_interval, num_samples)
-            # Collect historical observation states
+            # Collect historical observation states (UMI-style with downsampling)
             obs_states = []
             for t_offset in range(self.obs_state_horizon):
-                hist_idx = idx - (self.obs_state_horizon - 1 - t_offset)
+                # UMI-style: skip frames based on obs_down_sample_steps
+                # e.g., with horizon=2, down_sample=3: [t-3, t]
+                # e.g., with horizon=2, down_sample=1: [t-1, t]
+                hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
                 if hist_idx >= 0:
                     state_data = self.hf_dataset[hist_idx]['observation.state']
                     obs_states.append(torch.tensor(state_data, dtype=torch.float32))
@@ -572,10 +593,13 @@ class RelativeEEDataset(LeRobotDataset):
         # Get current state (most recent observation)
         current_state = item['observation.state']
 
-        # Collect historical observation states
+        # Collect historical observation states (UMI-style with downsampling)
         obs_states = []
         for t_offset in range(self.obs_state_horizon):
-            hist_idx = idx - (self.obs_state_horizon - 1 - t_offset)
+            # UMI-style: skip frames based on obs_down_sample_steps
+            # e.g., with horizon=2, down_sample=3: [t-3, t]
+            # e.g., with horizon=2, down_sample=1: [t-1, t]
+            hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
             if hist_idx >= 0:
                 hist_item = LeRobotDataset.__getitem__(self, hist_idx)
                 obs_states.append(hist_item['observation.state'])
@@ -594,9 +618,10 @@ class RelativeEEDataset(LeRobotDataset):
                     current_img = item[cam_key]  # Shape: (C, H, W)
                     imgs_to_stack = []
 
-                    # Collect historical images (oldest to newest)
+                    # Collect historical images (oldest to newest, UMI-style with downsampling)
                     for t_offset in range(self.obs_state_horizon):
-                        hist_idx = idx - (self.obs_state_horizon - 1 - t_offset)
+                        # UMI-style: skip frames based on obs_down_sample_steps
+                        hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
                         if hist_idx >= 0:
                             hist_item = LeRobotDataset.__getitem__(self, hist_idx)
                             imgs_to_stack.append(hist_item[cam_key])
