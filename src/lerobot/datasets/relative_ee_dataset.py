@@ -186,19 +186,20 @@ class RelativeEEDataset(LeRobotDataset):
     - Observations: historical poses relative to current pose (provides velocity info)
     - Actions: future poses relative to current pose
     - Uses 6D rotation representation for both obs and action
+    - Temporal observations: image history and proprio history are provided
 
-    Transforms:
-    - observation.state: Relative SE(3) pose - shape (10,)
-      Current timestep observation is always identity: [0,0,0, 1,0,0,0,1,0, gripper]
-      Contains: [delta.x, delta.y, delta.z, rot6d.0, ..., rot6d.5, gripper]
-    - action: Relative SE(3) poses (future -> current) - shape (action_horizon, 10)
-      action_horizon is determined by delta_timestamps['action'] (e.g., 100 for ACT's chunk_size)
-      Contains: [delta.x, delta.y, delta.z, rot6d.0, ..., rot6d.5, gripper] for each timestep
+    Metadata shapes (for policy architecture):
+    - observation.state: (10,) - single timestep dimension
+    - observation.images.*: (C, H, W) - single frame dimension
 
-    The 6D rotation representation (Zhou et al. 2019) describes taking the first two columns of the
-    rotation matrix. However, UMI's actual implementation uses the first two ROWS. The third row/column
-    can be reconstructed via cross product and normalization, ensuring the matrix is orthonormal.
-    We follow UMI's row-based convention for compatibility.
+    Actual data shapes (returned by __getitem__):
+    - observation.state: (obs_state_horizon, 10) - temporal, each timestep is relative to current
+    - observation.images.*: (obs_state_horizon, C, H, W) - temporal image history
+    - action: (action_horizon, 10) - relative future poses
+
+    After collation into batch and TemporalFlattenProcessor:
+    - observation.state: (B, T, 10) -> (B*T, 10)
+    - observation.images.*: (B, T, C, H, W) -> (B*T, C, H, W)
 
     Args:
         obs_state_horizon: Number of historical timesteps to include in observation state.
@@ -229,12 +230,22 @@ class RelativeEEDataset(LeRobotDataset):
 
         # Extract custom kwargs before passing to parent
         compute_stats = kwargs.pop('compute_stats', True)
-        num_stat_samples = kwargs.pop('num_stat_samples', 1000)
+        # num_stat_samples=0 means use all samples (UMI's approach, default)
+        # >0 uses random subset for faster stats computation
+        num_stat_samples = kwargs.pop('num_stat_samples', 0)
 
         super().__init__(*args, **kwargs)
 
-        # Update observation.state shape in metadata
-        # Original: (7,) -> New: (10,) - same 1D fashion as original
+        # NOTE: Metadata shapes stay as 1D/3D - NOT modified to include temporal dimension
+        # The temporal dimension is handled in __getitem__ data loading, not in metadata
+        # This is because the policy factory expects:
+        #   - state: (D,) not (T, D)
+        #   - images: (C, H, W) not (T, C, H, W)
+        #
+        # The actual data returned by __getitem__ has temporal dimension, which is then
+        # flattened by TemporalFlattenProcessor during preprocessing.
+
+        # Update state metadata to 10D (from 7D) - keep 1D shape
         if hasattr(self, 'meta') and hasattr(self.meta, 'info') and 'observation.state' in self.meta.info.get('features', {}):
             self.meta.info['features']['observation.state']['shape'] = [10]
             self.meta.info['features']['observation.state']['names'] = [
@@ -269,7 +280,12 @@ class RelativeEEDataset(LeRobotDataset):
             if compute_stats and worker_info is None:
                 # Only compute stats in main process (worker_info is None)
                 print("Computing normalization stats from transformed data...")
-                print(f"  Sampling {min(num_stat_samples, len(self))} frames...")
+                # num_stat_samples=0 means use all samples (UMI's approach)
+                num_frames = len(self) - self.obs_state_horizon
+                if num_stat_samples == 0 or num_stat_samples >= num_frames:
+                    print(f"  Processing ALL {num_frames} training frames...")
+                else:
+                    print(f"  Processing {num_stat_samples}/{num_frames} training frames...")
                 stats = self._compute_normalization_stats(num_stat_samples)
 
                 # Update observation state stats
@@ -323,17 +339,36 @@ class RelativeEEDataset(LeRobotDataset):
         action_delta_indices = delta_indices.get("action", [0])
         action_horizon = len(action_delta_indices)
 
-        # Sample random indices - use full dataset range, parent class handles padding
-        # Only need to account for obs_state_horizon since we look back in time
+        # Following UMI's approach: iterate through ALL training samples
+        # UMI's get_normalizer reshapes B*T data, using all available training data
+        # See: diffusion_policy/dataset/umi_dataset.py:214-216
         available_samples = max(1, len(self.hf_dataset) - self.obs_state_horizon)
-        num_samples = min(num_samples, available_samples)
-        indices = np.random.choice(available_samples, num_samples, replace=False)
+
+        # num_stat_samples=0 means use all samples (UMI's approach)
+        # Otherwise use the specified number of samples
+        if num_samples == 0 or num_samples >= available_samples:
+            num_samples = available_samples
+            indices = range(available_samples)  # Iterate all, not random choice
+        else:
+            # Use random sampling for faster stats computation
+            indices = np.random.choice(available_samples, num_samples, replace=False)
 
         obs_list = []
+        # For temporal observations, collect all timesteps across all samples
+        obs_temporal_list = []  # Will flatten: (N * obs_state_horizon, 10)
         actions_list = []
         is_pad_list = []  # Track which action timesteps are padded
 
-        for idx in indices:
+        # Progress printing
+        print_interval = max(1, num_samples // 10)  # Print 10 times total
+        next_print = print_interval
+
+        for i, idx in enumerate(indices):
+            # Progress printing - use i (position in indices) not idx (actual data index)
+            if i >= next_print or i == num_samples - 1:
+                progress = (i + 1) / num_samples * 100
+                print(f"  Progress: {i + 1}/{num_samples} ({progress:.1f}%)")
+                next_print = min(i + print_interval, num_samples)
             # Collect historical observation states
             obs_states = []
             for t_offset in range(self.obs_state_horizon):
@@ -390,8 +425,9 @@ class RelativeEEDataset(LeRobotDataset):
             # Stack actions: (action_horizon, 7)
             actions = torch.stack(actions_for_idx, dim=0)
 
-            # Transform observations to relative
-            # Current pose as reference
+            # Transform ALL historical observations to relative (current as reference)
+            # This provides velocity information: where the EE was relative to where it is now
+            # Following UMI's approach where ALL timesteps contribute to statistics
             current_pose_6d = torch.cat([
                 current_state[:3],   # position
                 current_state[3:6]   # rotation (axis-angle)
@@ -399,14 +435,36 @@ class RelativeEEDataset(LeRobotDataset):
 
             T_current = pose_to_mat(current_pose_6d)  # (4, 4)
 
-            # Observation: current -> current = identity
-            # [0,0,0, 1,0,0,0,1,0, gripper]
-            relative_obs = np.array([
-                0.0, 0.0, 0.0,  # position (identity)
-                1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
-                current_state[6].item()  # gripper
-            ])  # (10,)
-            obs_list.append(relative_obs)
+            # Transform ALL historical observations to relative
+            relative_obs_list = []
+            for t in range(self.obs_state_horizon):
+                hist_state = obs_states[t]  # Already collected above
+
+                hist_pose_6d = torch.cat([
+                    hist_state[:3],   # position
+                    hist_state[3:6]   # rotation (axis-angle)
+                ]).numpy()
+
+                T_hist = pose_to_mat(hist_pose_6d)
+
+                # Compute relative: T_rel = T_curr^{-1} @ T_hist
+                T_rel = convert_pose_mat_rep(T_hist, T_current, pose_rep='relative')
+
+                pose_9d = mat_to_pose10d(T_rel)
+                relative_obs_list.append(np.concatenate([
+                    pose_9d,
+                    [hist_state[6].item()]  # gripper
+                ]))
+
+            # Stack: (obs_state_horizon, 10) - keep temporal dimension for stats
+            relative_obs_temporal = np.stack(relative_obs_list, axis=0)
+            # Flatten for stats: add to list, will stack later
+            for t in range(self.obs_state_horizon):
+                obs_temporal_list.append(relative_obs_temporal[t])
+
+            # Keep single observation for backward compatibility (current timestep only)
+            # Current timestep (t=-1) is always identity
+            obs_list.append(relative_obs_list[-1])  # Last one is current timestep (identity)
 
             # Transform all actions to relative (future -> current)
             actions_pos = actions[:, :3].numpy()
@@ -438,7 +496,9 @@ class RelativeEEDataset(LeRobotDataset):
             is_pad_list.append(is_pad_for_idx)
 
         # Stack all samples
-        all_obs = np.stack(obs_list, axis=0)  # (N, 10)
+        # For observations: use ALL temporal timesteps (UMI's approach)
+        # This matches UMI's B*T flattening for statistics
+        all_obs = np.stack(obs_temporal_list, axis=0)  # (N * obs_state_horizon, 10)
         # Flatten all actions: (N * action_horizon, 10)
         all_actions = np.concatenate(actions_list, axis=0)  # (N * action_horizon, 10)
         # Flatten is_pad: (N * action_horizon,)
@@ -447,6 +507,10 @@ class RelativeEEDataset(LeRobotDataset):
         # Filter out padded frames for accurate statistics on real data only
         # Padded frames have repeated data which would skew statistics
         valid_actions = all_actions[~all_is_pad]  # Only non-padded frames
+
+        # Note: obs_temporal_list already contains all timesteps, no need to filter
+        # Historical obs_states are computed from actual data (or zero-padded at episode start)
+        # The zero-padding at episode start is intentional and provides valid statistics
 
         def compute_stats(all_data):
             mean = all_data.mean(axis=0)
@@ -481,23 +545,26 @@ class RelativeEEDataset(LeRobotDataset):
 
         Following UMI's diffusion_policy/dataset/umi_dataset.py __getitem__:
         - Both observations AND actions are transformed relative to current pose
-        - Observations show "where the gripper WAS relative to where it IS NOW"
+        - Observations show "where the gripper WAS relative to where it IS NOW" (velocity info)
         - Actions show "where the gripper WILL BE relative to where it IS NOW"
 
-        The current pose becomes the identity frame [0,0,0, 0,0,0,0,0,0, gripper].
+        The current pose becomes the identity frame [0,0,0, 1,0,0,0,1,0, gripper].
 
         Args:
             idx: Index of the sample to retrieve.
 
         Returns:
             Dictionary containing:
-            - observation.state: Relative observation of shape (10,)
-              Current timestep is identity [0,0,0, 1,0,0,0,1,0, gripper]
+            - observation.state: Relative observations of shape (obs_state_horizon, 10)
+              Current timestep (last index) is identity [0,0,0, 1,0,0,0,1,0, gripper]
+              Historical timesteps show where the EE was relative to current (velocity)
+            - observation.images.*: Image history of shape (obs_state_horizon, C, H, W)
+              Each timestep contains the image at that point in history
             - action: Relative actions of shape (action_horizon, 10)
               action_horizon is determined by delta_timestamps['action'] (e.g., 100 for ACT)
               Each action is a future timestep relative to current
             - action_is_pad: Boolean tensor indicating padded timesteps
-            - All other original keys (images, timestamps, etc.) unchanged
+            - All other original keys (timestamps, etc.) unchanged
         """
         # Get original item with temporal batching (includes action_is_pad from parent)
         item = LeRobotDataset.__getitem__(self, idx)
@@ -519,6 +586,27 @@ class RelativeEEDataset(LeRobotDataset):
         # Stack observation states: (obs_state_horizon, 7)
         obs_states = torch.stack(obs_states, dim=0)
 
+        # Collect and stack image history (UMI-style)
+        # Following UMI's approach where image history is provided for temporal observations
+        if hasattr(self.meta, 'camera_keys'):
+            for cam_key in self.meta.camera_keys:
+                if cam_key in item:
+                    current_img = item[cam_key]  # Shape: (C, H, W)
+                    imgs_to_stack = []
+
+                    # Collect historical images (oldest to newest)
+                    for t_offset in range(self.obs_state_horizon):
+                        hist_idx = idx - (self.obs_state_horizon - 1 - t_offset)
+                        if hist_idx >= 0:
+                            hist_item = LeRobotDataset.__getitem__(self, hist_idx)
+                            imgs_to_stack.append(hist_item[cam_key])
+                        else:
+                            # Pad with current image if before episode start
+                            imgs_to_stack.append(current_img)
+
+                    # Stack: (obs_state_horizon, C, H, W)
+                    item[cam_key] = torch.stack(imgs_to_stack, dim=0)
+
         # Get actions across horizon
         actions = item['action']
         if actions.ndim == 1:
@@ -538,15 +626,35 @@ class RelativeEEDataset(LeRobotDataset):
 
         T_current = pose_to_mat(current_pose_6d)  # (4, 4)
 
-        # Transform observation to relative (current -> current = identity)
-        # Current pose becomes identity: [0,0,0, 0,0,0,0,0,0, gripper]
+        # Transform ALL historical observations to relative (current as reference)
+        # This provides velocity information: where the EE was relative to where it is now
+        # Following UMI's approach where all timesteps are processed
+        relative_obs_list = []
+        for t in range(self.obs_state_horizon):
+            hist_state = obs_states[t]  # Already collected above
+
+            hist_pose_6d = torch.cat([
+                hist_state[:3],   # position
+                hist_state[3:6]   # rotation (axis-angle)
+            ]).numpy()
+
+            T_hist = pose_to_mat(hist_pose_6d)
+
+            # Compute relative: T_rel = T_curr^{-1} @ T_hist
+            T_rel = convert_pose_mat_rep(T_hist, T_current, pose_rep='relative')
+
+            pose_9d = mat_to_pose10d(T_rel)
+            relative_obs_list.append(np.concatenate([
+                pose_9d,
+                [hist_state[6].item()]  # gripper
+            ]))
+
+        # Stack: (obs_state_horizon, 10) - keep temporal dimension
         relative_obs = torch.tensor(
-            np.array([0.0, 0.0, 0.0,  # position (identity)
-                      1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
-                      current_state[6].item()]),  # gripper
+            np.stack(relative_obs_list, axis=0),
             dtype=current_state.dtype,
             device=current_state.device
-        )  # shape: (10,)
+        )  # shape: (obs_state_horizon, 10)
 
         # Transform actions to relative (future -> current)
         # Handle multiple action timesteps (chunk_size)

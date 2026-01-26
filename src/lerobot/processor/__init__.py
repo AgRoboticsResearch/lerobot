@@ -75,6 +75,8 @@ from .policy_robot_bridge import (
     RobotActionToPolicyActionProcessorStep,
 )
 from .rename_processor import RenameObservationsProcessorStep
+from .temporal_flatten_processor import TemporalFlattenProcessor
+from .temporal_normalize_processor import TemporalNormalizeProcessor
 from .tokenizer_processor import TokenizerProcessorStep
 
 __all__ = [
@@ -118,6 +120,8 @@ __all__ = [
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
+    "TemporalFlattenProcessor",
+    "TemporalNormalizeProcessor",
     "TimeLimitProcessorStep",
     "AddBatchDimensionProcessorStep",
     "RobotProcessorPipeline",
