@@ -58,13 +58,17 @@ class TemporalFlattenProcessor(ProcessorStep):
             raise ValueError(f"obs_state_horizon must be >= 1, got {self.obs_state_horizon}")
 
     def __call__(self, transition):
-        """Pass-through temporal observations, add action_is_pad for ACT.
+        """Pass-through temporal observations, preserve action_is_pad for ACT.
+
+        The action_is_pad tensor (provided by LeRobotDataset for episode boundary handling)
+        is preserved and moved to COMPLEMENTARY_DATA for ACT compatibility.
 
         Args:
             transition: The input transition containing observations and possibly actions.
 
         Returns:
-            The modified transition with temporal dimensions preserved and action_is_pad added.
+            The modified transition with temporal dimensions preserved and action_is_pad
+            in COMPLEMENTARY_DATA.
         """
         from .core import TransitionKey
 
@@ -79,25 +83,46 @@ class TemporalFlattenProcessor(ProcessorStep):
         # The model wrapper will handle temporal batching
 
         # Add action_is_pad for ACT compatibility
+        # Note: action_is_pad is already provided by LeRobotDataset._get_query_indices()
+        # for episode boundary handling. We preserve it if it exists.
         import torch
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None:
+            # Check if action_is_pad already exists in the transition (from dataset)
+            existing_action_is_pad = new_transition.get("action_is_pad")
+
             if action.ndim == 3:  # (B, action_horizon, D)
                 action_horizon = action.shape[1]
                 batch_size = action.shape[0]
-                action_is_pad = torch.zeros(
-                    batch_size, action_horizon,
-                    dtype=torch.bool, device=action.device
-                )
+
+                if existing_action_is_pad is not None:
+                    # Preserve the dataset's action_is_pad (handles episode boundaries)
+                    # Ensure it matches the expected shape
+                    if existing_action_is_pad.shape != (batch_size, action_horizon):
+                        # Reshape if needed (e.g., from collation)
+                        existing_action_is_pad = existing_action_is_pad.reshape(batch_size, action_horizon)
+                    action_is_pad = existing_action_is_pad
+                else:
+                    # Fallback: create zeros (no padding)
+                    action_is_pad = torch.zeros(
+                        batch_size, action_horizon,
+                        dtype=torch.bool, device=action.device
+                    )
+
                 comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
                 comp_data["action_is_pad"] = action_is_pad
                 new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp_data
             elif action.ndim == 2:  # (B, D)
                 batch_size = action.shape[0]
-                action_is_pad = torch.zeros(
-                    batch_size,
-                    dtype=torch.bool, device=action.device
-                )
+
+                if existing_action_is_pad is not None:
+                    action_is_pad = existing_action_is_pad
+                else:
+                    action_is_pad = torch.zeros(
+                        batch_size,
+                        dtype=torch.bool, device=action.device
+                    )
+
                 comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
                 comp_data["action_is_pad"] = action_is_pad
                 new_transition[TransitionKey.COMPLEMENTARY_DATA] = comp_data
