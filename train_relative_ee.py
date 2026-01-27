@@ -46,7 +46,7 @@ import torch.nn as nn
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.datasets.factory import resolve_delta_timestamps, IMAGENET_STATS
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.relative_ee_dataset import RelativeEEDataset
 from lerobot.policies.act.configuration_act import ACTConfig
@@ -318,6 +318,20 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
     logging.info(f"        Data shapes: state (B,T,10), images (B,T,C,H,W)")
     logging.info("")
     logging.info(f"  UMI-style processing: (B,T,...) -> (B*T,...) -> encode -> (B*T,F) -> (B,T*F)")
+
+    # Apply ImageNet normalization stats for pretrained ResNet backbone
+    # This matches the behavior of factory.make_dataset for standard LeRobotDataset
+    # ImageNet stats are required for proper pretrained backbone performance
+    use_imagenet_stats = getattr(cfg.dataset, 'use_imagenet_stats', True)
+    if use_imagenet_stats:
+        for key in dataset.meta.camera_keys:
+            # Ensure stats dict exists for this key (might not exist yet for RelativeEEDataset)
+            if key not in dataset.meta.stats:
+                dataset.meta.stats[key] = {}
+            for stats_type, stats in IMAGENET_STATS.items():
+                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        logging.info(f"  Applied ImageNet normalization stats for pretrained ResNet backbone")
+        logging.info(f"    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]")
 
     return dataset
 

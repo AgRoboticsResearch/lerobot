@@ -247,15 +247,17 @@ def plot_ee_trajectory_3d(
     gt_actions: np.ndarray,
     output_path: str,
     sample_idx: int = 0,
+    observation_image: np.ndarray = None,
 ):
     """
     Plot predicted vs ground truth end-effector trajectory with multiple analysis panels.
 
-    Layout matches debug_relative_ee_inference.py style:
+    Layout matches debug_relative_ee_inference.py style (3x2 grid):
     - 3D EE trajectory plot
     - Position error over time
     - Per-axis position comparison
     - Per-axis error bars
+    - Observation image
 
     Args:
         pred_ee_positions: (T, 3) predicted EE positions
@@ -264,17 +266,19 @@ def plot_ee_trajectory_3d(
         gt_actions: (T, 6) ground truth joint actions
         output_path: Path to save the plot
         sample_idx: Sample index for title
+        observation_image: Observation image to display (C,H,W or H,W,C)
     """
     T = min(pred_ee_positions.shape[0], gt_ee_positions.shape[0])
     pred_ee = pred_ee_positions[:T]
     gt_ee = gt_ee_positions[:T]
 
-    fig = plt.figure(figsize=(14, 10))
+    # Use 3x2 layout (3 columns, 2 rows) to match debug_relative_ee_inference.py style
+    fig = plt.figure(figsize=(18, 10))
 
     # -----------------------------------------------------------------------
-    # 1. 3D EE Trajectory Plot
+    # 1. 3D EE Trajectory Plot (row 1, col 1)
     # -----------------------------------------------------------------------
-    ax1 = fig.add_subplot(2, 2, 1, projection="3d")
+    ax1 = fig.add_subplot(2, 3, 1, projection="3d")
 
     # Plot ground truth (blue solid)
     ax1.plot(
@@ -335,9 +339,9 @@ def plot_ee_trajectory_3d(
     ax1.set_zlim(z_min - z_pad, z_max + z_pad)
 
     # -----------------------------------------------------------------------
-    # 2. Position Error over time
+    # 2. Position Error over time (row 1, col 2)
     # -----------------------------------------------------------------------
-    ax2 = fig.add_subplot(2, 2, 2)
+    ax2 = fig.add_subplot(2, 3, 2)
 
     pos_errors = np.linalg.norm(pred_ee - gt_ee, axis=1) * 1000  # mm
 
@@ -359,9 +363,9 @@ def plot_ee_trajectory_3d(
     )
 
     # -----------------------------------------------------------------------
-    # 3. Per-axis position comparison
+    # 3. Per-axis position comparison (row 1, col 3)
     # -----------------------------------------------------------------------
-    ax3 = fig.add_subplot(2, 2, 3)
+    ax3 = fig.add_subplot(2, 3, 3)
 
     axes = ['X', 'Y', 'Z']
     colors = ['r', 'g', 'b']
@@ -385,9 +389,9 @@ def plot_ee_trajectory_3d(
     ax3.grid(True, alpha=0.3)
 
     # -----------------------------------------------------------------------
-    # 4. Per-axis error bars
+    # 4. Per-axis error bars (row 2, col 1)
     # -----------------------------------------------------------------------
-    ax4 = fig.add_subplot(2, 2, 4)
+    ax4 = fig.add_subplot(2, 3, 4)
 
     per_axis_errors = np.abs(pred_ee - gt_ee).mean(axis=0) * 1000  # mm
     bars = ax4.bar(axes, per_axis_errors, color=colors, alpha=0.7)
@@ -401,6 +405,41 @@ def plot_ee_trajectory_3d(
         ax4.text(bar.get_x() + bar.get_width()/2., height,
                 f'{per_axis_errors[i]:.2f}',
                 ha='center', va='bottom', fontsize=9)
+
+    # -----------------------------------------------------------------------
+    # 5. Gripper state over time (row 2, col 2)
+    # -----------------------------------------------------------------------
+    ax5 = fig.add_subplot(2, 3, 5)
+
+    timesteps = np.arange(T)
+    ax5.plot(timesteps, gt_actions[:, 5], "b-", linewidth=2, label="Ground Truth", marker="o", markersize=4)
+    ax5.plot(timesteps, pred_actions[:, 5], "r--", linewidth=2, label="Predicted", marker="x", markersize=4)
+    ax5.set_xlabel("Timestep")
+    ax5.set_ylabel("Gripper State")
+    ax5.set_title("Gripper: Predicted vs Ground Truth")
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+    ax5.set_ylim(-0.1, 1.1)
+
+    # -----------------------------------------------------------------------
+    # 6. Observation image (row 2, col 3)
+    # -----------------------------------------------------------------------
+    ax6 = fig.add_subplot(2, 3, 6)
+    if observation_image is not None:
+        # Convert from (C, H, W) to (H, W, C) if needed
+        if observation_image.ndim == 3 and observation_image.shape[0] in [1, 3]:
+            img = observation_image.transpose(1, 2, 0)
+            if img.shape[-1] == 1:
+                img = img.squeeze(-1)
+        else:
+            img = observation_image
+        ax6.imshow(img)
+        ax6.set_title("Observation Image")
+        ax6.axis("off")
+    else:
+        ax6.text(0.5, 0.5, "No Image Available", ha="center", va="center", transform=ax6.transAxes)
+        ax6.set_title("Observation Image")
+        ax6.axis("off")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -537,6 +576,16 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
 
+    # Extract model step from pretrained_path for filename suffix
+    # Expected format: .../checkpoints/010000/pretrained_model
+    model_step = None
+    pretrained_path_obj = Path(args.pretrained_path)
+    if "checkpoints" in pretrained_path_obj.parts:
+        checkpoints_idx = pretrained_path_obj.parts.index("checkpoints")
+        if checkpoints_idx + 1 < len(pretrained_path_obj.parts):
+            model_step = pretrained_path_obj.parts[checkpoints_idx + 1]
+            logger.info(f"Model step: {model_step}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
@@ -642,6 +691,13 @@ def main():
         sample = dataset[idx]
         gt_actions = sample['action'].cpu().numpy()  # (action_horizon, 6)
 
+        # Extract observation image if available
+        obs_img = None
+        for key in sample.keys():
+            if key.startswith("observation.images"):
+                obs_img = sample[key].cpu().numpy()
+                break
+
         # Create observation batch
         batch = create_observation_batch(dataset, idx, device)
 
@@ -673,11 +729,12 @@ def main():
         logger.info(f"  Final L2 error: {metrics['final_l2_error']:.2f} degrees")
 
         # Plot joint trajectories
-        traj_path = output_dir / f"sample_{idx}_trajectories.png"
+        step_suffix = f"_{model_step}" if model_step else ""
+        traj_path = output_dir / f"sample_{idx}_trajectories{step_suffix}.png"
         plot_joint_trajectories(pred_trunc, gt_trunc, str(traj_path), idx)
 
         # Plot error analysis
-        error_path = output_dir / f"sample_{idx}_errors.png"
+        error_path = output_dir / f"sample_{idx}_errors{step_suffix}.png"
         plot_error_analysis(pred_trunc, gt_trunc, str(error_path), idx)
 
         # Compute and plot EE trajectories (via FK)
@@ -685,8 +742,8 @@ def main():
             pred_ee_positions = compute_ee_trajectories(pred_trunc, kinematics)
             gt_ee_positions = compute_ee_trajectories(gt_trunc, kinematics)
 
-            ee_traj_path = output_dir / f"sample_{idx}_ee_trajectory.png"
-            plot_ee_trajectory_3d(pred_ee_positions, gt_ee_positions, pred_trunc, gt_trunc, str(ee_traj_path), idx)
+            ee_traj_path = output_dir / f"sample_{idx}_ee_trajectory{step_suffix}.png"
+            plot_ee_trajectory_3d(pred_ee_positions, gt_ee_positions, pred_trunc, gt_trunc, str(ee_traj_path), idx, obs_img)
 
             ee_metrics = compute_ee_error_metrics(pred_ee_positions, gt_ee_positions)
             logger.info(f"  Mean EE error: {ee_metrics['mean_ee_error_mm']:.2f} mm")
@@ -747,7 +804,8 @@ def main():
         logger.info(f"  {name}: {mean_per_joint[i]:.2f} degrees")
 
     # Save summary to file
-    summary_path = output_dir / "summary.txt"
+    step_suffix = f"_{model_step}" if model_step else ""
+    summary_path = output_dir / f"summary{step_suffix}.txt"
     with open(summary_path, "w") as f:
         f.write("ACT Policy (Joint Control) Inference Debug Summary\n")
         f.write("=" * 60 + "\n\n")
@@ -788,11 +846,11 @@ def main():
         all_pred = np.stack([r["pred_actions"] for r in all_results], axis=0)  # (N, T, 6)
         all_gt = np.stack([r["gt_actions"] for r in all_results], axis=0)  # (N, T, 6)
 
-        np.save(output_dir / "all_predictions.npy", all_pred)
-        np.save(output_dir / "all_ground_truth.npy", all_gt)
+        np.save(output_dir / f"all_predictions{step_suffix}.npy", all_pred)
+        np.save(output_dir / f"all_ground_truth{step_suffix}.npy", all_gt)
 
-        logger.info(f"  Predictions: {output_dir / 'all_predictions.npy'}")
-        logger.info(f"  Ground truth: {output_dir / 'all_ground_truth.npy'}")
+        logger.info(f"  Predictions: {output_dir / f'all_predictions{step_suffix}.npy'}")
+        logger.info(f"  Ground truth: {output_dir / f'all_ground_truth{step_suffix}.npy'}")
 
     logger.info("\nDone!")
 
