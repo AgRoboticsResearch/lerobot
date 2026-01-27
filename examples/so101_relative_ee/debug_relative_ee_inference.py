@@ -408,8 +408,8 @@ def main():
     parser.add_argument(
         "--obs_state_horizon",
         type=int,
-        default=2,
-        help="Observation state horizon (must match training)",
+        default=None,
+        help="Observation state horizon (auto-detected from policy if not specified)",
     )
     parser.add_argument(
         "--seed",
@@ -458,11 +458,16 @@ def main():
     policy.config.device = str(device)
 
     # Wrap with TemporalACTWrapper if obs_state_horizon > 1 (UMI-style temporal batching)
-    obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    # Use policy's obs_state_horizon if argument not provided
+    obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
     if obs_state_horizon > 1:
         original_model = policy.model
         policy.model = TemporalACTWrapper(original_model, policy.config)
         logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+    # Log the obs_state_horizon being used
+    logger.info(f"Using obs_state_horizon={obs_state_horizon} ({'from args' if args.obs_state_horizon is not None else 'from policy config'})")
 
     # Create processors
     preprocessor, postprocessor = make_pre_post_processors(
@@ -523,7 +528,7 @@ def main():
     dataset = RelativeEEDataset(
         repo_id=args.dataset_repo_id,
         root=args.dataset_root,
-        obs_state_horizon=args.obs_state_horizon,
+        obs_state_horizon=obs_state_horizon,
         delta_timestamps=delta_timestamps,
         compute_stats=False,  # Use stats from trained model, don't recompute
     )
@@ -546,7 +551,7 @@ def main():
 
     # Get valid indices (accounting for action horizon and obs_state_horizon)
     action_horizon = sample['action'].shape[0]
-    max_idx = len(dataset) - action_horizon - args.obs_state_horizon
+    max_idx = len(dataset) - action_horizon - obs_state_horizon
 
     # Generate consistent indices across different dataset sizes
     # Use a deterministic approach that produces the same indices for same seed
