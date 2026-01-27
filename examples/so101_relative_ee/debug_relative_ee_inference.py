@@ -537,6 +537,27 @@ def main():
     policy.model = policy.model.to(device)  # Move wrapper to device
     logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
 
+    # Load wrapper parameters if temporal_wrapper.pt exists
+    from pathlib import Path
+    wrapper_path = Path(args.pretrained_path) / "checkpoints" / step / "temporal_wrapper.pt"
+    if not wrapper_path.exists():
+        # Try alternative path structure (some checkpoints don't have step subdirectory)
+        wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+    if wrapper_path.exists():
+        wrapper_state_dict = torch.load(wrapper_path, map_location=device)
+        # Filter to only load keys that exist in the wrapper (handles parameter name changes)
+        model_state = policy.model.state_dict()
+        filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+        if filtered_state:
+            policy.model.load_state_dict(filtered_state, strict=False)
+            policy.model = policy.model.to(device)  # Ensure on device after load
+            logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+            logger.info(f"  Loaded params: {list(filtered_state.keys())}")
+        else:
+            logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+    else:
+        logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+
     # Log the obs_state_horizon being used
     logger.info(f"Using obs_state_horizon={obs_state_horizon} ({'from args' if args.obs_state_horizon is not None else 'from policy config'})")
 

@@ -209,10 +209,16 @@ def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
             wrapper_path = Path(pretrained_path) / "temporal_wrapper.pt"
             if wrapper_path.exists():
                 wrapper_state_dict = torch.load(wrapper_path, map_location=cfg.device)
-                policy.model.load_state_dict(wrapper_state_dict, strict=False)
-                policy.model = policy.model.to(cfg.device)  # Ensure on device after load
-                logging.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
-                logging.info(f"  Loaded params: {list(wrapper_state_dict.keys())}")
+                # Filter to only load keys that exist in the wrapper (handles parameter name changes)
+                model_state = policy.model.state_dict()
+                filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+                if filtered_state:
+                    policy.model.load_state_dict(filtered_state, strict=False)
+                    policy.model = policy.model.to(cfg.device)  # Ensure on device after load
+                    logging.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+                    logging.info(f"  Loaded params: {list(filtered_state.keys())}")
+                else:
+                    logging.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
             else:
                 logging.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
 
