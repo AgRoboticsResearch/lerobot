@@ -59,7 +59,8 @@ from lerobot.processor import (
     TemporalFlattenProcessor,
     TemporalNormalizeProcessor,
 )
-from lerobot.scripts.lerobot_train import train
+import lerobot.scripts.lerobot_train as train_module
+train = train_module.train
 
 
 def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 2,
@@ -148,7 +149,6 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
 
 
 # Override the make_dataset function in the train function's scope
-import lerobot.scripts.lerobot_train as train_module
 original_make_dataset = train_module.make_dataset
 
 
@@ -272,7 +272,6 @@ def make_act_pre_post_processors_with_temporal(
 
 
 # Override the make_pre_post_processors function for ACT
-import lerobot.scripts.lerobot_train as train_module
 original_make_pre_post_processors = policy_factory.make_pre_post_processors
 
 
@@ -321,6 +320,42 @@ def _make_processors_from_policy_config_wrapper(config, dataset_stats=None):
 
 
 policy_factory._make_processors_from_policy_config = _make_processors_from_policy_config_wrapper
+
+
+# Override save_checkpoint to unwrap TemporalACTWrapper before saving
+# This ensures the checkpoint has the correct structure (model.* instead of model.model.*)
+original_save_checkpoint = train_module.save_checkpoint
+
+
+def _save_checkpoint_with_unwrap(
+    checkpoint_dir, step, cfg, policy, optimizer, scheduler=None, preprocessor=None, postprocessor=None
+):
+    """Save checkpoint after unwrapping TemporalACTWrapper."""
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
+
+    # Temporarily unwrap the model to save with correct structure
+    original_model = None
+    if isinstance(cfg, ACTConfig) and isinstance(policy.model, TemporalACTWrapper):
+        original_model = policy.model
+        # Unwrap: policy.model = TemporalACTWrapper(ACT) -> policy.model = ACT
+        policy.model = original_model.model
+        logging.debug(f"Unwrapped TemporalACTWrapper before saving (step {step})")
+
+    # Call original save function
+    result = original_save_checkpoint(
+        checkpoint_dir, step, cfg, policy, optimizer, scheduler, preprocessor, postprocessor
+    )
+
+    # Re-wrap after saving
+    if original_model is not None:
+        policy.model = original_model
+        logging.debug(f"Re-wrapped TemporalACTWrapper after saving (step {step})")
+
+    return result
+
+
+train_module.save_checkpoint = _save_checkpoint_with_unwrap
 
 
 @parser.wrap()

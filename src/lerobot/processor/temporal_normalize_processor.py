@@ -86,66 +86,40 @@ class TemporalNormalizeProcessor(_NormalizationMixin, ProcessorStep):
 
         # Normalize each feature in the observation
         for key in list(new_observation.keys()):
-            if key in self._tensor_stats:
+            if key in self._tensor_stats and key in self.features:
                 data = new_observation[key]
-                stats = self._tensor_stats[key]
+                feature_type = self.features[key].type
 
                 # Handle temporal dimension: (B, T, D) -> (B*T, D) -> normalize -> (B, T, D)
                 # Always preserve temporal dimension - T=1 will be handled by TemporalACTWrapper
                 if data.ndim == 3:  # State: (B, T, D)
                     B, T, D = data.shape
                     data_flat = data.reshape(B * T, D)
-                    normalized = self._apply_normalization(data_flat, stats)
+                    normalized = self._apply_transform(data_flat, key, feature_type, inverse=False)
                     new_observation[key] = normalized.reshape(B, T, D)  # (B, T, D)
                 elif data.ndim == 5:  # Images: (B, T, C, H, W)
                     B, T, C, H, W = data.shape
                     data_flat = data.reshape(B * T, C, H, W)
-                    normalized = self._apply_normalization(data_flat, stats)
+                    normalized = self._apply_transform(data_flat, key, feature_type, inverse=False)
                     new_observation[key] = normalized.reshape(B, T, C, H, W)  # (B, T, C, H, W)
                 else:
                     # Standard normalization for non-temporal data
-                    new_observation[key] = self._apply_normalization(data, stats)
+                    new_observation[key] = self._apply_transform(data, key, feature_type, inverse=False)
 
         new_transition[TransitionKey.OBSERVATION] = new_observation
 
         # Also normalize actions if needed
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None and ACTION in self._tensor_stats:
-            stats = self._tensor_stats[ACTION]
             if action.ndim == 3:  # (B, action_horizon, D)
                 B, T, D = action.shape
                 action_flat = action.reshape(B * T, D)
-                normalized = self._apply_normalization(action_flat, stats)
+                normalized = self._apply_transform(action_flat, ACTION, FeatureType.ACTION, inverse=False)
                 new_transition[TransitionKey.ACTION] = normalized.reshape(B, T, D)
             else:
-                new_transition[TransitionKey.ACTION] = self._apply_normalization(action, stats)
+                new_transition[TransitionKey.ACTION] = self._apply_transform(action, ACTION, FeatureType.ACTION, inverse=False)
 
         return new_transition
-
-    def _apply_normalization(self, data: Tensor, stats: dict[str, Tensor]) -> Tensor:
-        """Apply normalization based on the norm_map setting."""
-        # Determine the feature type from the key
-        # For now, use mean/std or min/max based on what's available in stats
-        mean = stats.get("mean")
-        std = stats.get("std")
-        min_val = stats.get("min")
-        max_val = stats.get("max")
-
-        # Ensure stats are on the same device as data
-        data_device = data.device
-
-        if mean is not None and std is not None:
-            # Mean/std normalization
-            mean = mean.to(data_device)
-            std = std.to(data_device)
-            return (data - mean) / (std + self.eps)
-        elif min_val is not None and max_val is not None:
-            # Min/max normalization to [-1, 1]
-            min_val = min_val.to(data_device)
-            max_val = max_val.to(data_device)
-            return 2 * (data - min_val) / (max_val - min_val + self.eps) - 1
-        else:
-            return data
 
     def to(self, device=None, dtype=None):
         """Move the processor's normalization stats to the specified device."""
