@@ -673,7 +673,8 @@ def main():
         with torch.no_grad():
             processed_batch = preprocessor(batch)
             pred_actions = policy.predict_action_chunk(processed_batch)  # (1, chunk_size, 10)
-            pred_actions = postprocessor(pred_actions)
+            # Postprocessor expects a dictionary with ACTION key
+            pred_actions = postprocessor({"action": pred_actions})
 
         # Extract prediction
         if isinstance(pred_actions, dict) and "action" in pred_actions:
