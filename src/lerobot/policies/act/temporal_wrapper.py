@@ -82,20 +82,17 @@ class TemporalACTWrapper(nn.Module):
             cls_embed = torch.nn.functional.relu(
                 self.model.vae_encoder_cls_embed.weight).unsqueeze(0).repeat(batch_size, 1, 1)
 
-            # For VAE encoding, only use current timestep state/action (not aggregated temporal)
+            # For VAE encoding, use current timestep state (not aggregated temporal)
             if self.config.robot_state_feature:
-                state = batch[OBS_STATE]  # (B, T, D)
+                state = batch[OBS_STATE]  # (B, T_state, D) - T_state is obs_state_horizon
                 # Use the last timestep (current state) for VAE encoding
                 state_current = state[:, -1, :]  # (B, D)
                 state_embed = self.model.vae_encoder_robot_state_input_proj(state_current)  # (B, dim)
                 state_embed = state_embed.unsqueeze(1)  # (B, 1, dim)
 
-            # Extract current action for VAE encoding (handle temporal dimension)
-            action = batch[ACTION]
-            if action.ndim == 3:  # (B, T, D) - temporal dimension present
-                action = action[:, -1, :]  # Use last timestep: (B, D)
-            action_embed = self.model.vae_encoder_action_input_proj(action)  # (B, dim)
-            action_embed = action_embed.unsqueeze(1)  # (B, 1, dim)
+            # Actions have shape (B, action_horizon, D) where action_horizon = chunk_size
+            # This is NOT affected by obs_state_horizon - pass through as-is
+            action_embed = self.model.vae_encoder_action_input_proj(batch[ACTION])  # (B, action_horizon, dim)
 
             if self.config.robot_state_feature:
                 vae_encoder_input = [cls_embed, state_embed, action_embed]
