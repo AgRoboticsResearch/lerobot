@@ -185,18 +185,18 @@ def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
     policy = original_make_policy(cfg, ds_meta=ds_meta, **kwargs)
 
     # Wrap ACT model with temporal batching support
+    # Always wrap since temporal normalization now preserves temporal dimension for all T
     if isinstance(cfg, ACTConfig) and isinstance(policy, ACTPolicy):
         obs_state_horizon = getattr(cfg, 'obs_state_horizon', 1)
 
-        if obs_state_horizon > 1:
-            # Wrap the ACT model with temporal batching
-            original_model = policy.model
-            policy.model = TemporalACTWrapper(original_model, cfg)
-            logging.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
-            logging.info("  Using UMI-style temporal batching:")
-            logging.info("    - Images: (B, T, C, H, W) -> (B*T, C, H, W) -> encode -> (B, T*F)")
-            logging.info("    - State: (B, T, D) -> (B*T, D) -> encode -> (B, T*F)")
-            logging.info("    - Preserves pretrained ResNet weights (3-channel)")
+        # Always wrap - T=1 now goes through the same unified temporal processing path
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, cfg)
+        logging.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+        logging.info("  Using UMI-style temporal batching:")
+        logging.info("    - Images: (B, T, C, H, W) -> (B*T, C, H, W) -> encode -> (B, T*F)")
+        logging.info("    - State: (B, T, D) -> (B*T, D) -> encode -> (B, T*F)")
+        logging.info("    - Preserves pretrained ResNet weights (3-channel)")
 
     return policy
 
