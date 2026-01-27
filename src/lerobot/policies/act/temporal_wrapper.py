@@ -39,7 +39,12 @@ class TemporalACTWrapper(nn.Module):
 
     This preserves pretrained weights and gives each timestep clean encoding.
 
-    When obs_state_horizon=1, this wrapper is a no-op (standard ACT behavior).
+    Temporal positional encoding is applied via learnable scaling of base positional
+    embeddings, allowing the transformer to distinguish between timesteps while
+    maintaining compatibility with pretrained weights.
+
+    All inputs (including obs_state_horizon=1) go through the unified temporal processing
+    path for consistency.
     """
 
     def __init__(self, act_model: ACT, config: ACTConfig):
@@ -47,12 +52,12 @@ class TemporalACTWrapper(nn.Module):
         self.model = act_model
         self.config = config
         self.obs_state_horizon = getattr(config, 'obs_state_horizon', 1)
+        # Learnable temporal scale for positional encoding
+        # This allows the model to learn the optimal temporal relationship between timesteps
+        self.temporal_pos_scale = nn.Parameter(torch.tensor(0.01))
 
     def forward(self, batch):
         """Forward pass with UMI-style temporal batching."""
-        # If no temporal dimension, use standard forward
-        if self.obs_state_horizon == 1:
-            return self.model(batch)
 
         from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_ENV_STATE, ACTION
 
@@ -135,9 +140,14 @@ class TemporalACTWrapper(nn.Module):
             # Reshape to (T, B, dim) and add each timestep as separate token
             state_embed = state_embed.permute(1, 0, 2)  # (T, B, dim)
             # Extend encoder_in_tokens with each timestep's state
+            # Add temporal offset to positional embeddings so the transformer can distinguish timesteps
+            base_pos_embed = self.model.encoder_1d_feature_pos_embed.weight[1:2]  # (1, dim)
             for t in range(T_state):
                 encoder_in_tokens.append(state_embed[t])
-                encoder_in_pos_embed.append(self.model.encoder_1d_feature_pos_embed.weight[1:2])  # (1, dim)
+                # Apply temporal offset: timestep t gets scaled positional embedding
+                # This preserves compatibility with pretrained weights while enabling temporal distinction
+                temporal_pos = base_pos_embed * (1 + self.temporal_pos_scale * t)
+                encoder_in_pos_embed.append(temporal_pos)
 
         if self.config.env_state_feature:
             env_state_embed = self.model.encoder_env_state_input_proj(batch[OBS_ENV_STATE])
