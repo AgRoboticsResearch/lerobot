@@ -336,11 +336,11 @@ def _save_checkpoint_with_unwrap(
 
     # Temporarily unwrap the model to save with correct structure
     original_model = None
-    if isinstance(cfg, ACTConfig) and isinstance(policy.model, TemporalACTWrapper):
+    if isinstance(cfg.policy, ACTConfig) and isinstance(policy.model, TemporalACTWrapper):
         original_model = policy.model
         # Unwrap: policy.model = TemporalACTWrapper(ACT) -> policy.model = ACT
         policy.model = original_model.model
-        logging.debug(f"Unwrapped TemporalACTWrapper before saving (step {step})")
+        logging.info(f"Unwrapped TemporalACTWrapper before saving (step {step})")
 
     # Call original save function
     result = original_save_checkpoint(
@@ -350,7 +350,7 @@ def _save_checkpoint_with_unwrap(
     # Re-wrap after saving
     if original_model is not None:
         policy.model = original_model
-        logging.debug(f"Re-wrapped TemporalACTWrapper after saving (step {step})")
+        logging.info(f"Re-wrapped TemporalACTWrapper after saving (step {step})")
 
     return result
 
