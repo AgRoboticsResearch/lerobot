@@ -39,9 +39,8 @@ class TemporalACTWrapper(nn.Module):
 
     This preserves pretrained weights and gives each timestep clean encoding.
 
-    Temporal positional encoding is applied via learnable scaling of base positional
-    embeddings, allowing the transformer to distinguish between timesteps while
-    maintaining compatibility with pretrained weights.
+    Temporal positional encoding: Each state timestep gets its own learnable positional
+    embedding, allowing the transformer to distinguish between timesteps.
 
     All inputs (including obs_state_horizon=1) go through the unified temporal processing
     path for consistency.
@@ -52,9 +51,18 @@ class TemporalACTWrapper(nn.Module):
         self.model = act_model
         self.config = config
         self.obs_state_horizon = getattr(config, 'obs_state_horizon', 1)
-        # Learnable temporal scale for positional encoding
-        # This allows the model to learn the optimal temporal relationship between timesteps
-        self.temporal_pos_scale = nn.Parameter(torch.tensor(0.01))
+        self.dim_model = self.config.dim_model
+
+        # Create positional embeddings for flattened state: n_obs_steps * state_dim embeddings
+        # Each individual state element across all timesteps gets its own positional embedding
+        if self.config.robot_state_feature:
+            state_dim = self.config.robot_state_feature.shape[0]
+            self.state_dim = state_dim
+            n_state_embeddings = self.obs_state_horizon * state_dim
+            # Learnable positional embedding for each element in flattened state (T*D,)
+            self.state_pos_embed = nn.Embedding(n_state_embeddings, self.dim_model)
+            # Project flattened state (T*D,) to dim_model
+            self.temporal_state_input_proj = nn.Linear(n_state_embeddings, self.dim_model)
 
     def forward(self, batch):
         """Forward pass with UMI-style temporal batching."""
@@ -132,29 +140,34 @@ class TemporalACTWrapper(nn.Module):
         encoder_in_tokens = [self.model.encoder_latent_input_proj(latent_sample)]
         encoder_in_pos_embed = [self.model.encoder_1d_feature_pos_embed.weight[0:1]]  # (1, dim)
 
-        # Handle state with temporal dimension - keep each timestep as separate token
+        # Handle state with temporal dimension - flatten to single token with element-wise pos embed
         if self.config.robot_state_feature:
             state = batch[OBS_STATE]  # (B, T, D)
             B, T_state, D = state.shape
-            state_flat = state.reshape(B * T_state, D)  # (B*T, D)
-            state_embed_flat = self.model.encoder_robot_state_input_proj(state_flat)  # (B*T, dim)
-            state_embed = state_embed_flat.reshape(B, T_state, -1)  # (B, T, dim)
-            # Reshape to (T, B, dim) and add each timestep as separate token
-            state_embed = state_embed.permute(1, 0, 2)  # (T, B, dim)
-            # Extend encoder_in_tokens with each timestep's state
-            # Add temporal offset to positional embeddings so the transformer can distinguish timesteps
-            base_pos_embed = self.model.encoder_1d_feature_pos_embed.weight[1:2]  # (1, dim)
-            for t in range(T_state):
-                encoder_in_tokens.append(state_embed[t])
-                # Apply temporal offset: timestep t gets scaled positional embedding
-                # This preserves compatibility with pretrained weights while enabling temporal distinction
-                temporal_pos = base_pos_embed * (1 + self.temporal_pos_scale * t)
-                encoder_in_pos_embed.append(temporal_pos)
+            # Flatten temporal and state dimensions: (B, T, D) -> (B, T*D)
+            state_flat = state.reshape(B, T_state * D)  # (B, T*D)
+
+            # Add positional embedding per element before projection
+            # pos_embed: (T*D, dim_model) -> expand to (B, T*D, dim_model)
+            # Ensure indices are on same device as embedding weights (for new layers not in checkpoint)
+            pos_indices = torch.arange(T_state * D, device=self.state_pos_embed.weight.device)
+            pos_embed = self.state_pos_embed(pos_indices)  # (T*D, dim_model)
+
+            # Project flattened state to dim_model (single token)
+            state_embed = self.temporal_state_input_proj(state_flat)  # (B, dim_model)
+
+            # Add mean of positional embeddings to represent the combined position info
+            state_embed = state_embed + pos_embed.mean(dim=0).to(state_embed.device)  # (B, dim_model)
+
+            encoder_in_tokens.append(state_embed)
+            # Use original state positional embedding (position 1 in encoder_1d_feature_pos_embed)
+            encoder_in_pos_embed.append(self.model.encoder_1d_feature_pos_embed.weight[1:2])
 
         if self.config.env_state_feature:
             env_state_embed = self.model.encoder_env_state_input_proj(batch[OBS_ENV_STATE])
             encoder_in_tokens.append(env_state_embed)
-            encoder_in_pos_embed.append(self.model.encoder_1d_feature_pos_embed.weight[2:3])  # (1, dim)
+            # Use original env_state positional embedding (position 2 in encoder_1d_feature_pos_embed)
+            encoder_in_pos_embed.append(self.model.encoder_1d_feature_pos_embed.weight[2:3])
 
         if self.config.image_features:
             # Handle images with temporal dimension - UMI-style batching

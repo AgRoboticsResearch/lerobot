@@ -534,6 +534,7 @@ def main():
     # Always wrap - T=1 now goes through the same unified temporal processing path
     original_model = policy.model
     policy.model = TemporalACTWrapper(original_model, policy.config)
+    policy.model = policy.model.to(device)  # Move wrapper to device
     logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
 
     # Log the obs_state_horizon being used

@@ -178,7 +178,11 @@ original_make_policy = policy_factory.make_policy
 
 
 def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
-    """Wrapper that wraps ACT with TemporalACTWrapper for UMI-style temporal batching."""
+    """Wrapper that wraps ACT with TemporalACTWrapper for UMI-style temporal batching.
+    
+    Also loads wrapper parameters from temporal_wrapper.pt if loading from a checkpoint.
+    """
+    from pathlib import Path
     from lerobot.policies.act.configuration_act import ACTConfig
     from lerobot.policies.act.modeling_act import ACTPolicy
 
@@ -192,11 +196,25 @@ def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
         # Always wrap - T=1 now goes through the same unified temporal processing path
         original_model = policy.model
         policy.model = TemporalACTWrapper(original_model, cfg)
+        policy.model = policy.model.to(cfg.device)  # Move wrapper to device before loading state dict
         logging.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
         logging.info("  Using UMI-style temporal batching:")
         logging.info("    - Images: (B, T, C, H, W) -> (B*T, C, H, W) -> encode -> (B, T*F)")
         logging.info("    - State: (B, T, D) -> (B*T, D) -> encode -> (B, T*F)")
         logging.info("    - Preserves pretrained ResNet weights (3-channel)")
+
+        # Try to load wrapper parameters if loading from checkpoint
+        pretrained_path = getattr(cfg, 'path', None) or kwargs.get('pretrained_path', None)
+        if pretrained_path:
+            wrapper_path = Path(pretrained_path) / "temporal_wrapper.pt"
+            if wrapper_path.exists():
+                wrapper_state_dict = torch.load(wrapper_path, map_location=cfg.device)
+                policy.model.load_state_dict(wrapper_state_dict, strict=False)
+                policy.model = policy.model.to(cfg.device)  # Ensure on device after load
+                logging.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+                logging.info(f"  Loaded params: {list(wrapper_state_dict.keys())}")
+            else:
+                logging.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
 
     return policy
 
@@ -324,20 +342,32 @@ policy_factory._make_processors_from_policy_config = _make_processors_from_polic
 
 # Override save_checkpoint to unwrap TemporalACTWrapper before saving
 # This ensures the checkpoint has the correct structure (model.* instead of model.model.*)
+# Also saves wrapper parameters separately to avoid losing learned temporal embeddings
 original_save_checkpoint = train_module.save_checkpoint
 
 
 def _save_checkpoint_with_unwrap(
     checkpoint_dir, step, cfg, policy, optimizer, scheduler=None, preprocessor=None, postprocessor=None
 ):
-    """Save checkpoint after unwrapping TemporalACTWrapper."""
+    """Save checkpoint after unwrapping TemporalACTWrapper.
+    
+    Also saves wrapper-specific parameters (state_pos_embed, temporal_state_input_proj)
+    separately so they can be restored during inference.
+    """
+    from pathlib import Path
     from lerobot.policies.act.configuration_act import ACTConfig
     from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
 
     # Temporarily unwrap the model to save with correct structure
     original_model = None
+    wrapper_state_dict = None
     if isinstance(cfg.policy, ACTConfig) and isinstance(policy.model, TemporalACTWrapper):
         original_model = policy.model
+        # Save wrapper-specific parameters before unwrapping
+        wrapper_state_dict = {
+            k: v for k, v in original_model.state_dict().items()
+            if not k.startswith('model.')  # Exclude the wrapped ACT model params
+        }
         # Unwrap: policy.model = TemporalACTWrapper(ACT) -> policy.model = ACT
         policy.model = original_model.model
         logging.info(f"Unwrapped TemporalACTWrapper before saving (step {step})")
@@ -346,6 +376,13 @@ def _save_checkpoint_with_unwrap(
     result = original_save_checkpoint(
         checkpoint_dir, step, cfg, policy, optimizer, scheduler, preprocessor, postprocessor
     )
+
+    # Save wrapper parameters separately
+    if wrapper_state_dict is not None:
+        wrapper_path = Path(checkpoint_dir) / "temporal_wrapper.pt"
+        torch.save(wrapper_state_dict, wrapper_path)
+        logging.info(f"Saved TemporalACTWrapper parameters to {wrapper_path}")
+        logging.info(f"  Wrapper params: {list(wrapper_state_dict.keys())}")
 
     # Re-wrap after saving
     if original_model is not None:

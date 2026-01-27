@@ -1,0 +1,21 @@
+RelativeEE ACT Policy Inference Debug Summary
+============================================================
+
+Dataset: red_strawberry_picking_260119_merged_ee
+Model: outputs/train/red_strawberry_picking_260119_merged_obs1_ds_1/checkpoints/005000/pretrained_model
+Samples tested: 1
+
+
+Sample 1 (idx=10217):
+  Mean position error: 87.30 mm
+  Mean rotation error: 6.74 deg
+  Mean gripper error: 0.2721
+  Max position error: 118.99 mm
+
+============================================================
+Aggregate Statistics:
+  Average mean position error: 87.30 mm
+  Average mean rotation error: 6.74 deg
+  Average mean gripper error: 0.2721
+  Std position error: 0.00 mm
+  Std rotation error: 0.00 deg
