@@ -71,13 +71,20 @@ class TemporalNormalizeProcessor(_NormalizationMixin, ProcessorStep):
         _NormalizationMixin.__post_init__(self)
 
     def __call__(self, transition):
-        """Normalize temporal observations by reshaping, normalizing, and reshaping back."""
+        """Normalize temporal observations by reshaping, normalizing, and reshaping back.
+
+        When obs_state_horizon=1, flattens the temporal dimension to maintain compatibility
+        with standard ACT model.
+        """
         new_transition = transition.copy()
         observation = new_transition.get(TransitionKey.OBSERVATION)
         if observation is None:
             return new_transition
 
         new_observation = dict(observation)
+
+        # Check if temporal dimension should be flattened (obs_state_horizon=1)
+        flatten_temporal = (self.obs_state_horizon == 1)
 
         # Normalize each feature in the observation
         for key in list(new_observation.keys()):
@@ -86,16 +93,23 @@ class TemporalNormalizeProcessor(_NormalizationMixin, ProcessorStep):
                 stats = self._tensor_stats[key]
 
                 # Handle temporal dimension: (B, T, D) -> (B*T, D) -> normalize -> (B, T, D)
+                # When T=1, flatten to (B, D) for standard ACT compatibility
                 if data.ndim == 3:  # State: (B, T, D)
                     B, T, D = data.shape
                     data_flat = data.reshape(B * T, D)
                     normalized = self._apply_normalization(data_flat, stats)
-                    new_observation[key] = normalized.reshape(B, T, D)
+                    if flatten_temporal and T == 1:
+                        new_observation[key] = normalized  # (B, D)
+                    else:
+                        new_observation[key] = normalized.reshape(B, T, D)  # (B, T, D)
                 elif data.ndim == 5:  # Images: (B, T, C, H, W)
                     B, T, C, H, W = data.shape
                     data_flat = data.reshape(B * T, C, H, W)
                     normalized = self._apply_normalization(data_flat, stats)
-                    new_observation[key] = normalized.reshape(B, T, C, H, W)
+                    if flatten_temporal and T == 1:
+                        new_observation[key] = normalized  # (B, C, H, W)
+                    else:
+                        new_observation[key] = normalized.reshape(B, T, C, H, W)  # (B, T, C, H, W)
                 else:
                     # Standard normalization for non-temporal data
                     new_observation[key] = self._apply_normalization(data, stats)
