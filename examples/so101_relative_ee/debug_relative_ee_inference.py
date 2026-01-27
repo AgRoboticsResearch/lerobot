@@ -335,8 +335,8 @@ def create_observation_batch(
     """
     Create observation batch for policy inference.
 
-    For RelativeEE with temporal observations (obs_state_horizon > 1):
-    - observation.state shape: (T, 10) where T=obs_state_horizon
+    For RelativeEE with temporal observations:
+    - observation.state shape: (T, 10) where T=obs_state_horizon (T>=1)
     - observation.images.camera shape: (T, C, H, W)
 
     This function adds the batch dimension, so output shapes are:
@@ -457,14 +457,16 @@ def main():
     policy.eval()
     policy.config.device = str(device)
 
-    # Wrap with TemporalACTWrapper if obs_state_horizon > 1 (UMI-style temporal batching)
+    # Wrap with TemporalACTWrapper for UMI-style temporal batching
+    # Always wrap since temporal normalization preserves temporal dimension for all obs_state_horizon values
     policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
     # Use policy's obs_state_horizon if argument not provided
     obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
-    if obs_state_horizon > 1:
-        original_model = policy.model
-        policy.model = TemporalACTWrapper(original_model, policy.config)
-        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+    # Always wrap - T=1 now goes through the same unified temporal processing path
+    original_model = policy.model
+    policy.model = TemporalACTWrapper(original_model, policy.config)
+    logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
 
     # Log the obs_state_horizon being used
     logger.info(f"Using obs_state_horizon={obs_state_horizon} ({'from args' if args.obs_state_horizon is not None else 'from policy config'})")
