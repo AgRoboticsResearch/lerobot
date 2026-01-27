@@ -125,11 +125,18 @@ class TemporalNormalizeProcessor(_NormalizationMixin, ProcessorStep):
         min_val = stats.get("min")
         max_val = stats.get("max")
 
+        # Ensure stats are on the same device as data
+        data_device = data.device
+
         if mean is not None and std is not None:
             # Mean/std normalization
+            mean = mean.to(data_device)
+            std = std.to(data_device)
             return (data - mean) / (std + self.eps)
         elif min_val is not None and max_val is not None:
             # Min/max normalization to [-1, 1]
+            min_val = min_val.to(data_device)
+            max_val = max_val.to(data_device)
             return 2 * (data - min_val) / (max_val - min_val + self.eps) - 1
         else:
             return data

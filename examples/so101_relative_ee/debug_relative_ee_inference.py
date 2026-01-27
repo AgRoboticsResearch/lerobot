@@ -46,7 +46,9 @@ import torch
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.act.modeling_act import ACTPolicy, ACT
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.datasets.relative_ee_dataset import (
     RelativeEEDataset,
@@ -294,15 +296,23 @@ def plot_trajectory_comparison(
     # Observation image (col 3, row 2)
     ax6 = fig.add_subplot(2, 3, 6)
     if observation_image is not None:
-        # Convert from (C, H, W) to (H, W, C) if needed
-        if observation_image.ndim == 3 and observation_image.shape[0] in [1, 3]:
-            img = observation_image.transpose(1, 2, 0)
-            if img.shape[-1] == 1:
-                img = img.squeeze(-1)
+        # Handle different image shapes
+        # (T, C, H, W) - temporal dimension present, use last timestep (current)
+        # (C, H, W) - standard format
+        # (H, W, C) - matplotlib format
+        if observation_image.ndim == 4:  # (T, C, H, W)
+            img = observation_image[-1]  # Use last timestep (current)
         else:
             img = observation_image
+
+        # Convert from (C, H, W) to (H, W, C) if needed
+        if img.ndim == 3 and img.shape[0] in [1, 3]:
+            img = img.transpose(1, 2, 0)
+            if img.shape[-1] == 1:
+                img = img.squeeze(-1)
+
         ax6.imshow(img)
-        ax6.set_title("Observation Image")
+        ax6.set_title("Observation Image (current)")
         ax6.axis("off")
     else:
         ax6.text(0.5, 0.5, "No Image Available", ha="center", va="center", transform=ax6.transAxes)
@@ -325,35 +335,34 @@ def create_observation_batch(
     """
     Create observation batch for policy inference.
 
-    For RelativeEE, the current observation is always identity.
-    For n_obs_steps > 1, we need historical context.
+    For RelativeEE with temporal observations (obs_state_horizon > 1):
+    - observation.state shape: (T, 10) where T=obs_state_horizon
+    - observation.images.camera shape: (T, C, H, W)
+
+    This function adds the batch dimension, so output shapes are:
+    - observation.state: (1, T, 10)
+    - observation.images.camera: (1, T, C, H, W)
 
     Args:
         dataset: RelativeEEDataset instance
         idx: Current sample index
-        n_obs_steps: Number of observation steps (horizon)
+        n_obs_steps: Number of observation steps (horizon) - for compatibility
         device: Torch device
 
     Returns:
-        Batch dictionary with observation data
+        Batch dictionary with observation data (with batch dimension)
     """
     # Get current sample
     sample = dataset[idx]
 
-    # For RelativeEE, observation.state is already (10,) - identity at current
-    obs_state = sample["observation.state"]  # (10,)
-
-    # Prepare batch
-    batch = {
-        "observation.state": obs_state.unsqueeze(0).to(device),  # (1, 10)
-    }
-
-    # Add camera images if available
-    for key in list(sample.keys()):
-        if key.startswith("observation.images"):
-            img = sample[key]
-            if isinstance(img, torch.Tensor):
-                batch[key] = img.unsqueeze(0).to(device)  # (1, C, H, W)
+    # For RelativeEE with temporal observations:
+    # observation.state: (T, 10) -> (1, T, 10)
+    # observation.images.camera: (T, C, H, W) -> (1, T, C, H, W)
+    batch = {}
+    for key, value in sample.items():
+        if isinstance(value, torch.Tensor):
+            # Add batch dimension at the front
+            batch[key] = value.unsqueeze(0).to(device)
 
     return batch
 
@@ -447,6 +456,13 @@ def main():
     policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
     policy.eval()
     policy.config.device = str(device)
+
+    # Wrap with TemporalACTWrapper if obs_state_horizon > 1 (UMI-style temporal batching)
+    obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    if obs_state_horizon > 1:
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, policy.config)
+        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
 
     # Create processors
     preprocessor, postprocessor = make_pre_post_processors(
