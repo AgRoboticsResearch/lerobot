@@ -56,6 +56,74 @@ from lerobot.datasets.relative_ee_dataset import (
     rot6d_to_mat,
 )
 from lerobot.utils.utils import init_logging
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    RenameObservationsProcessorStep,
+    TemporalNormalizeProcessor,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    UnnormalizerProcessorStep,
+)
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+
+def make_act_pre_post_processors_with_temporal(
+    config: ACTConfig,
+    dataset_stats: dict | None = None,
+    obs_state_horizon: int = 2,
+) -> tuple[
+    PolicyProcessorPipeline[dict, dict],
+    PolicyProcessorPipeline,
+]:
+    """Create ACT processors with temporal observation handling (UMI-style).
+
+    This MUST match the processors used during training, otherwise
+    normalization will be inconsistent and predictions will be wrong.
+
+    Args:
+        config: ACT policy configuration
+        dataset_stats: Normalization statistics from dataset
+        obs_state_horizon: Number of temporal steps in observations
+
+    Returns:
+        Tuple of (preprocessor, postprocessor) pipelines
+    """
+    # Create custom preprocessor with temporal normalization
+    # NOTE: Device step must come before normalization so stats are on same device as data
+    input_steps = [
+        RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
+        TemporalNormalizeProcessor(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+            device=config.device,
+            obs_state_horizon=obs_state_horizon,
+        ),
+    ]
+
+    # Standard postprocessor
+    output_steps = [
+        UnnormalizerProcessorStep(
+            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        DeviceProcessorStep(device="cpu"),
+    ]
+
+    preprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=input_steps,
+        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+    )
+    postprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=output_steps,
+        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    )
+
+    logging.info(f"Created temporal ACT processors with obs_state_horizon={obs_state_horizon}")
+    logging.info(f"  Preprocessor steps: {[step.__class__.__name__ for step in preprocessor.steps]}")
+
+    return preprocessor, postprocessor
 
 
 def rotation_error(rot6d_pred: np.ndarray, rot6d_gt: np.ndarray) -> float:
@@ -471,13 +539,36 @@ def main():
     # Log the obs_state_horizon being used
     logger.info(f"Using obs_state_horizon={obs_state_horizon} ({'from args' if args.obs_state_horizon is not None else 'from policy config'})")
 
-    # Create processors
-    preprocessor, postprocessor = make_pre_post_processors(
+    # IMPORTANT: Use temporal processors matching training!
+    # The standard make_pre_post_processors doesn't use TemporalNormalizeProcessor,
+    # which causes mismatched normalization between training and inference.
+    # First load standard processors to get the stats, then recreate with temporal processor.
+    logger.info("Loading processors from pretrained model...")
+    temp_preprocessor, _ = make_pre_post_processors(
         policy_cfg=policy,
         pretrained_path=args.pretrained_path,
         preprocessor_overrides={"device_processor": {"device": str(device)}},
         postprocessor_overrides={},
     )
+
+    # Extract stats from loaded preprocessor
+    dataset_stats = None
+    for step in temp_preprocessor.steps:
+        if hasattr(step, 'stats') and step.stats is not None:
+            dataset_stats = step.stats
+            break
+
+    if dataset_stats is None:
+        raise ValueError("Could not extract normalization stats from pretrained model!")
+
+    # Create temporal processors with the loaded stats (MUST match training)
+    preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
+        config=policy.config,
+        dataset_stats=dataset_stats,
+        obs_state_horizon=obs_state_horizon,
+    )
+    logger.info("  Using TemporalNormalizeProcessor to match training setup!")
+
 
     logger.info("Policy loaded successfully")
     logger.info(f"  Chunk size: {policy.config.chunk_size}")
