@@ -538,11 +538,16 @@ def main():
     logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
 
     # Load wrapper parameters if temporal_wrapper.pt exists
-    from pathlib import Path
-    wrapper_path = Path(args.pretrained_path) / "checkpoints" / step / "temporal_wrapper.pt"
+    # Note: Path is already imported at module level
+    # Expected structure: .../checkpoints/<step>/pretrained_model
+    # temporal_wrapper.pt should be at: .../checkpoints/<step>/temporal_wrapper.pt
+    wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
     if not wrapper_path.exists():
-        # Try alternative path structure (some checkpoints don't have step subdirectory)
+        # Try alternative path structures
         wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            # Try going up two levels (if pretrained_model is in a different structure)
+            wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
     if wrapper_path.exists():
         wrapper_state_dict = torch.load(wrapper_path, map_location=device)
         # Filter to only load keys that exist in the wrapper (handles parameter name changes)
