@@ -726,9 +726,14 @@ def main():
         logger.info(f"  Max position error: {metrics['max_position_error']*1000:.2f} mm")
 
         # Plot trajectory comparison
+        # Add config suffix: n_obs_X_ds_Y where X=obs_state_horizon, Y=obs_down_sample_steps
+        obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+        obs_down_sample_steps = getattr(policy.config, 'obs_down_sample_steps', 1)
+        config_suffix = f"_n_obs_{obs_state_horizon}_ds_{obs_down_sample_steps}"
         step_suffix = f"_{model_step}" if model_step else ""
-        plot_path = output_dir / f"sample_{idx}_comparison{step_suffix}.png"
-        txt_path_prefix = output_dir / f"sample_{idx}{step_suffix}"
+        full_suffix = f"{step_suffix}{config_suffix}"
+        plot_path = output_dir / f"sample_{idx}_comparison{full_suffix}.png"
+        txt_path_prefix = output_dir / f"sample_{idx}{full_suffix}"
         # Extract observation image if available
         obs_img = None
         for key in sample.keys():
@@ -775,7 +780,11 @@ def main():
 
     # Save summary to file
     step_suffix = f"_{model_step}" if model_step else ""
-    summary_path = output_dir / f"summary{step_suffix}.txt"
+    obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    obs_down_sample_steps = getattr(policy.config, 'obs_down_sample_steps', 1)
+    config_suffix = f"_n_obs_{obs_state_horizon}_ds_{obs_down_sample_steps}"
+    full_suffix = f"{step_suffix}{config_suffix}"
+    summary_path = output_dir / f"summary{full_suffix}.txt"
     with open(summary_path, "w") as f:
         f.write("RelativeEE ACT Policy Inference Debug Summary\n")
         f.write("=" * 60 + "\n\n")
