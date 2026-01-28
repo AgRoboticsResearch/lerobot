@@ -88,9 +88,12 @@ class TemporalACTWrapper(nn.Module):
 
             # For VAE encoding, use current timestep state (not aggregated temporal)
             if self.config.robot_state_feature:
-                state = batch[OBS_STATE]  # (B, T_state, D) - T_state is obs_state_horizon
-                # Use the last timestep (current state) for VAE encoding
-                state_current = state[:, -1, :]  # (B, D)
+                state = batch[OBS_STATE]  # (B, T_state, D) or (B, D) when T=1 and squeezed
+                # Handle both squeezed (B, D) and non-squeezed (B, T, D) cases
+                if state.ndim == 2:  # Squeezed case when obs_state_horizon=1
+                    state_current = state  # (B, D)
+                else:
+                    state_current = state[:, -1, :]  # (B, D) - last timestep
                 state_embed = self.model.vae_encoder_robot_state_input_proj(state_current)  # (B, dim)
                 state_embed = state_embed.unsqueeze(1)  # (B, 1, dim)
 
@@ -138,8 +141,15 @@ class TemporalACTWrapper(nn.Module):
 
         # Handle state with temporal dimension - create one token per timestep
         if self.config.robot_state_feature:
-            state = batch[OBS_STATE]  # (B, T, D)
-            B, T_state, D = state.shape
+            state = batch[OBS_STATE]
+
+            # Handle both squeezed (B, D) and non-squeezed (B, T, D) cases
+            if state.ndim == 2:  # Squeezed case when obs_state_horizon=1
+                B, D = state.shape
+                T_state = 1  # Implicit single timestep
+                state = state.unsqueeze(1)  # (B, D) -> (B, 1, D) for uniform processing
+            else:
+                B, T_state, D = state.shape
 
             # Reshape to process each timestep independently: (B, T, D) -> (B*T, D)
             state_flat = state.reshape(B * T_state, D)  # (B*T, D)
@@ -175,8 +185,14 @@ class TemporalACTWrapper(nn.Module):
         if self.config.image_features:
             # Handle images with temporal dimension - UMI-style batching
             for img in batch[OBS_IMAGES]:
-                # img shape: (B, T, C, H, W)
-                B, T, C, H, W = img.shape
+                # Handle both squeezed (B, C, H, W) and non-squeezed (B, T, C, H, W) cases
+                if img.ndim == 4:  # Squeezed case when obs_state_horizon=1
+                    B, C, H, W = img.shape
+                    T = 1  # Implicit single timestep
+                    img = img.unsqueeze(1)  # (B, C, H, W) -> (B, 1, C, H, W) for uniform processing
+                else:
+                    B, T, C, H, W = img.shape
+
                 img_flat = img.reshape(B * T, C, H, W)  # (B*T, C, H, W)
 
                 # Process through backbone (standard 3-channel conv)

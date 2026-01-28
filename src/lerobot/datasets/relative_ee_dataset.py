@@ -632,6 +632,10 @@ class RelativeEEDataset(LeRobotDataset):
                     # Stack: (obs_state_horizon, C, H, W)
                     item[cam_key] = torch.stack(imgs_to_stack, dim=0)
 
+                    # Squeeze temporal dimension when obs_state_horizon=1 for compatibility with standard ACT
+                    if self.obs_state_horizon == 1:
+                        item[cam_key] = item[cam_key].squeeze(0)  # (1, C, H, W) -> (C, H, W)
+
         # Get actions across horizon
         actions = item['action']
         if actions.ndim == 1:
@@ -674,12 +678,16 @@ class RelativeEEDataset(LeRobotDataset):
                 [hist_state[6].item()]  # gripper
             ]))
 
-        # Stack: (obs_state_horizon, 10) - keep temporal dimension
+        # Stack: (obs_state_horizon, 10) - keep temporal dimension unless obs_state_horizon=1
         relative_obs = torch.tensor(
             np.stack(relative_obs_list, axis=0),
             dtype=current_state.dtype,
             device=current_state.device
         )  # shape: (obs_state_horizon, 10)
+
+        # Squeeze temporal dimension when obs_state_horizon=1 for compatibility with standard ACT
+        if self.obs_state_horizon == 1:
+            relative_obs = relative_obs.squeeze(0)  # (1, 10) -> (10,)
 
         # Transform actions to relative (future -> current)
         # Handle multiple action timesteps (chunk_size)

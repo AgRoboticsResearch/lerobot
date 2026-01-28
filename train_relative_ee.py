@@ -153,7 +153,12 @@ original_make_dataset = train_module.make_dataset
 
 
 def _make_relative_ee_dataset_wrapper(cfg: TrainPipelineConfig):
-    """Wrapper that creates RelativeEEDataset with configurable obs_state_horizon."""
+    """Wrapper that creates RelativeEEDataset with configurable obs_state_horizon.
+
+    Always uses RelativeEEDataset for the relative pose transformation.
+    When obs_state_horizon=1, data is squeezed to remove temporal dimension
+    for compatibility with standard ACT.
+    """
     # Get obs_state_horizon from policy config or use default
     obs_state_horizon = getattr(cfg.policy, 'obs_state_horizon', 2)
     # Get obs_down_sample_steps from policy config or use default (1 = consecutive frames)
@@ -179,8 +184,10 @@ original_make_policy = policy_factory.make_policy
 
 def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
     """Wrapper that wraps ACT with TemporalACTWrapper for UMI-style temporal batching.
-    
+
     Also loads wrapper parameters from temporal_wrapper.pt if loading from a checkpoint.
+
+    Respects cfg.disable_temporal_wrapper: if True, uses ACT directly without TemporalACTWrapper.
     """
     from pathlib import Path
     from lerobot.policies.act.configuration_act import ACTConfig
@@ -188,39 +195,46 @@ def _make_policy_wrapper(cfg, ds_meta=None, **kwargs):
 
     policy = original_make_policy(cfg, ds_meta=ds_meta, **kwargs)
 
-    # Wrap ACT model with temporal batching support
-    # Always wrap since temporal normalization now preserves temporal dimension for all T
+    # Check if temporal wrapper should be disabled
+    disable_temporal_wrapper = getattr(cfg, 'disable_temporal_wrapper', False)
+
+    # Wrap ACT model with temporal batching support (unless explicitly disabled)
     if isinstance(cfg, ACTConfig) and isinstance(policy, ACTPolicy):
         obs_state_horizon = getattr(cfg, 'obs_state_horizon', 1)
 
-        # Always wrap - T=1 now goes through the same unified temporal processing path
-        original_model = policy.model
-        policy.model = TemporalACTWrapper(original_model, cfg)
-        policy.model = policy.model.to(cfg.device)  # Move wrapper to device before loading state dict
-        logging.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
-        logging.info("  Using UMI-style temporal batching:")
-        logging.info("    - Images: (B, T, C, H, W) -> (B*T, C, H, W) -> encode -> (B, T*F)")
-        logging.info("    - State: (B, T, D) -> (B*T, D) -> encode -> (B, T*F)")
-        logging.info("    - Preserves pretrained ResNet weights (3-channel)")
+        if disable_temporal_wrapper:
+            logging.info(f"TemporalACTWrapper DISABLED via --policy.disable_temporal_wrapper=True")
+            logging.info(f"  Using ACT model directly (obs_state_horizon={obs_state_horizon})")
+            logging.info(f"  Note: Data will be flattened to (B*T, ...) by TemporalFlattenProcessor")
+        else:
+            # Wrap with TemporalACTWrapper
+            original_model = policy.model
+            policy.model = TemporalACTWrapper(original_model, cfg)
+            policy.model = policy.model.to(cfg.device)  # Move wrapper to device before loading state dict
+            logging.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+            logging.info("  Using UMI-style temporal batching:")
+            logging.info("    - Images: (B, T, C, H, W) -> (B*T, C, H, W) -> encode -> (B, T*F)")
+            logging.info("    - State: (B, T, D) -> (B*T, D) -> encode -> (B, T*F)")
+            logging.info("    - Preserves pretrained ResNet weights (3-channel)")
 
-        # Try to load wrapper parameters if loading from checkpoint
-        pretrained_path = getattr(cfg, 'path', None) or kwargs.get('pretrained_path', None)
-        if pretrained_path:
-            wrapper_path = Path(pretrained_path) / "temporal_wrapper.pt"
-            if wrapper_path.exists():
-                wrapper_state_dict = torch.load(wrapper_path, map_location=cfg.device)
-                # Filter to only load keys that exist in the wrapper (handles parameter name changes)
-                model_state = policy.model.state_dict()
-                filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
-                if filtered_state:
-                    policy.model.load_state_dict(filtered_state, strict=False)
-                    policy.model = policy.model.to(cfg.device)  # Ensure on device after load
-                    logging.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
-                    logging.info(f"  Loaded params: {list(filtered_state.keys())}")
+            # Try to load wrapper parameters if loading from checkpoint
+            pretrained_path = getattr(cfg, 'path', None) or kwargs.get('pretrained_path', None)
+            if pretrained_path:
+                wrapper_path = Path(pretrained_path) / "temporal_wrapper.pt"
+                if wrapper_path.exists():
+                    wrapper_state_dict = torch.load(wrapper_path, map_location=cfg.device)
+                    # Filter to only load keys that exist in the wrapper (handles parameter name changes)
+                    model_state = policy.model.state_dict()
+                    filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+                    if filtered_state:
+                        policy.model.load_state_dict(filtered_state, strict=False)
+                        policy.model = policy.model.to(cfg.device)  # Ensure on device after load
+                        logging.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+                        logging.info(f"  Loaded params: {list(filtered_state.keys())}")
+                    else:
+                        logging.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
                 else:
-                    logging.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
-            else:
-                logging.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+                    logging.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
 
     return policy
 
@@ -300,20 +314,36 @@ original_make_pre_post_processors = policy_factory.make_pre_post_processors
 
 
 def _make_pre_post_processors_wrapper(policy_cfg, pretrained_path=None, **kwargs):
-    """Wrapper that adds temporal processor for ACT policies with RelativeEEDataset."""
+    """Wrapper that adds temporal processor for ACT policies with RelativeEEDataset.
+
+    Respects policy_cfg.disable_temporal_wrapper: if True, uses standard ACT processors
+    instead of temporal processors.
+    """
     from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
     # Only apply temporal processor for ACT policies
     if isinstance(policy_cfg, ACTConfig):
         obs_state_horizon = getattr(policy_cfg, 'obs_state_horizon', 2)
+        disable_temporal_wrapper = getattr(policy_cfg, 'disable_temporal_wrapper', False)
         # Extract dataset_stats from kwargs
         dataset_stats = kwargs.pop('dataset_stats', None)
         _ = pretrained_path  # Unused
-        return make_act_pre_post_processors_with_temporal(
-            config=policy_cfg,
-            dataset_stats=dataset_stats,
-            obs_state_horizon=obs_state_horizon,
-        )
+
+        if disable_temporal_wrapper:
+            # Use standard ACT processors (no temporal processing)
+            logging.info(f"Using standard ACT processors (disable_temporal_wrapper=True)")
+            return make_act_pre_post_processors(
+                config=policy_cfg,
+                dataset_stats=dataset_stats,
+            )
+        else:
+            # Use temporal processors
+            return make_act_pre_post_processors_with_temporal(
+                config=policy_cfg,
+                dataset_stats=dataset_stats,
+                obs_state_horizon=obs_state_horizon,
+            )
     else:
         # For other policies, use the original function
         return original_make_pre_post_processors(policy_cfg, pretrained_path=pretrained_path, **kwargs)
@@ -327,17 +357,33 @@ original_make_processors_from_policy_config = policy_factory._make_processors_fr
 
 
 def _make_processors_from_policy_config_wrapper(config, dataset_stats=None):
-    """Wrapper that adds temporal processor for ACT policies."""
+    """Wrapper that adds temporal processor for ACT policies.
+
+    Respects config.disable_temporal_wrapper: if True, uses standard ACT processors
+    instead of temporal processors.
+    """
     from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.processor_act import make_act_pre_post_processors
 
     # Only apply temporal processor for ACT policies
     if isinstance(config, ACTConfig):
         obs_state_horizon = getattr(config, 'obs_state_horizon', 2)
-        return make_act_pre_post_processors_with_temporal(
-            config=config,
-            dataset_stats=dataset_stats,
-            obs_state_horizon=obs_state_horizon,
-        )
+        disable_temporal_wrapper = getattr(config, 'disable_temporal_wrapper', False)
+
+        if disable_temporal_wrapper:
+            # Use standard ACT processors (no temporal processing)
+            logging.info(f"Using standard ACT processors (disable_temporal_wrapper=True)")
+            return make_act_pre_post_processors(
+                config=config,
+                dataset_stats=dataset_stats,
+            )
+        else:
+            # Use temporal processors
+            return make_act_pre_post_processors_with_temporal(
+                config=config,
+                dataset_stats=dataset_stats,
+                obs_state_horizon=obs_state_horizon,
+            )
     else:
         # For other policies, use the original function
         return original_make_processors_from_policy_config(config, dataset_stats=dataset_stats)
