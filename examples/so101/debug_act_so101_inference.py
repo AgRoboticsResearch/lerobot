@@ -571,8 +571,18 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    # Create output directory
-    output_dir = Path(args.output_dir)
+    # Extract job name from pretrained_path
+    # Expected format: .../outputs/train/<job_name>/checkpoints/.../pretrained_model
+    job_name = "unknown_job"
+    pretrained_path_obj = Path(args.pretrained_path)
+    if "outputs" in pretrained_path_obj.parts:
+        outputs_idx = pretrained_path_obj.parts.index("outputs")
+        if outputs_idx + 2 < len(pretrained_path_obj.parts):
+            job_name = pretrained_path_obj.parts[outputs_idx + 2]
+            logger.info(f"Job name: {job_name}")
+
+    # Create output directory with job name subfolder
+    output_dir = Path(args.output_dir) / job_name
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
 
