@@ -117,6 +117,14 @@ def main():
         default=10,
         help="Number of episodes to visualize for debugging (default: 10, use -1 for all)",
     )
+    parser.add_argument(
+        "--episode-indices",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Specific episode indices to convert (default: None = convert all episodes). "
+             "Example: --episode-indices 0 1 2",
+    )
 
     args = parser.parse_args()
 
@@ -147,6 +155,7 @@ def main():
         save_debug_viz=args.save_debug_viz,
         debug_output_dir=args.debug_output_dir,
         num_episodes_to_viz=args.num_episodes_to_viz,
+        episode_indices=args.episode_indices,
     )
 
     # Conversion complete - stats are already printed by convert_all()

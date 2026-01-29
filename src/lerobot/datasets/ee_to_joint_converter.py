@@ -19,6 +19,8 @@ import os
 import shutil
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
@@ -316,11 +318,12 @@ def convert_episode(
         aligned_ee_pose_7d = np.concatenate([aligned_pos, aligned_rotvec, [ee_pose[6]]])  # Keep original gripper
 
         # Solve IK using previous valid joint as initial guess (tracking)
+        # Note: previous_valid_joint=None means fallback to initial_guess (last_valid_joint)
         joint_pos, success, pos_err, rot_err = solve_ik_with_fallback(
             kinematics=kinematics,
             ee_pose_7d=aligned_ee_pose_7d,
             initial_guess=last_valid_joint,
-            previous_valid_joint=reset_pose,
+            previous_valid_joint=None,  # Fallback to initial_guess (last_valid_joint) on failure
             position_weight=position_weight,
             orientation_weight=orientation_weight,
             pos_tolerance=pos_tolerance,
@@ -487,6 +490,7 @@ class EEToJointDatasetConverter:
         save_debug_viz: bool = False,
         debug_output_dir: str | Path = "./outputs/debug/ee_to_joint_converter",
         num_episodes_to_viz: int = 10,
+        episode_indices: list[int] | None = None,
     ) -> LeRobotDataset:
         """
         Convert all episodes and save as new LeRobotDataset.
@@ -497,6 +501,7 @@ class EEToJointDatasetConverter:
             save_debug_viz: If True, save trajectory comparison visualizations for debugging
             debug_output_dir: Directory to save debug visualizations (default: ./outputs/debug/ee_to_joint_converter)
             num_episodes_to_viz: Number of episodes to visualize (default: 10, use -1 for all)
+            episode_indices: List of episode indices to convert (default: None = convert all episodes)
 
         Returns:
             LeRobotDataset with joint-based observations and actions
@@ -526,6 +531,17 @@ class EEToJointDatasetConverter:
             print("Video files copied.")
 
         total_episodes = self.ee_dataset.meta.total_episodes
+        # Determine which episodes to convert
+        if episode_indices is not None:
+            # Validate episode indices
+            invalid_indices = [i for i in episode_indices if i < 0 or i >= total_episodes]
+            if invalid_indices:
+                raise ValueError(f"Invalid episode indices: {invalid_indices}. Valid range: 0-{total_episodes-1}")
+            episodes_to_convert = sorted(set(episode_indices))  # Deduplicate and sort
+            print(f"Converting {len(episodes_to_convert)} specific episodes: {episodes_to_convert}")
+        else:
+            episodes_to_convert = list(range(total_episodes))
+
         chunks_size = self.ee_dataset.meta.info.get("chunks_size", 1000)
 
         # Track current chunk and global frame counter for index column
@@ -544,7 +560,7 @@ class EEToJointDatasetConverter:
         chunk_dir = output_root / "data" / f"chunk-{current_chunk:03d}"
         chunk_dir.mkdir(exist_ok=True)
 
-        for ep_idx in range(total_episodes):
+        for ep_idx in episodes_to_convert:
             # Convert episode
             result = convert_episode(
                 ee_dataset=self.ee_dataset,
@@ -631,16 +647,20 @@ class EEToJointDatasetConverter:
         # Save stats to JSON file
         self._save_stats(stats, output_root / "meta" / "stats.json")
 
+        # Calculate actual converted episode/frame counts
+        actual_total_episodes = len(episodes_to_convert)
+        actual_total_frames = frames_written_total
+
         # Create meta info
         info = {
             "codebase_version": "v3.0",
             "robot_type": "so101",
-            "total_episodes": total_episodes,
-            "total_frames": self.ee_dataset.meta.total_frames,
+            "total_episodes": actual_total_episodes,
+            "total_frames": actual_total_frames,
             "total_tasks": self.ee_dataset.meta.total_tasks,
             "chunks_size": chunks_size,
             "fps": self.ee_dataset.fps,
-            "splits": self.ee_dataset.meta.info.get("splits", {"train": f"0:{total_episodes}"}),
+            "splits": {"train": f"0:{actual_total_episodes}"},
             "video_path": f"videos/{self.camera_key}/chunk-{{chunk_index:03d}}/file-{{file_index:03d}}.mp4",
             "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
             "features": self.output_features,
@@ -649,30 +669,72 @@ class EEToJointDatasetConverter:
         with open(output_root / "meta" / "info.json", "w") as f:
             json.dump(info, f, indent=2)
 
-        # Copy episodes and tasks from input (they don't change)
+        # Copy episodes and tasks from input (only for converted episodes)
         input_meta = self.ee_dataset.meta.root / "meta"
         output_meta = output_root / "meta"
 
-        # Copy episodes directory structure
-        if (input_meta / "episodes").exists():
-            shutil.rmtree(output_meta / "episodes", ignore_errors=True)
-            shutil.copytree(input_meta / "episodes", output_meta / "episodes")
+        # Load all episodes from the input dataset and filter them
+        from lerobot.datasets.utils import load_episodes
+
+        # Load all episodes from input (load_episodes expects the dataset root, not meta dir)
+        all_input_episodes = load_episodes(self.ee_dataset.meta.root)
+
+        # Filter to only converted episodes
+        filtered_episodes = all_input_episodes.select(episodes_to_convert)
+
+        # Re-index episodes to 0..N-1 for output and update frame indices
+        cumulative_frames = 0
+        filtered_data = []
+        for i in range(len(filtered_episodes)):
+            ep = filtered_episodes[i]
+            old_from = ep['dataset_from_index']
+            old_to = ep['dataset_to_index']
+            num_frames = old_to - old_from + 1
+
+            new_ep = {
+                'episode_index': i,
+                'tasks': ep['tasks'],
+                'length': num_frames,
+                'data/chunk_index': 0,  # All data goes to chunk-0
+                'data/file_index': 0,   # All data goes to file-0
+                'dataset_from_index': cumulative_frames,
+                'dataset_to_index': cumulative_frames + num_frames - 1,
+                'videos/observation.images.camera/chunk_index': 0,
+                'videos/observation.images.camera/file_index': 0,
+                'videos/observation.images.camera/from_timestamp': ep['videos/observation.images.camera/from_timestamp'],
+                'videos/observation.images.camera/to_timestamp': ep['videos/observation.images.camera/to_timestamp'],
+                'meta/episodes/chunk_index': 0,
+                'meta/episodes/file_index': 0,
+            }
+            filtered_data.append(new_ep)
+            cumulative_frames += num_frames
+
+        # Save filtered episodes using the same chunked structure
+        shutil.rmtree(output_meta / "episodes", ignore_errors=True)
+        (output_meta / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+
+        # Write episodes to parquet using original features
+        from datasets import Dataset
+
+        ep_dataset = Dataset.from_list(filtered_data, features=all_input_episodes.features)
+        ep_dataset.to_parquet(str(output_meta / "episodes" / "chunk-000" / "file-000.parquet"))
 
         # Copy tasks.parquet
         if (input_meta / "tasks.parquet").exists():
             shutil.copy2(input_meta / "tasks.parquet", output_meta / "tasks.parquet")
 
         print(f"\nConversion complete! Output saved to: {output_root}")
-        print(f"Total episodes: {total_episodes}")
-        print(f"Total frames: {self.ee_dataset.meta.total_frames}")
+        print(f"Total episodes: {actual_total_episodes}")
+        print(f"Total frames: {actual_total_frames}")
 
         # Save debug visualizations if requested
         if save_debug_viz:
             # Handle -1 meaning "visualize all episodes"
-            num_to_viz = num_episodes_to_viz if num_episodes_to_viz != -1 else total_episodes
+            num_to_viz = num_episodes_to_viz if num_episodes_to_viz != -1 else len(episodes_to_convert)
             save_trajectory_debug_viz(
                 ee_dataset=self.ee_dataset,
                 joint_positions=all_episode_joint_positions,
+                episode_indices=episodes_to_convert,  # Pass original episode indices
                 reset_pose=self.reset_pose,
                 kinematics=self.kinematics,
                 output_dir=Path(debug_output_dir),
@@ -903,6 +965,7 @@ def plot_trajectory_comparison_3d(
 def save_trajectory_debug_viz(
     ee_dataset: LeRobotDataset,
     joint_positions: list[np.ndarray],
+    episode_indices: list[int],
     reset_pose: np.ndarray,
     kinematics: RobotKinematics,
     output_dir: Path,
@@ -913,7 +976,8 @@ def save_trajectory_debug_viz(
 
     Args:
         ee_dataset: Input EE-only dataset
-        joint_positions: List of (T_i, 6) joint position arrays for each episode
+        joint_positions: List of (T_i, 6) joint position arrays for each converted episode
+        episode_indices: Original episode indices in the dataset corresponding to joint_positions
         reset_pose: Reset joint pose used for alignment
         kinematics: RobotKinematics instance
         output_dir: Output directory for visualizations
@@ -925,15 +989,17 @@ def save_trajectory_debug_viz(
     print(f"\nSaving trajectory visualizations to: {viz_dir}")
 
     # Sample episodes to visualize
-    total_episodes = len(joint_positions)
-    num_to_viz = min(num_episodes_to_viz, total_episodes)
+    total_converted = len(joint_positions)
+    num_to_viz = min(num_episodes_to_viz, total_converted)
 
-    # Select evenly spaced episodes
-    episode_indices = np.linspace(0, total_episodes - 1, num_to_viz, dtype=int)
+    # Select evenly spaced episodes from the converted ones
+    local_indices = np.linspace(0, total_converted - 1, num_to_viz, dtype=int)
 
-    for ep_idx in episode_indices:
-        # Get episode boundaries
-        episode = ee_dataset.meta.episodes[ep_idx]
+    for local_idx in local_indices:
+        original_ep_idx = episode_indices[local_idx]  # Get original episode index
+
+        # Get episode boundaries from original dataset
+        episode = ee_dataset.meta.episodes[original_ep_idx]
         start_idx = episode["dataset_from_index"]
         end_idx = episode["dataset_to_index"] + 1  # +1 because end_idx is inclusive
 
@@ -963,7 +1029,7 @@ def save_trajectory_debug_viz(
         # Compute FK-recovered EE poses (from converted joint positions)
         # These should already be close to reset pose at the start since IK was solved on aligned EE
         fk_ee_poses = []
-        for joint_pos in joint_positions[ep_idx]:
+        for joint_pos in joint_positions[local_idx]:
             ee_T = kinematics.forward_kinematics(joint_pos.astype(np.float64))
             fk_ee_poses.append(ee_T[:3, 3].copy())
         fk_ee_poses = np.array(fk_ee_poses)  # (T, 3)
@@ -984,26 +1050,26 @@ def save_trajectory_debug_viz(
         max_err = np.max(pos_errors)
 
         # Save plot
-        output_path = viz_dir / f"episode_{ep_idx:03d}_trajectory_comparison.png"
+        output_path = viz_dir / f"episode_{original_ep_idx:03d}_trajectory_comparison.png"
         plot_trajectory_comparison_3d(
             original_ee_poses=original_aligned_ee,
-            joint_poses=joint_positions[ep_idx],
+            joint_poses=joint_positions[local_idx],
             fk_ee_poses=fk_ee_poses,
             reset_pose=reset_pose,
             output_path=str(output_path),
-            episode_idx=ep_idx,
+            episode_idx=original_ep_idx,
             kinematics=kinematics,
         )
 
-        print(f"  Episode {ep_idx}: saved to {output_path.name}")
+        print(f"  Episode {original_ep_idx}: saved to {output_path.name}")
         print(f"    Mean position error: {mean_err:.2f} mm, Max error: {max_err:.2f} mm")
 
-    print(f"\nVisualizations saved for {len(episode_indices)} episodes")
+    print(f"\nVisualizations saved for {len(local_indices)} episodes")
 
     # Create summary statistics
     print(f"\n=== IK Conversion Summary ===")
     print(f"Reset pose (degrees): {reset_pose}")
-    print(f"Episodes visualized: {len(episode_indices)}")
+    print(f"Episodes visualized: {len(local_indices)}")
 
 
 def convert_ee_to_joint_dataset(
@@ -1022,6 +1088,7 @@ def convert_ee_to_joint_dataset(
     save_debug_viz: bool = False,
     debug_output_dir: str | Path = "./outputs/debug/ee_to_joint_converter",
     num_episodes_to_viz: int = 10,
+    episode_indices: list[int] | None = None,
 ) -> LeRobotDataset:
     """
     Convenience function to convert an EE-only dataset to a joint-based dataset.
@@ -1042,6 +1109,7 @@ def convert_ee_to_joint_dataset(
         save_debug_viz: If True, save trajectory comparison visualizations for debugging
         debug_output_dir: Directory to save debug visualizations
         num_episodes_to_viz: Number of episodes to visualize (default: 10, use -1 for all)
+        episode_indices: List of episode indices to convert (default: None = convert all)
 
     Returns:
         LeRobotDataset with joint positions
@@ -1075,4 +1143,5 @@ def convert_ee_to_joint_dataset(
         save_debug_viz=save_debug_viz,
         debug_output_dir=debug_output_dir,
         num_episodes_to_viz=num_episodes_to_viz,
+        episode_indices=episode_indices,
     )
