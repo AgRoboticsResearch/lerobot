@@ -24,8 +24,9 @@ Features:
 - Runs inference on every frame sequentially
 - Generates 2-subplot figures per frame:
   - Left: Current observation image
-  - Right: 3D visualization of world frame, EE trajectory history, and prediction
+  - Right: 3D visualization of world frame, EE trajectory history, prediction, ground truth, and IK
 - Optionally compiles frames to MP4 video
+- Optionally shows IK-constrained trajectory (what robot can actually achieve vs policy intent)
 
 Usage:
     python debug_relative_ee_animation.py \
@@ -34,6 +35,14 @@ Usage:
         --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
         --episode_indices 0 \
         --save_video
+
+    # Enable IK trajectory visualization (magenta line shows what robot can achieve)
+    python debug_relative_ee_animation.py \
+        --dataset_repo_id red_strawberry_picking_260119_merged_ee \
+        --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
+        --episode_indices 0 \
+        --enable_ik_trajectory \
+        --n_action_steps 10  # Match deployment script
 """
 
 import logging
@@ -56,6 +65,7 @@ from lerobot.datasets.relative_ee_dataset import (
     rot6d_to_mat,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.utils import init_logging
 from lerobot.processor import (
     PolicyProcessorPipeline,
@@ -192,6 +202,83 @@ def compute_predicted_ee_trajectory(
     return np.array(ee_positions)
 
 
+def compute_ik_constrained_trajectory(
+    relative_actions: np.ndarray,
+    current_ee_pose: np.ndarray,
+    kinematics: RobotKinematics,
+    current_joint_pos: np.ndarray,
+    pos_tolerance: float = 0.02,
+    rot_tolerance: float = 0.3,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute IK-constrained EE positions from relative actions.
+
+    This simulates what the actual robot would achieve by solving IK for each
+    predicted EE pose. Shows the difference between policy intent (ideal EE)
+    and robot capability (IK-constrained).
+
+    Args:
+        relative_actions: (T, 10) relative actions (pos 3D + rot 6D + gripper 1D)
+        current_ee_pose: (4, 4) current EE transformation matrix
+        kinematics: RobotKinematics instance
+        current_joint_pos: Current joint positions in degrees
+        pos_tolerance: Position tolerance for IK verification (meters)
+        rot_tolerance: Rotation tolerance for IK verification (radians)
+
+    Returns:
+        Tuple of:
+        - (T, 3) array of actual EE positions achieved via IK
+        - (6,) final joint position (in degrees) after processing all actions
+    """
+    from scipy.spatial.transform import Rotation
+
+    T = relative_actions.shape[0]
+    ee_positions = []
+    last_valid_joint = current_joint_pos.copy()
+
+    for i in range(T):
+        # Get desired EE pose from relative action
+        rel_T = pose10d_to_mat(relative_actions[i, :9])
+        desired_ee_tf = current_ee_pose @ rel_T
+
+        # Solve IK
+        kinematics.tip_frame.T_world_frame = desired_ee_tf
+        kinematics.tip_frame.configure("task", "soft", 10.0, 0.1)
+
+        # Set current joint positions as initial guess
+        current_joint_rad = np.deg2rad(last_valid_joint[:len(kinematics.joint_names)])
+        for j, name in enumerate(kinematics.joint_names):
+            kinematics.robot.set_joint(name, current_joint_rad[j])
+        kinematics.robot.update_kinematics()
+
+        # Solve
+        kinematics.solver.solve(True)
+        kinematics.robot.update_kinematics()
+
+        # Get resulting joint positions
+        joint_pos_rad = [kinematics.robot.get_joint(name) for name in kinematics.joint_names]
+        joint_pos = np.rad2deg(np.array(joint_pos_rad))
+
+        # Compute FK to get actual EE position
+        actual_ee_tf = kinematics.forward_kinematics(joint_pos)
+        pos_err = np.linalg.norm(actual_ee_tf[:3, 3] - desired_ee_tf[:3, 3])
+
+        r_desired = desired_ee_tf[:3, :3]
+        r_actual = actual_ee_tf[:3, :3]
+        r_rel = r_desired.T @ r_actual
+        rot_err = np.linalg.norm(Rotation.from_matrix(r_rel).as_rotvec())
+
+        # Only update if IK solution is valid
+        is_valid = (pos_err < pos_tolerance) and (rot_err < rot_tolerance)
+        if is_valid:
+            last_valid_joint = joint_pos
+
+        # Store the actual EE position (whether valid or not)
+        ee_positions.append(actual_ee_tf[:3, 3].copy())
+
+    return np.array(ee_positions), last_valid_joint
+
+
 def plot_frame_with_ee_trajectory(
     obs_image: np.ndarray,
     ee_history: list[np.ndarray],
@@ -202,13 +289,14 @@ def plot_frame_with_ee_trajectory(
     frame_idx: int,
     axis_limits: dict[str, tuple[float, float]] | None = None,
     gt_ee_positions: np.ndarray = None,
+    ik_ee_positions: np.ndarray = None,
 ):
     """
     Plot a single frame with observation image and EE trajectory.
 
     Creates a 2-subplot figure:
     - Left: Current observation image
-    - Right: 3D EE trajectory with cumulative history, prediction, and ground truth
+    - Right: 3D EE trajectory with cumulative history, prediction, ground truth, and IK
 
     Args:
         obs_image: Observation image (C,H,W or H,W,C or T,C,H,W)
@@ -220,6 +308,7 @@ def plot_frame_with_ee_trajectory(
         frame_idx: Frame index for title
         axis_limits: Optional dict with 'x', 'y', 'z' tuples for fixed axis limits
         gt_ee_positions: Ground truth future EE positions (chunk_size, 3)
+        ik_ee_positions: IK-constrained EE positions (chunk_size, 3) - shows what robot can achieve
     """
     fig = plt.figure(figsize=(16, 8))
 
@@ -313,6 +402,25 @@ def plot_frame_with_ee_trajectory(
             c="green", marker="o", s=30, label="GT Steps", alpha=0.6
         )
 
+    # Plot IK-constrained trajectory as magenta dash-dot line
+    if ik_ee_positions is not None and len(ik_ee_positions) > 0:
+        # Start IK from current EE position
+        ik_full = np.vstack([current_ee_position.reshape(1, 3), ik_ee_positions])
+        ax2.plot(
+            ik_full[:, 0],
+            ik_full[:, 1],
+            ik_full[:, 2],
+            color="magenta", linestyle="-.", linewidth=2, label="IK (Robot)", alpha=0.9
+        )
+
+        # Plot IK EE positions as magenta triangles
+        ax2.scatter(
+            ik_ee_positions[:, 0],
+            ik_ee_positions[:, 1],
+            ik_ee_positions[:, 2],
+            c="magenta", marker="^", s=40, label="IK Steps", alpha=0.8, edgecolors="black"
+        )
+
     ax2.set_xlabel("X (m)", fontsize=10)
     ax2.set_ylabel("Y (m)", fontsize=10)
     ax2.set_zlabel("Z (m)", fontsize=10)
@@ -332,6 +440,8 @@ def plot_frame_with_ee_trajectory(
             all_pos = np.vstack([all_pos, pred_ee_positions])
         if gt_ee_positions is not None:
             all_pos = np.vstack([all_pos, gt_ee_positions])
+        if ik_ee_positions is not None:
+            all_pos = np.vstack([all_pos, ik_ee_positions])
 
         x_min, x_max = all_pos[:, 0].min(), all_pos[:, 0].max()
         y_min, y_max = all_pos[:, 1].min(), all_pos[:, 1].max()
@@ -527,6 +637,57 @@ def main():
         default=None,
         help="Observation state horizon (auto-detected from policy if not specified)",
     )
+    parser.add_argument(
+        "--enable_ik_trajectory",
+        action="store_true",
+        help="Enable IK-constrained trajectory visualization (shows what robot can actually achieve)",
+    )
+    parser.add_argument(
+        "--urdf_path",
+        type=str,
+        default="urdf/Simulation/SO101/so101_new_calib.urdf",
+        help="Path to robot URDF file for IK (default: urdf/Simulation/SO101/so101_new_calib.urdf)",
+    )
+    parser.add_argument(
+        "--target_frame",
+        type=str,
+        default="gripper_frame_link",
+        help="Name of end-effector frame in URDF (default: gripper_frame_link)",
+    )
+    parser.add_argument(
+        "--reset_pose",
+        type=float,
+        nargs=6,
+        default=[-8.00, -62.73, 65.05, 0.86, -2.55, 88.91],
+        metavar=("PAN", "LIFT", "ELBOW", "FLEX", "ROLL", "GRIPPER"),
+        help="Reset pose in degrees for IK (default: -8.00 -62.73 65.05 0.86 -2.55 88.91)",
+    )
+    parser.add_argument(
+        "--pos_tolerance",
+        type=float,
+        default=0.02,
+        help="Position tolerance for IK verification in meters (default: 0.02 = 20mm)",
+    )
+    parser.add_argument(
+        "--rot_tolerance",
+        type=float,
+        default=0.3,
+        help="Rotation tolerance for IK verification in radians (default: 0.3 = ~17 deg)",
+    )
+    parser.add_argument(
+        "--joint_names",
+        type=str,
+        nargs=6,
+        default=["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        metavar=("J1", "J2", "J3", "J4", "J5", "J6"),
+        help="Joint names for IK (default: shoulder_pan shoulder_lift elbow_flex wrist_flex wrist_roll gripper)",
+    )
+    parser.add_argument(
+        "--n_action_steps",
+        type=int,
+        default=10,
+        help="Number of actions to execute from each chunk prediction (default: 10, must match deployment)",
+    )
 
     args = parser.parse_args()
 
@@ -654,6 +815,29 @@ def main():
     logger.info(f"  Processing episodes: {args.episode_indices}")
 
     # ========================================================================
+    # Initialize IK if enabled
+    # ========================================================================
+    kinematics = None
+    reset_pose = np.array(args.reset_pose, dtype=np.float64)
+
+    if args.enable_ik_trajectory:
+        logger.info("Initializing IK solver...")
+        logger.info(f"  URDF: {args.urdf_path}")
+        logger.info(f"  Target frame: {args.target_frame}")
+        logger.info(f"  Reset pose: {reset_pose}")
+        logger.info(f"  Position tolerance: {args.pos_tolerance * 1000:.1f} mm")
+        logger.info(f"  Rotation tolerance: {np.rad2deg(args.rot_tolerance):.1f} deg")
+
+        kinematics = RobotKinematics(
+            urdf_path=args.urdf_path,
+            target_frame_name=args.target_frame,
+            joint_names=args.joint_names,
+        )
+        logger.info("IK solver initialized successfully!")
+    else:
+        logger.info("IK trajectory visualization disabled (use --enable_ik_trajectory to enable)")
+
+    # ========================================================================
     # Process each episode
     # ========================================================================
     for ep_idx in args.episode_indices:
@@ -694,6 +878,7 @@ def main():
 
         # Run inference on each frame
         ee_history = []  # Cumulative EE positions
+        current_joint_pos = reset_pose.copy()  # Track current joint position for IK
 
         for frame_idx in range(start_idx, ep_end):
             sample = dataset[frame_idx]
@@ -744,6 +929,20 @@ def main():
             # Compute ground truth EE trajectory (absolute positions)
             gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, current_ee_pose)
 
+            # Compute IK-constrained trajectory if enabled
+            # IMPORTANT: Only process n_action_steps from chunk to match deployment behavior!
+            # In deployment, we execute n_action_steps actions, then predict a new chunk.
+            ik_ee_positions = None
+            if kinematics is not None:
+                ik_ee_positions, current_joint_pos = compute_ik_constrained_trajectory(
+                    relative_actions=pred_actions[:args.n_action_steps],  # Only first N actions
+                    current_ee_pose=current_ee_pose,
+                    kinematics=kinematics,
+                    current_joint_pos=current_joint_pos,
+                    pos_tolerance=args.pos_tolerance,
+                    rot_tolerance=args.rot_tolerance,
+                )
+
             # Generate and save plot
             frame_output = ep_output_dir / f"frame_{frame_idx:04d}.jpg"
             plot_frame_with_ee_trajectory(
@@ -756,6 +955,7 @@ def main():
                 frame_idx=frame_idx,
                 axis_limits=axis_limits,
                 gt_ee_positions=gt_ee_positions,
+                ik_ee_positions=ik_ee_positions,
             )
 
             if (frame_idx - start_idx) % 10 == 0:

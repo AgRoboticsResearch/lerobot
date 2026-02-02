@@ -166,86 +166,13 @@ def verify_ik_solution(
     return is_valid, pos_error, rot_error
 
 
-def solve_ik_with_fallback(
-    kinematics: RobotKinematics,
-    ee_pose_7d: np.ndarray,
-    initial_guess: np.ndarray,
-    previous_valid_joint: np.ndarray | None,
-    position_weight: float = 1.0,
-    orientation_weight: float = 0.01,
-    pos_tolerance: float = 0.005,
-    rot_tolerance: float = 0.1,
-) -> tuple[np.ndarray, bool, float, float]:
-    """
-    Solve IK with verification and fallback.
-
-    Strategy:
-    1. Convert EE pose to transformation matrix
-    2. Try IK with initial guess
-    3. Verify solution with FK
-    4. If verification fails, retry with previous valid joint as guess
-    5. If still fails, return previous valid joint
-
-    Args:
-        kinematics: RobotKinematics instance
-        ee_pose_7d: 7D end-effector pose [x, y, z, wx, wy, wz, gripper]
-        initial_guess: Initial joint position guess for IK (in degrees)
-        previous_valid_joint: Previous valid joint position for fallback (in degrees)
-        position_weight: Weight for position constraint in IK
-        orientation_weight: Weight for orientation constraint in IK
-        pos_tolerance: Position tolerance for verification (meters)
-        rot_tolerance: Rotation tolerance for verification (radians)
-
-    Returns:
-        (joint_pos, success, pos_error, rot_error)
-    """
-    # Step 1: Convert to transformation matrix
-    tf_desired = ee_pose_to_matrix(ee_pose_7d)
-
-    # Step 2: First IK attempt (with initial guess)
-    joint_pos = kinematics.inverse_kinematics(
-        current_joint_pos=initial_guess,
-        desired_ee_pose=tf_desired,
-        position_weight=position_weight,
-        orientation_weight=orientation_weight,
-    )
-
-    # Step 3: Verify solution
-    is_valid, pos_err, rot_err = verify_ik_solution(
-        kinematics, joint_pos, tf_desired, pos_tolerance, rot_tolerance
-    )
-
-    if is_valid:
-        return joint_pos, True, pos_err, rot_err
-
-    # Step 4: Retry with previous valid joint as guess (if available)
-    if previous_valid_joint is not None:
-        joint_pos_retry = kinematics.inverse_kinematics(
-            current_joint_pos=previous_valid_joint,
-            desired_ee_pose=tf_desired,
-            position_weight=position_weight,
-            orientation_weight=orientation_weight,
-        )
-        is_valid_retry, pos_err_retry, rot_err_retry = verify_ik_solution(
-            kinematics, joint_pos_retry, tf_desired, pos_tolerance, rot_tolerance
-        )
-        if is_valid_retry:
-            return joint_pos_retry, True, pos_err_retry, rot_err_retry
-
-    # Step 5: All attempts failed - return previous valid joint (or initial guess)
-    fallback = previous_valid_joint if previous_valid_joint is not None else initial_guess
-    return fallback, False, pos_err, rot_err
-
-
 def convert_episode(
     ee_dataset: LeRobotDataset,
     episode_idx: int,
     kinematics: RobotKinematics,
     reset_pose: np.ndarray,
-    pos_tolerance: float = 0.005,
-    rot_tolerance: float = 0.1,
-    position_weight: float = 1.0,
-    orientation_weight: float = 0.01,
+    position_weight: float = 10.0,
+    orientation_weight: float = 0.1,
 ) -> dict:
     """
     Convert a single episode from EE space to joint space.
@@ -317,18 +244,30 @@ def convert_episode(
         aligned_rotvec = Rotation.from_matrix(aligned_ee_tf[:3, :3]).as_rotvec()
         aligned_ee_pose_7d = np.concatenate([aligned_pos, aligned_rotvec, [ee_pose[6]]])  # Keep original gripper
 
-        # Solve IK using previous valid joint as initial guess (tracking)
-        # Note: previous_valid_joint=None means fallback to initial_guess (last_valid_joint)
-        joint_pos, success, pos_err, rot_err = solve_ik_with_fallback(
-            kinematics=kinematics,
-            ee_pose_7d=aligned_ee_pose_7d,
-            initial_guess=last_valid_joint,
-            previous_valid_joint=None,  # Fallback to initial_guess (last_valid_joint) on failure
+        # Convert to transformation matrix for IK
+        tf_desired = ee_pose_to_matrix(aligned_ee_pose_7d)
+
+        # Solve IK - always set joints to last_valid_joint before solving
+        # This prevents drift by ensuring solver starts from expected position
+        joint_pos = kinematics.inverse_kinematics(
+            current_joint_pos=last_valid_joint,
+            desired_ee_pose=tf_desired,
             position_weight=position_weight,
             orientation_weight=orientation_weight,
-            pos_tolerance=pos_tolerance,
-            rot_tolerance=rot_tolerance,
+            reset_state=True,  # Always reset to prevent drift
         )
+
+        # Verify solution
+        actual_ee = kinematics.forward_kinematics(joint_pos)
+        pos_err = np.linalg.norm(actual_ee[:3, 3] - tf_desired[:3, 3])
+        r_desired = tf_desired[:3, :3]
+        r_actual = actual_ee[:3, :3]
+        r_rel = r_desired.T @ r_actual
+        rot_err = np.linalg.norm(Rotation.from_matrix(r_rel).as_rotvec())
+
+        # Check if within tolerance
+        is_valid = (pos_err < 0.02) and (rot_err < 0.3)  # 20mm, 17deg
+        success = is_valid
 
         # Store result
         joint_positions.append(joint_pos)
@@ -336,7 +275,7 @@ def convert_episode(
         pos_errors.append(pos_err)
         rot_errors.append(rot_err)
 
-        # Update last valid joint for tracking
+        # Update last_valid_joint only on success to prevent drift
         if success:
             last_valid_joint = joint_pos
 
@@ -567,8 +506,6 @@ class EEToJointDatasetConverter:
                 episode_idx=ep_idx,
                 kinematics=self.kinematics,
                 reset_pose=self.reset_pose,
-                pos_tolerance=self.pos_tol,
-                rot_tolerance=self.rot_tol,
                 position_weight=self.position_weight,
                 orientation_weight=self.orientation_weight,
             )

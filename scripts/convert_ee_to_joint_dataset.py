@@ -81,14 +81,14 @@ def main():
     parser.add_argument(
         "--position-weight",
         type=float,
-        default=1.0,
-        help="Weight for position constraint in IK (default: 1.0)",
+        default=10.0,
+        help="Weight for position constraint in IK (default: 10.0)",
     )
     parser.add_argument(
         "--orientation-weight",
         type=float,
-        default=1.0,
-        help="Weight for orientation constraint in IK (default: 1.0)",
+        default=0.1,
+        help="Weight for orientation constraint in IK (default: 0.1)",
     )
     parser.add_argument(
         "--target-frame",

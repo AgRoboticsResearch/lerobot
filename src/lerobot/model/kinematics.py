@@ -49,6 +49,10 @@ class RobotKinematics:
         # Set joint names
         self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
 
+        # Get indices of our joints in the full robot state (for extracting from dq)
+        all_joint_names = list(self.robot.joint_names())
+        self.joint_indices = [all_joint_names.index(name) for name in self.joint_names]
+
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
@@ -82,6 +86,7 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        reset_state: bool = True,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -91,17 +96,20 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            reset_state: If True, set joints to current_joint_pos before solving.
+                        If False, use existing robot state (for tracking).
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
 
-        # Convert current joint positions to radians for initial guess
-        current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
-
-        # Set current joint positions as initial guess
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, current_joint_rad[i])
+        if reset_state:
+            # Convert current joint positions to radians
+            current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
+            # Set robot state directly
+            for i, joint_name in enumerate(self.joint_names):
+                self.robot.set_joint(joint_name, current_joint_rad[i])
+            self.robot.update_kinematics()
 
         # Update the target pose for the frame task
         self.tip_frame.T_world_frame = desired_ee_pose
@@ -109,18 +117,18 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
+        # Solve IK - True means integrate into robot state
         self.solver.solve(True)
         self.robot.update_kinematics()
 
-        # Extract joint positions
+        # Extract the resulting joint positions
         joint_pos_rad = []
         for joint_name in self.joint_names:
             joint = self.robot.get_joint(joint_name)
             joint_pos_rad.append(joint)
 
         # Convert back to degrees
-        joint_pos_deg = np.rad2deg(joint_pos_rad)
+        joint_pos_deg = np.rad2deg(np.array(joint_pos_rad))
 
         # Preserve gripper position if present in current_joint_pos
         if len(current_joint_pos) > len(self.joint_names):

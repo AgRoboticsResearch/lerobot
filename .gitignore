@@ -181,3 +181,4 @@ outputs/
 *.urdf
 *.xml
 *.part
+/tests/temp_ik_comparison/
