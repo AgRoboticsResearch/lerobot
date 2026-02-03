@@ -61,11 +61,12 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
-from lerobot.robots.so101_follower.relative_ee_processor import (
-    pose10d_to_mat,
-)
+from lerobot.robots.so101_follower.relative_ee_processor import pose10d_to_mat
+from lerobot.datasets.relative_ee_dataset import mat_to_pose10d
 from lerobot.utils.utils import init_logging
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -136,30 +137,172 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
     return cameras
 
 
-def create_relative_observation(
-    current_ee_T: np.ndarray,
-    gripper_pos: float,
+def make_act_pre_post_processors_with_temporal(
+    config: ACTConfig,
+    dataset_stats: dict | None = None,
     obs_state_horizon: int = 2,
+) -> tuple:
+    """Create ACT processors with temporal observation handling (UMI-style).
+
+    This MUST match the processors used during training, otherwise
+    normalization will be inconsistent and predictions will be wrong.
+
+    Args:
+        config: ACT policy configuration
+        dataset_stats: Normalization statistics from dataset
+        obs_state_horizon: Number of temporal steps in observations
+
+    Returns:
+        Tuple of (preprocessor, postprocessor) pipelines
+    """
+    from lerobot.processor import (
+        PolicyProcessorPipeline,
+        RenameObservationsProcessorStep,
+        TemporalNormalizeProcessor,
+        AddBatchDimensionProcessorStep,
+        DeviceProcessorStep,
+        UnnormalizerProcessorStep,
+    )
+    from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+    # Create custom preprocessor with temporal normalization
+    input_steps = [
+        RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
+        TemporalNormalizeProcessor(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+            device=config.device,
+            obs_state_horizon=obs_state_horizon,
+        ),
+    ]
+
+    # Standard postprocessor
+    output_steps = [
+        UnnormalizerProcessorStep(
+            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        DeviceProcessorStep(device="cpu"),
+    ]
+
+    preprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=input_steps,
+        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+    )
+    postprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=output_steps,
+        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    )
+
+    logging.info(f"Created temporal ACT processors with obs_state_horizon={obs_state_horizon}")
+
+    return preprocessor, postprocessor
+
+
+def build_relative_observation_from_history(
+    current_T: np.ndarray,
+    current_gripper: float,
+    obs_state_horizon: int,
     history_buffer: list | None = None,
 ) -> tuple[np.ndarray, list]:
+    """Match RelativeEEDataset temporal observation logic for real robot.
+
+    - Keep a history of absolute EE poses (4x4) and gripper values.
+    - Convert each historical pose to the frame of the *current* pose
+      (T_rel = T_curr^{-1} @ T_hist) just like RelativeEEDataset.__getitem__.
+    - Pad with the current pose when there is not enough history, so velocity
+      info is zeroed at startup (same as dataset padding logic).
+
+    Returns an observation tensor of shape (T, 10) for T>1, or (10,) for T==1
+    to stay compatible with the non-temporal ACT preprocessor path.
     """
-    Create the observation state for the RelativeEEDataset policy.
-    """
-    current_obs = np.array([
-        0.0, 0.0, 0.0,           # position (identity)
-        1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
-        gripper_pos,
-    ], dtype=np.float32)
 
     if history_buffer is None:
-        history_buffer = [current_obs.copy() for _ in range(obs_state_horizon)]
-    else:
-        history_buffer.append(current_obs.copy())
-        if len(history_buffer) > obs_state_horizon:
-            history_buffer.pop(0)
+        history_buffer = []
 
-    obs_state = np.stack(history_buffer, axis=0)
+    # Append newest absolute pose + gripper
+    history_buffer.append((current_T.copy(), float(current_gripper)))
+
+    # Keep only the most recent obs_state_horizon entries
+    history_buffer = history_buffer[-obs_state_horizon:]
+
+    # If buffer is shorter (startup), pad with current pose so behavior matches dataset padding
+    if len(history_buffer) < obs_state_horizon:
+        pad_needed = obs_state_horizon - len(history_buffer)
+        history_buffer = [(current_T.copy(), float(current_gripper))] * pad_needed + history_buffer
+
+    # Compute relative observations w.r.t. current pose (last element)
+    T_current = current_T
+    T_current_inv = np.linalg.inv(T_current)
+
+    obs_list = []
+    for T_hist, grip_hist in history_buffer:
+        T_rel = T_current_inv @ T_hist
+        pose_9d = mat_to_pose10d(T_rel)
+        obs_list.append(np.concatenate([pose_9d, [grip_hist]], dtype=np.float32))
+
+    obs_state = np.stack(obs_list, axis=0)
+
+    # For obs_state_horizon == 1, squeeze to (10,) to match standard ACT expectations
+    if obs_state_horizon == 1:
+        obs_state = obs_state.squeeze(0)
+
     return obs_state, history_buffer
+
+
+def build_temporal_image_observation(
+    current_img: np.ndarray,
+    obs_state_horizon: int,
+    image_history: dict | None = None,
+    camera_name: str = "camera",
+) -> tuple[np.ndarray, dict]:
+    """Build temporal image observation matching RelativeEEDataset format.
+
+    For obs_state_horizon > 1, the model expects (T, C, H, W) format.
+    This function maintains a history buffer and pads with current frame
+    when there is not enough history (matching dataset behavior).
+
+    Args:
+        current_img: Current camera image (H, W, C) uint8 [0, 255]
+        obs_state_horizon: Number of temporal frames needed
+        image_history: Dict of camera_name -> list of previous images (C, H, W) float32
+        camera_name: Name of this camera for the history dict
+
+    Returns:
+        Tuple of (temporal_images (T, C, H, W) or (C, H, W), updated_image_history)
+    """
+    if image_history is None:
+        image_history = {}
+
+    # Convert to float32 [0, 1] and transpose to (C, H, W)
+    img_float = current_img.astype(np.float32) / 255.0
+    img_chw = np.transpose(img_float, (2, 0, 1))
+
+    # Initialize history for this camera
+    if camera_name not in image_history:
+        image_history[camera_name] = []
+
+    # Append current frame
+    image_history[camera_name].append(img_chw.copy())
+
+    # Keep only the most recent obs_state_horizon frames
+    image_history[camera_name] = image_history[camera_name][-obs_state_horizon:]
+
+    # Pad with current frame if not enough history
+    if len(image_history[camera_name]) < obs_state_horizon:
+        pad_needed = obs_state_horizon - len(image_history[camera_name])
+        image_history[camera_name] = [img_chw.copy()] * pad_needed + image_history[camera_name]
+
+    # Stack into (T, C, H, W) format
+    temporal_images = np.stack(image_history[camera_name], axis=0)
+
+    # For obs_state_horizon == 1, squeeze to (C, H, W) to match standard ACT
+    if obs_state_horizon == 1:
+        temporal_images = temporal_images.squeeze(0)
+
+    return temporal_images, image_history
 
 
 def main():
@@ -209,8 +352,8 @@ def main():
     parser.add_argument(
         "--obs_state_horizon",
         type=int,
-        default=2,
-        help="Observation state horizon (must match training)",
+        default=None,
+        help="Observation state horizon (auto-detected from policy if not specified)",
     )
     parser.add_argument(
         "--ee_bounds_min",
@@ -253,16 +396,73 @@ def main():
     policy.eval()
     policy.config.device = str(device)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-        postprocessor_overrides={},
-    )
+    # Get obs_state_horizon from policy config (or use default)
+    policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
+
+    # Only wrap with TemporalACTWrapper if obs_state_horizon > 1
+    if obs_state_horizon > 1:
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, policy.config)
+        policy.model = policy.model.to(device)
+        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+        # Load wrapper parameters if temporal_wrapper.pt exists
+        wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
+        if wrapper_path.exists():
+            wrapper_state_dict = torch.load(wrapper_path, map_location=device)
+            model_state = policy.model.state_dict()
+            filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+            if filtered_state:
+                policy.model.load_state_dict(filtered_state, strict=False)
+                policy.model = policy.model.to(device)
+                logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+            else:
+                logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+        else:
+            logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+
+        # Load temporal processors
+        temp_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
+
+        # Extract stats from loaded preprocessor
+        dataset_stats = None
+        for step in temp_preprocessor.steps:
+            if hasattr(step, 'stats') and step.stats is not None:
+                dataset_stats = step.stats
+                break
+
+        if dataset_stats is None:
+            raise ValueError("Could not extract normalization stats from pretrained model!")
+
+        # Create temporal processors with the loaded stats
+        preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
+            config=policy.config,
+            dataset_stats=dataset_stats,
+            obs_state_horizon=obs_state_horizon,
+        )
+    else:
+        # Use standard processors for obs_state_horizon=1
+        logger.info(f"obs_state_horizon=1, TemporalACTWrapper not needed")
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
 
     logger.info("Policy loaded successfully")
     logger.info(f"  Chunk size: {policy.config.chunk_size}")
-    logger.info(f"  obs_state_horizon: {args.obs_state_horizon}")
+    logger.info(f"  obs_state_horizon: {obs_state_horizon}")
 
     # ========================================================================
     # Initialize Kinematics
@@ -350,6 +550,7 @@ def main():
     postprocessor.reset()
 
     history_buffer = None
+    image_history = None  # For temporal camera observations
     step_count = 0
 
     try:
@@ -376,29 +577,30 @@ def main():
             # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
-            # Create relative observation (UMI-style: identity at current)
-            obs_state, history_buffer = create_relative_observation(
-                current_ee_T=chunk_base_pose,
-                gripper_pos=current_gripper,
-                obs_state_horizon=policy.config.n_obs_steps,
+            # Build temporal relative observation matching RelativeEEDataset
+            obs_state, history_buffer = build_relative_observation_from_history(
+                current_T=current_ee_T,
+                current_gripper=current_gripper,
+                obs_state_horizon=obs_state_horizon,
                 history_buffer=history_buffer,
             )
 
-            # Prepare batch for policy
-            if obs_state.shape[0] == 1:
-                state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
-            else:
-                state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)
-
+            # Prepare batch for policy - shape (1, T, 10) for temporal obs
+            state_tensor = torch.from_numpy(obs_state).unsqueeze(0).to(device)
             batch = {"observation.state": state_tensor}
 
             # Add camera images if available
+            # Build temporal observations matching RelativeEEDataset format
             for cam_name in cameras.keys():
                 img = obs_dict.get(cam_name)
                 if img is not None:
-                    img = img.astype(np.float32) / 255.0
-                    img = np.transpose(img, (2, 0, 1))
-                    batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
+                    temporal_img, image_history = build_temporal_image_observation(
+                        current_img=img,
+                        obs_state_horizon=obs_state_horizon,
+                        image_history=image_history,
+                        camera_name=cam_name,
+                    )
+                    batch[f"observation.images.{cam_name}"] = torch.from_numpy(temporal_img).unsqueeze(0).to(device)
 
             # -------------------------------------------------------------------
             # Get full chunk for visualization - predict new chunk every time
@@ -406,19 +608,23 @@ def main():
             t_inference = time.perf_counter()
             with torch.no_grad():
                 processed_batch = preprocessor(batch)
-                chunk_actions_list = []
-                # Get all actions from the chunk
-                temp_obs = processed_batch.copy()
-                for _ in range(policy.config.chunk_size):
-                    pred = policy.select_action(temp_obs)
-                    pred = postprocessor(pred)
-                    if isinstance(pred, dict):
-                        action = pred["action"][0].cpu().numpy()
-                    else:
-                        action = pred[0].cpu().numpy()
-                    chunk_actions_list.append(action.copy())
+                pred_actions = policy.predict_action_chunk(processed_batch)
+
+                # Call postprocessor differently based on processor type
+                if obs_state_horizon > 1:
+                    # Temporal processors: wrap in dict
+                    pred_actions = postprocessor({"action": pred_actions})
+                else:
+                    # Standard processors: call directly
+                    pred_actions = postprocessor(pred_actions)
+
+                if isinstance(pred_actions, dict) and "action" in pred_actions:
+                    pred_actions = pred_actions["action"]
+                pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
+
+            chunk_actions_list = [pred_actions[i] for i in range(pred_actions.shape[0])]
             inference_time = time.perf_counter() - t_inference
-            print(f"Inference time: {inference_time*1000:.1f}ms ({policy.config.chunk_size} actions)")
+            print(f"Inference time: {inference_time*1000:.1f}ms ({pred_actions.shape[0]} actions)")
 
             # -------------------------------------------------------------------
             # Compute full trajectory for visualization
