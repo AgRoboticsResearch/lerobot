@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import cv2
+import placo
 import torch
 import yaml
 
@@ -67,6 +69,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 )
 from lerobot.utils.utils import init_logging
 from lerobot.utils.robot_utils import precise_sleep
+from placo_utils.visualization import robot_frame_viz, points_viz, robot_viz
 
 # Motor names for SO101
 MOTOR_NAMES = [
@@ -85,10 +88,40 @@ RESET_POSE_DEG = np.array([
     65.05,    # elbow_flex
     0.86,    # wrist_flex
     -2.55,    # wrist_roll
-    88.91,    # gripper
+    65,    # gripper
 ])
 
 FPS = 30  # Control loop frequency (Hz) - must match training fps
+
+
+class SimulatedSO101Robot:
+    """Simulated SO101 robot using placo for visualization."""
+
+    def __init__(self, urdf_path: str, motor_names: list[str], initial_joints: np.ndarray | None = None):
+        self.urdf_path = urdf_path
+        self.motor_names = motor_names
+
+        self.robot = placo.RobotWrapper(urdf_path, placo.Flags.ignore_collisions)
+        self.solver = placo.KinematicsSolver(self.robot)
+        self.solver.mask_fbase(True)
+        self.joints_task = self.solver.add_joints_task()
+        self.viz = robot_viz(self.robot)
+
+        self.current_joints = initial_joints if initial_joints is not None else np.zeros(len(motor_names))
+        self._update_robot_from_joints()
+
+    def set_joints(self, joints: np.ndarray):
+        """Set joint positions (in degrees)."""
+        self.current_joints = joints
+        self._update_robot_from_joints()
+
+    def _update_robot_from_joints(self):
+        """Update placo robot from current joint state."""
+        joints_rad = np.deg2rad(self.current_joints)
+        for i, name in enumerate(self.motor_names):
+            self.robot.set_joint(name, joints_rad[i])
+        self.robot.update_kinematics()
+        self.viz.display(self.robot.state.q)
 
 
 def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
@@ -132,7 +165,7 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
 def create_relative_observation(
     current_ee_T: np.ndarray,
     gripper_pos: float,
-    obs_state_horizon: int = 2,
+    obs_state_horizon: int = 1,
     history_buffer: list | None = None,
 ) -> tuple[np.ndarray, list]:
     """
@@ -226,8 +259,8 @@ def main():
     parser.add_argument(
         "--obs_state_horizon",
         type=int,
-        default=2,
-        help="Observation state horizon (must match training)",
+        default=1,
+        help="Observation state horizon (must match training, default=1)",
     )
     parser.add_argument(
         "--n_action_steps",
@@ -265,6 +298,22 @@ def main():
         type=str,
         default=None,
         help='Camera configuration in YAML format, e.g. \'{ wrist: {type: intelrealsense, serial_number_or_name: "031522070877", width: 640, height: 480, fps: 30} }\'',
+    )
+    parser.add_argument(
+        "--cameraview",
+        action="store_true",
+        help="Show camera feed in cv2 window (image fed into model)",
+    )
+    parser.add_argument(
+        "--placo_vis",
+        action="store_true",
+        help="Enable placo visualization (GREEN: predicted EE, YELLOW: IK->FK trajectory)",
+    )
+    parser.add_argument(
+        "--delay_chunk",
+        type=float,
+        default=0.0,
+        help="Delay between chunks: >0 = sleep N seconds, <0 = wait for Enter key (interactive mode)",
     )
 
     args = parser.parse_args()
@@ -375,6 +424,21 @@ def main():
     if cameras:
         logger.info(f"Configured cameras: {list(cameras.keys())}")
 
+    # ========================================================================
+    # Check camera view availability
+    # ========================================================================
+    if args.cameraview:
+        try:
+            # Test if cv2 can display windows
+            test_img = np.zeros((100, 100, 3), dtype=np.uint8)
+            cv2.imshow("test", test_img)
+            cv2.destroyWindow("test")
+            logger.info("Camera view enabled")
+        except Exception as e:
+            logger.warning(f"Cannot show camera view (headless mode?): {e}")
+            logger.warning("Disabling --cameraview")
+            args.cameraview = False
+
     robot_config = SO101FollowerConfig(
         id=args.robot_id,
         port=args.robot_port,
@@ -398,6 +462,20 @@ def main():
         # This ensures the first observation in the loop has a fresh camera frame at reset pose
         _ = robot.get_observation()
 
+    # ========================================================================
+    # Initialize Placo Visualization (if enabled)
+    # ========================================================================
+    sim_robot = None
+    if args.placo_vis:
+        logger.info("Initializing placo visualization...")
+        placo_urdf_path = str(Path(args.urdf_path).resolve())
+        sim_robot = SimulatedSO101Robot(placo_urdf_path, MOTOR_NAMES)
+        logger.info("Placo visualization initialized")
+        logger.info("Open http://127.0.0.1:7000/static/ to see visualization")
+        logger.info("\nVisualization colors:")
+        logger.info("  GREEN:  Predicted EE trajectory")
+        logger.info("  YELLOW: IK -> FK trajectory")
+
     # Use fixed safe joint positions for error recovery
     initial_safe_joints = np.array([
         -7.91,    # shoulder_pan
@@ -410,7 +488,15 @@ def main():
     logger.info(f"Using fixed safe pose: {initial_safe_joints}")
     print(f"Using fixed safe pose: {initial_safe_joints}")
 
-    current_joints = initial_safe_joints.copy()
+    # Get actual robot pose (after warm_start, robot might be at reset_pose)
+    obs_dict = robot.get_observation()
+    current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+    logger.info(f"Actual robot joints: {current_joints}")
+
+    # Update sim_robot to match actual robot pose
+    if sim_robot is not None:
+        sim_robot.set_joints(current_joints)
+        robot_frame_viz(sim_robot.robot, "gripper_frame_link")
 
     # Get initial EE pose via FK
     current_ee_T = kinematics.forward_kinematics(current_joints)
@@ -432,8 +518,10 @@ def main():
     logger.info(f"Actions per prediction: {args.n_action_steps}")
 
     step_count = 0
-    actions_processed_in_chunk = 0
-    chunk_base_pose = None  # Base pose for the current chunk (all actions relative to this)
+    action_queue = []  # Queue of actions from current chunk
+    chunk_base_pose = None  # Will be set when first chunk is predicted
+    chunk_start_joints = current_joints.copy()
+    chunk_actions_for_viz = []  # Store all actions for visualization
 
     try:
         while args.num_steps == 0 or step_count < args.num_steps:
@@ -447,23 +535,12 @@ def main():
             current_gripper = obs_dict["gripper.pos"] / 100.0  # Convert to [0,1]
 
             # -------------------------------------------------------------------
-            # Check if we're starting a new chunk
-            # The policy's select_action manages an internal queue and predicts
-            # a new chunk when the queue is empty. We detect chunk boundaries
-            # to set the chunk base pose.
-            # -------------------------------------------------------------------
-            if actions_processed_in_chunk == 0:
-                # New chunk starting - all actions in this chunk are relative to this base pose
-                current_ee_T = kinematics.forward_kinematics(current_joints)
-                chunk_base_pose = current_ee_T.copy()
-                print(f"New chunk base pose at step {step_count}: pos {chunk_base_pose[:3,3]}")
-
-            # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
             # Create relative observation (UMI-style: identity at current)
+            # chunk_base_pose will be set when new chunk is detected (first action is identity)
             obs_state, history_buffer = create_relative_observation(
-                current_ee_T=current_ee_T if actions_processed_in_chunk == 0 else chunk_base_pose,
+                current_ee_T=chunk_base_pose if chunk_base_pose is not None else kinematics.forward_kinematics(current_joints),
                 gripper_pos=current_gripper,
                 obs_state_horizon=policy.config.n_obs_steps,
                 history_buffer=history_buffer,
@@ -485,34 +562,131 @@ def main():
             for cam_name in cameras.keys():
                 img = obs_dict.get(cam_name)
                 if img is not None:
+                    # Show camera view if enabled - display the actual captured image
+                    if args.cameraview:
+                        img_display = img.copy()
+                        if img_display.ndim == 3 and img_display.shape[2] == 3:
+                            img_display = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+                        cv2.imshow(f"Camera: {cam_name}", img_display)
+                        cv2.waitKey(1)
+
                     # Convert from uint8 [0, 255] to float32 [0, 1]
                     img = img.astype(np.float32) / 255.0
-                    # Convert from HWC to CHW format expected by policy
                     img = np.transpose(img, (2, 0, 1))  # HWC -> CHW
                     batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
 
-            # -------------------------------------------------------------------
-            # Predict action using policy (select_action manages chunking internally)
-            # -------------------------------------------------------------------
-            with torch.no_grad():
-                processed_batch = preprocessor(batch)
-                # select_action returns a single action: (batch, action_dim)
-                action_output = policy.select_action(processed_batch)
-                # postprocessor converts PolicyAction to dict format
-                action_output = postprocessor(action_output)
+            # ====================================================================
+            # Predict new chunk when queue is empty (like visualize_dataset_predictions.py)
+            # ====================================================================
+            if len(action_queue) == 0:
+                # Get CURRENT robot pose as base for new chunk
+                current_ee_T = kinematics.forward_kinematics(current_joints)
+                chunk_base_pose = current_ee_T.copy()
+                chunk_start_joints = current_joints.copy()
+                chunk_actions_for_viz = []
 
-            # Extract the action tensor from the postprocessor output
-            # The output is a dict with "action" key containing (batch, action_dim) tensor
-            if isinstance(action_output, dict):
-                rel_action_10d = action_output["action"][0].cpu().numpy()  # (10,)
-            else:
-                rel_action_10d = action_output[0].cpu().numpy()  # (10,)
+                logger.info(f"Predicting new chunk at step {step_count}, base pos: {chunk_base_pose[:3,3]}")
 
-            # -------------------------------------------------------------------
+                # Predict full chunk (same as visualize_dataset_predictions.py)
+                with torch.no_grad():
+                    processed_batch = preprocessor(batch)
+                    pred_actions = policy.predict_action_chunk(processed_batch)
+
+                    # Call postprocessor to denormalize (same as visualize_dataset_predictions.py)
+                    pred_actions = postprocessor(pred_actions)
+
+                    if isinstance(pred_actions, dict) and "action" in pred_actions:
+                        pred_actions = pred_actions["action"]
+
+                    pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
+
+                # Fill action queue with all actions from chunk
+                action_queue = [pred_actions[i].copy() for i in range(pred_actions.shape[0])]
+                chunk_actions_for_viz = action_queue.copy()
+
+                logger.info(f"Predicted {len(action_queue)} actions")
+
+                # ====================================================================
+                # Visualize predicted trajectory immediately (so user can see before executing)
+                # ====================================================================
+                if args.placo_vis and sim_robot is not None:
+                    pred_positions = []
+                    ik_fk_positions = []
+                    ik_joints_tracking = chunk_start_joints.copy()
+
+                    for rel_action in chunk_actions_for_viz:
+                        rel_T = pose10d_to_mat(rel_action[:9])
+                        target_ee = chunk_base_pose @ rel_T
+                        pred_positions.append(target_ee[:3, 3].copy())
+
+                        try:
+                            ik_joints_tracking = kinematics.inverse_kinematics(
+                                ik_joints_tracking,
+                                target_ee,
+                                position_weight=1.0,
+                                orientation_weight=0.01,
+                            )
+                            ik_fk_ee_T = kinematics.forward_kinematics(ik_joints_tracking)
+                            ik_fk_positions.append(ik_fk_ee_T[:3, 3].copy())
+                        except Exception:
+                            ik_fk_positions.append(np.array([np.nan, np.nan, np.nan]))
+                            ik_joints_tracking = chunk_start_joints.copy()
+
+                    # Visualize predicted trajectory (GREEN)
+                    if pred_positions:
+                        points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00)
+
+                    # Visualize IK -> FK trajectory (YELLOW)
+                    if ik_fk_positions:
+                        points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
+
+                    # Show robot frame
+                    robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+
+                    logger.info(f"Visualized {len(pred_positions)} trajectory points")
+
+                # ====================================================================
+                # User confirmation before executing chunk (if delay_chunk < 0)
+                # ====================================================================
+                if args.delay_chunk < 0:
+                    print("\n" + "="*60)
+                    print(f"NEW CHUNK PREDICTED ({len(action_queue)} actions)")
+                    print(f"Base EE position: {chunk_base_pose[:3,3]}")
+                    print("Check placo visualization at http://127.0.0.1:7000/static/")
+                    print("  GREEN:  Predicted EE trajectory")
+                    print("  YELLOW: IK -> FK trajectory")
+                    print("="*60)
+                    try:
+                        input("Press Enter to start executing this chunk...")
+                    except (EOFError, KeyboardInterrupt):
+                        logger.info("Interrupted by user")
+                        raise
+
+            # Pop next action from queue
+            rel_action_10d = action_queue.pop(0)
+
+            # Check for n_action_steps boundary - optionally delay
+            actions_remaining = len(action_queue)
+            actions_executed = policy.config.chunk_size - actions_remaining - 1
+
+            if actions_executed >= args.n_action_steps and actions_remaining > 0:
+                if args.delay_chunk > 0:
+                    logger.info(f"Executed {args.n_action_steps} actions, sleeping {args.delay_chunk}s...")
+                    time.sleep(args.delay_chunk)
+                elif args.delay_chunk < 0:
+                    # Also pause after n_action_steps if in interactive mode
+                    print("\n" + "="*60)
+                    print(f"Executed {args.n_action_steps} actions, {actions_remaining} remaining")
+                    print("="*60)
+                    try:
+                        input("Press Enter to continue...")
+                    except (EOFError, KeyboardInterrupt):
+                        logger.info("Interrupted by user")
+                        raise
+
+            # ====================================================================
             # Apply action from chunk base pose (UMI-style: all actions relative to base)
-            # Each action in the chunk is relative to chunk_base_pose, not chained sequentially.
-            # action[t] = T_base^(-1) @ T_target, so we compute T_target = T_base @ action[t]
-            # -------------------------------------------------------------------
+            # ====================================================================
             rel_T = pose10d_to_mat(rel_action_10d[:9])
             target_ee_pose = chunk_base_pose @ rel_T  # Apply from base, don't chain
 
@@ -544,20 +718,15 @@ def main():
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
 
-            # Update counters
-            actions_processed_in_chunk += 1
-            step_count += 1
-            print("Step:", step_count, "Action:", rel_action_10d, "Joints Action:", joints_action)
-            # print("actions_processed_in_chunk:", actions_processed_in_chunk)
-            # print("policy.config.n_action_steps:", policy.config.n_action_steps)
+            # Update sim_robot to reflect the commanded joint positions
+            if args.placo_vis and sim_robot is not None:
+                # Extract joint positions from joints_action and update sim_robot
+                sim_joints = np.array([joints_action[f"{name}.pos"] for name in MOTOR_NAMES])
+                sim_robot.set_joints(sim_joints)
+                # Show robot frame at current position
+                robot_frame_viz(sim_robot.robot, "gripper_frame_link")
 
-            # Reset chunk counter when we've processed n_action_steps actions
-            # IMPORTANT: The next chunk's base_pose will be computed from ACTUAL robot pose via FK (line 457),
-            # not from an expected position. So even though action[0] is identity, the chunk alignment
-            # is maintained because each chunk starts from the current robot pose.
-            if actions_processed_in_chunk >= args.n_action_steps:
-                print(f"Completed {actions_processed_in_chunk} actions in chunk at step {step_count}")
-                actions_processed_in_chunk = 0
+            step_count += 1
 
             # -------------------------------------------------------------------
             # Maintain timing
@@ -593,6 +762,13 @@ def main():
             logger.error(f"Error returning to safe pose: {e2}")
 
     finally:
+        # Close camera view windows
+        if args.cameraview:
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass  # Ignore cv2 errors in headless mode
+
         # Disconnect robot
         logger.info("Disconnecting robot...")
         robot.disconnect()
