@@ -51,16 +51,20 @@ def main():
     robot.connect(calibrate=False)
     print(f"Robot connected on {args.port}")
 
+    # Disable torque for all motors (free move mode)
+    print("Disabling torque for all motors (robot can be moved freely)...")
+    robot.bus.disable_torque()
+    print("Torque disabled - you can now manually move the robot\n")
+
     try:
-        print("\nReading joint positions (Ctrl+C to stop):")
-        print("-" * 60)
+        print("Reading joint positions (Ctrl+C to stop):")
 
         while True:
             obs = robot.get_observation()
             joints = [obs[f"{name}.pos"] for name in MOTOR_NAMES]
 
-            # Print in a single line with formatted values
-            print(f"\rJoints: " + " | ".join([f"{name:>12}: {val:>7.2f}" for name, val in zip(MOTOR_NAMES, joints)]), end="", flush=True)
+            # Print in simple key=value format
+            print(", ".join([f"{name}={val:.2f}" for name, val in zip(MOTOR_NAMES, joints)]))
 
             time.sleep(1.0 / args.fps)
 

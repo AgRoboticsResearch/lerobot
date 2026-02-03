@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import cv2
 import placo
 import torch
 from placo_utils.visualization import robot_frame_viz, points_viz, robot_viz
@@ -241,6 +242,11 @@ def main():
         type=str,
         default="camera",
         help="Camera observation name in dataset",
+    )
+    parser.add_argument(
+        "--cameraview",
+        action="store_true",
+        help="Show camera feed in cv2 window (image fed into model)",
     )
 
     args = parser.parse_args()
@@ -464,172 +470,219 @@ def main():
     logger.info("  YELLOW: IK -> FK trajectory")
     logger.info("Press Ctrl+C to stop\n")
 
+    # Check if cameraview is possible (not headless)
+    if args.cameraview:
+        try:
+            test_img = np.zeros((100, 100, 3), dtype=np.uint8)
+            cv2.imshow("test", test_img)
+            cv2.destroyWindow("test")
+            logger.info("Camera view enabled")
+        except Exception as e:
+            logger.warning(f"Cannot show camera view (headless mode?): {e}")
+            args.cameraview = False
+
     # ========================================================================
     # Main Visualization Loop
     # ========================================================================
-    policy.reset()
-    preprocessor.reset()
-    postprocessor.reset()
-
-    current_joints = np.array([0, -90, 90, 45, 0, 50])  # Initial joint values
-
-    for step_idx in range(start_step, end_step):
-        t0 = time.perf_counter()
-
-        frame_idx = episode_start_idx + step_idx
-        frame = dataset[frame_idx]
-
-        # RelativeEEDataset provides:
-        # - observation.state: (T, 10) - temporal relative observations (identity format)
-        # - observation.images.camera: (T, C, H, W) - temporal images
-        # - action: (chunk_size, 10) - relative actions (NOT absolute EE poses!)
-
-        # To get absolute EE pose for IK and visualization, we need the parent dataset
-        parent_frame = LeRobotDataset.__getitem__(dataset, frame_idx)
-        parent_action = parent_frame['action'].numpy()
-        if parent_action.ndim == 1:
-            gt_ee_pose_6d = parent_action[:6]  # [x, y, z, rx, ry, rz]
-            gt_gripper = parent_action[6]
-        else:
-            gt_ee_pose_6d = parent_action[0, :6]
-            gt_gripper = parent_action[0, 6]
-
-        # Get GT EE position
-        gt_ee_pos = gt_ee_pose_6d[:3]
-
-        # For relative EE dataset, we need the current robot joints
-        # Since we're following GT, use FK to get joints from EE pose
-        T_ee = pose_to_mat(gt_ee_pose_6d)
-
-        if step_idx == start_step:
-            # Initialize: use IK to get joints from first GT pose
-            try:
-                current_joints = kinematics.inverse_kinematics(
-                    np.array([0, -90, 90, 45, 0, 50]),  # Initial guess
-                    T_ee,
-                    position_weight=1.0,
-                    orientation_weight=0.01,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to get initial IK: {e}")
-                current_joints = np.array([0, -90, 90, 45, 0, 50])
-        else:
-            # Use IK to get to current GT pose from previous joints
-            try:
-                current_joints = kinematics.inverse_kinematics(
-                    current_joints,
-                    T_ee,
-                    position_weight=1.0,
-                    orientation_weight=0.01,
-                )
-            except Exception as e:
-                logger.warning(f"Step {step_idx}: IK failed: {e}")
-                # Keep previous joints on failure
-
-        # Set gripper
-        current_joints = current_joints.copy()
-        current_joints[-1] = gt_gripper * 100  # Convert to degrees
-
-        # Update simulation
-        sim_robot.set_joints(current_joints)
-        chunk_base_pose = kinematics.forward_kinematics(current_joints)
-
-        # -------------------------------------------------------------------
-        # Prepare observation for policy (using RelativeEEDataset format)
-        # -------------------------------------------------------------------
-        # RelativeEEDataset already provides correctly formatted observations:
-        # - observation.state: (T, 10) temporal relative observations
-        # - observation.images.camera: (T, C, H, W) temporal images
-
-        # Prepare batch for policy
-        batch = {}
-        for key, value in frame.items():
-            if isinstance(value, torch.Tensor) and key.startswith('observation.'):
-                # Add batch dimension
-                batch[key] = value.unsqueeze(0).to(device)
-
-        # The observation.state from RelativeEEDataset is already in the correct format:
-        # - All timesteps are identity-like relative observations
-        # - Shape is (T, 10) where T = obs_state_horizon
-
-        # -------------------------------------------------------------------
-        # Get full chunk for visualization
-        # -------------------------------------------------------------------
-        t_inference = time.perf_counter()
-        with torch.no_grad():
-            processed_batch = preprocessor(batch)
-            pred_actions = policy.predict_action_chunk(processed_batch)
-
-            # Call postprocessor differently based on processor type
-            if obs_state_horizon > 1:
-                # Temporal processors: wrap in dict
-                pred_actions = postprocessor({"action": pred_actions})
-            else:
-                # Standard processors: call directly
-                pred_actions = postprocessor(pred_actions)
-
-            if isinstance(pred_actions, dict) and "action" in pred_actions:
-                pred_actions = pred_actions["action"]
-            pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
-        inference_time = time.perf_counter() - t_inference
-
-        chunk_actions_list = [pred_actions[i] for i in range(pred_actions.shape[0])]
-
-        # -------------------------------------------------------------------
-        # Compute trajectories for visualization
-        # -------------------------------------------------------------------
-        pred_positions = []
-        ik_fk_positions = []
-
-        ik_joints_tracking = current_joints.copy()
-
-        for rel_action in chunk_actions_list:
-            rel_T = pose10d_to_mat(rel_action[:9])
-            target_ee = chunk_base_pose @ rel_T
-            pred_positions.append(target_ee[:3, 3].copy())
-
-            # Compute IK -> FK for yellow trajectory
-            try:
-                ik_joints_tracking = kinematics.inverse_kinematics(
-                    ik_joints_tracking,
-                    target_ee,
-                    position_weight=1.0,
-                    orientation_weight=0.01,
-                )
-                ik_fk_ee_T = kinematics.forward_kinematics(ik_joints_tracking)
-                ik_fk_positions.append(ik_fk_ee_T[:3, 3].copy())
-            except Exception as e:
-                ik_fk_positions.append(np.array([np.nan, np.nan, np.nan]))
-                ik_joints_tracking = current_joints.copy()
-
-        # Visualize predicted trajectory (GREEN)
-        if pred_positions:
-            points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00)
-
-        # Visualize IK -> FK trajectory (YELLOW)
-        if ik_fk_positions:
-            points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
-
-        # Show robot frame
-        robot_frame_viz(sim_robot.robot, "gripper_frame_link")
-
-        # Print status every step
-        logger.info(f"Step {step_idx}/{end_step-1}: GT pos {gt_ee_pos}, Inference: {inference_time*1000:.1f}ms")
-
-        # Maintain timing
-        elapsed = time.perf_counter() - t0
-        sleep_time = max(0, 1.0 / args.fps - elapsed)
-        if sleep_time > 0:
-            time.sleep(sleep_time)
-
-    logger.info("\nVisualization complete!")
-    logger.info("Press Ctrl+C to exit...")
-
     try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Done!")
+        policy.reset()
+        preprocessor.reset()
+        postprocessor.reset()
+
+        current_joints = np.array([0, -90, 90, 45, 0, 50])  # Initial joint values
+
+        for step_idx in range(start_step, end_step):
+            t0 = time.perf_counter()
+
+            frame_idx = episode_start_idx + step_idx
+            frame = dataset[frame_idx]
+
+            # RelativeEEDataset provides:
+            # - observation.state: (T, 10) - temporal relative observations (identity format)
+            # - observation.images.camera: (T, C, H, W) - temporal images
+            # - action: (chunk_size, 10) - relative actions (NOT absolute EE poses!)
+
+            # To get absolute EE pose for IK and visualization, we need the parent dataset
+            parent_frame = LeRobotDataset.__getitem__(dataset, frame_idx)
+            parent_action = parent_frame['action'].numpy()
+            if parent_action.ndim == 1:
+                gt_ee_pose_6d = parent_action[:6]  # [x, y, z, rx, ry, rz]
+                gt_gripper = parent_action[6]
+            else:
+                gt_ee_pose_6d = parent_action[0, :6]
+                gt_gripper = parent_action[0, 6]
+
+            # Get GT EE position
+            gt_ee_pos = gt_ee_pose_6d[:3]
+
+            # For relative EE dataset, we need the current robot joints
+            # Since we're following GT, use FK to get joints from EE pose
+            T_ee = pose_to_mat(gt_ee_pose_6d)
+
+            if step_idx == start_step:
+                # Initialize: use IK to get joints from first GT pose
+                try:
+                    current_joints = kinematics.inverse_kinematics(
+                        np.array([0, -90, 90, 45, 0, 50]),  # Initial guess
+                        T_ee,
+                        position_weight=1.0,
+                        orientation_weight=0.01,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to get initial IK: {e}")
+                    current_joints = np.array([0, -90, 90, 45, 0, 50])
+            else:
+                # Use IK to get to current GT pose from previous joints
+                try:
+                    current_joints = kinematics.inverse_kinematics(
+                        current_joints,
+                        T_ee,
+                        position_weight=1.0,
+                        orientation_weight=0.01,
+                    )
+                except Exception as e:
+                    logger.warning(f"Step {step_idx}: IK failed: {e}")
+                    # Keep previous joints on failure
+
+            # Set gripper
+            current_joints = current_joints.copy()
+            current_joints[-1] = gt_gripper * 100  # Convert to degrees
+
+            # Update simulation
+            sim_robot.set_joints(current_joints)
+            chunk_base_pose = kinematics.forward_kinematics(current_joints)
+
+            # -------------------------------------------------------------------
+            # Prepare observation for policy (using RelativeEEDataset format)
+            # -------------------------------------------------------------------
+            # RelativeEEDataset already provides correctly formatted observations:
+            # - observation.state: (T, 10) temporal relative observations
+            # - observation.images.camera: (T, C, H, W) temporal images
+
+            # Prepare batch for policy
+            batch = {}
+            for key, value in frame.items():
+                if isinstance(value, torch.Tensor) and key.startswith('observation.'):
+                    # Add batch dimension
+                    batch[key] = value.unsqueeze(0).to(device)
+
+            # Show camera view if enabled
+            if args.cameraview and camera_key in frame:
+                img = frame[camera_key]
+                if isinstance(img, torch.Tensor):
+                    img_np = img.numpy()
+                else:
+                    img_np = img
+
+                # Handle temporal images (T, C, H, W) or single (C, H, W)
+                if img_np.ndim == 4:  # (T, C, H, W)
+                    img_to_show = img_np[-1]  # Get most recent frame
+                else:  # (C, H, W)
+                    img_to_show = img_np
+
+                # Convert CHW to HWC and uint8 for cv2
+                if img_to_show.shape[0] in [1, 3, 4]:  # CHW format
+                    img_display = (img_to_show.transpose(1, 2, 0) * 255).astype(np.uint8)
+                else:  # Already HWC
+                    img_display = (img_to_show * 255).astype(np.uint8)
+
+                # Convert RGB to BGR for cv2
+                if img_display.shape[2] == 3:
+                    img_display = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+
+                cv2.imshow(f"Camera: {args.camera_name}", img_display)
+                cv2.waitKey(1)
+
+            # The observation.state from RelativeEEDataset is already in the correct format:
+            # - All timesteps are identity-like relative observations
+            # - Shape is (T, 10) where T = obs_state_horizon
+
+            # -------------------------------------------------------------------
+            # Get full chunk for visualization
+            # -------------------------------------------------------------------
+            t_inference = time.perf_counter()
+            with torch.no_grad():
+                processed_batch = preprocessor(batch)
+                pred_actions = policy.predict_action_chunk(processed_batch)
+
+                # Call postprocessor differently based on processor type
+                if obs_state_horizon > 1:
+                    # Temporal processors: wrap in dict
+                    pred_actions = postprocessor({"action": pred_actions})
+                else:
+                    # Standard processors: call directly
+                    pred_actions = postprocessor(pred_actions)
+
+                if isinstance(pred_actions, dict) and "action" in pred_actions:
+                    pred_actions = pred_actions["action"]
+                pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
+            inference_time = time.perf_counter() - t_inference
+
+            chunk_actions_list = [pred_actions[i] for i in range(pred_actions.shape[0])]
+
+            # -------------------------------------------------------------------
+            # Compute trajectories for visualization
+            # -------------------------------------------------------------------
+            pred_positions = []
+            ik_fk_positions = []
+
+            ik_joints_tracking = current_joints.copy()
+
+            for rel_action in chunk_actions_list:
+                rel_T = pose10d_to_mat(rel_action[:9])
+                target_ee = chunk_base_pose @ rel_T
+                pred_positions.append(target_ee[:3, 3].copy())
+
+                # Compute IK -> FK for yellow trajectory
+                try:
+                    ik_joints_tracking = kinematics.inverse_kinematics(
+                        ik_joints_tracking,
+                        target_ee,
+                        position_weight=1.0,
+                        orientation_weight=0.01,
+                    )
+                    ik_fk_ee_T = kinematics.forward_kinematics(ik_joints_tracking)
+                    ik_fk_positions.append(ik_fk_ee_T[:3, 3].copy())
+                except Exception as e:
+                    ik_fk_positions.append(np.array([np.nan, np.nan, np.nan]))
+                    ik_joints_tracking = current_joints.copy()
+
+            # Visualize predicted trajectory (GREEN)
+            if pred_positions:
+                points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00)
+
+            # Visualize IK -> FK trajectory (YELLOW)
+            if ik_fk_positions:
+                points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
+
+            # Show robot frame
+            robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+
+            # Print status every step
+            logger.info(f"Step {step_idx}/{end_step-1}: GT pos {gt_ee_pos}, Inference: {inference_time*1000:.1f}ms")
+
+            # Maintain timing
+            elapsed = time.perf_counter() - t0
+            sleep_time = max(0, 1.0 / args.fps - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        logger.info("\nVisualization complete!")
+        logger.info("Press Ctrl+C to exit...")
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Done!")
+
+    finally:
+        # Clean up cv2 windows
+        if args.cameraview:
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

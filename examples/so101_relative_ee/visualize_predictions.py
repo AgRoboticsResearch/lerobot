@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import cv2
 import placo
 import torch
 import yaml
@@ -381,6 +382,11 @@ def main():
         default=None,
         help='Camera configuration in YAML format',
     )
+    parser.add_argument(
+        "--cameraview",
+        action="store_true",
+        help="Show camera feed in cv2 window (image fed into model)",
+    )
 
     args = parser.parse_args()
 
@@ -488,6 +494,21 @@ def main():
         logger.info(f"Configured cameras: {list(cameras.keys())}")
     else:
         logger.warning("No cameras configured - policy may expect camera observations")
+
+    # ========================================================================
+    # Check camera view availability
+    # ========================================================================
+    if args.cameraview:
+        try:
+            # Test if cv2 can display windows
+            test_img = np.zeros((100, 100, 3), dtype=np.uint8)
+            cv2.imshow("test", test_img)
+            cv2.destroyWindow("test")
+            logger.info("Camera view enabled")
+        except Exception as e:
+            logger.warning(f"Cannot show camera view (headless mode?): {e}")
+            logger.warning("Disabling --cameraview")
+            args.cameraview = False
 
     # ========================================================================
     # Connect to Real Robot (READ ONLY)
@@ -602,6 +623,16 @@ def main():
                     )
                     batch[f"observation.images.{cam_name}"] = torch.from_numpy(temporal_img).unsqueeze(0).to(device)
 
+                    # Show camera view if enabled - display the actual captured image
+                    if args.cameraview:
+                        # img is the raw captured image from robot (H, W, C) uint8
+                        img_display = img.copy()
+                        if img_display.ndim == 3 and img_display.shape[2] == 3:
+                            # Already HWC RGB, convert to BGR for cv2
+                            img_display = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+                        cv2.imshow(f"Camera: {cam_name}", img_display)
+                        cv2.waitKey(1)
+
             # -------------------------------------------------------------------
             # Get full chunk for visualization - predict new chunk every time
             # -------------------------------------------------------------------
@@ -694,6 +725,13 @@ def main():
         traceback.print_exc()
 
     finally:
+        # Close camera view windows
+        if args.cameraview:
+            try:
+                cv2.destroyAllWindows()
+            except Exception:
+                pass  # Ignore cv2 errors in headless mode
+
         # Re-enable torque before disconnect for safety
         logger.info("Re-enabling torque...")
         robot.bus.enable_torque()
