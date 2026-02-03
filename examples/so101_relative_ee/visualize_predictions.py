@@ -20,12 +20,29 @@ This script reads sensors from the real robot (no control), runs policy inferenc
 and visualizes the predicted trajectory in a placo simulation. Move the real robot
 by hand and see what the policy would predict!
 
+This matches the data input, inference, and frame transformation logic from
+deploy_relative_ee_so101.py, but without robot control - just visualization.
+
 Usage:
     python visualize_predictions.py \
         --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
         --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyACM0 \
         --cameras "{ camera: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"
+
+=== Visualization Colors ===
+
+- GREEN:  Predicted EE trajectory (from model output)
+- YELLOW: IK -> FK trajectory (what joints can actually achieve)
+          Shows discrepancy between ideal trajectory and reachable poses
+
+The observation format for this policy is:
+    - observation.state: (obs_state_horizon, 10) - relative poses (identity at current timestep)
+    - action: (action_horizon, 10) - relative future poses
+
+Action chaining (UMI-style):
+    - Each chunk is predicted from the CURRENT actual EE pose
+    - Within a chunk, actions are relative to chunk_base_pose
 """
 
 import logging
@@ -45,21 +62,12 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline, TransitionKey
-from lerobot.processor.converters import (
-    robot_action_observation_to_transition,
-    transition_to_robot_action,
-)
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 from lerobot.robots.so101_follower.relative_ee_processor import (
-    Relative10DAccumulatedToAbsoluteEE,
     pose10d_to_mat,
 )
-from lerobot.robots.so100_follower.robot_kinematic_processor import (
-    EEBoundsAndSafety,
-    InverseKinematicsEEToJoints,
-)
 from lerobot.utils.utils import init_logging
+from lerobot.utils.robot_utils import precise_sleep
 
 # Motor names for SO101
 MOTOR_NAMES = [
@@ -71,7 +79,7 @@ MOTOR_NAMES = [
     "gripper",
 ]
 
-FPS = 10  # Visualization frequency
+FPS = 30  # Control loop frequency (Hz) - must match training fps
 
 
 class SimulatedSO101Robot:
@@ -190,7 +198,13 @@ def main():
         "--fps",
         type=int,
         default=FPS,
-        help="Visualization frequency (Hz)",
+        help="Control loop frequency (Hz)",
+    )
+    parser.add_argument(
+        "--num_steps",
+        type=int,
+        default=0,
+        help="Number of control steps to run (0 for infinite)",
     )
     parser.add_argument(
         "--obs_state_horizon",
@@ -251,24 +265,6 @@ def main():
     logger.info(f"  obs_state_horizon: {args.obs_state_horizon}")
 
     # ========================================================================
-    # Get gripper bounds from dataset metadata
-    # ========================================================================
-    gripper_lower = 0.0
-    gripper_upper = 100.0
-
-    try:
-        dataset_repo_id = getattr(policy.config, 'dataset_repo_id', None)
-        if dataset_repo_id:
-            from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-            ds_meta = LeRobotDatasetMetadata(repo_id=dataset_repo_id)
-            gripper_lower = ds_meta.info.get('gripper_lower_deg', 0.0)
-            gripper_upper = ds_meta.info.get('gripper_upper_deg', 100.0)
-            logger.info(f"Loaded gripper bounds: [{gripper_lower}°, {gripper_upper}°]")
-    except Exception as e:
-        logger.warning(f"Could not load gripper bounds: {e}")
-        logger.info(f"Using default gripper bounds: [{gripper_lower}°, {gripper_upper}°]")
-
-    # ========================================================================
     # Initialize Kinematics
     # ========================================================================
     logger.info("Initializing kinematics solver...")
@@ -283,32 +279,6 @@ def main():
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
-
-    # ========================================================================
-    # Build Processor Pipeline
-    # ========================================================================
-    ee_to_joints_pipeline = RobotProcessorPipeline[
-        tuple[RobotAction, RobotObservation], RobotAction
-    ](
-        steps=[
-            Relative10DAccumulatedToAbsoluteEE(
-                gripper_lower_deg=gripper_lower,
-                gripper_upper_deg=gripper_upper,
-            ),
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
-                max_ee_step_m=args.max_ee_step_m,
-            ),
-            InverseKinematicsEEToJoints(
-                kinematics=kinematics,
-                motor_names=MOTOR_NAMES,
-                initial_guess_current_joints=False,
-            ),
-        ],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-    logger.info("Pipeline built")
 
     # ========================================================================
     # Parse cameras configuration
@@ -342,6 +312,23 @@ def main():
     # Flush camera buffer
     _ = robot.get_observation()
 
+    # Use fixed safe joint positions for error recovery
+    initial_safe_joints = np.array([
+        -7.91,    # shoulder_pan
+        -106.51,  # shoulder_lift
+        87.91,    # elbow_flex
+        70.74,    # wrist_flex
+        -0.53,    # wrist_roll
+        1.18,     # gripper
+    ], dtype=np.float64)
+    logger.info(f"Using fixed safe pose: {initial_safe_joints}")
+
+    current_joints = initial_safe_joints.copy()
+
+    # Get initial EE pose via FK
+    current_ee_T = kinematics.forward_kinematics(current_joints)
+    logger.info(f"Initial EE position: {current_ee_T[:3, 3]}")
+
     # ========================================================================
     # Initialize Digital Twin (Placo Visualization)
     # ========================================================================
@@ -352,11 +339,11 @@ def main():
 
     logger.info("Digital twin initialized")
     logger.info("Open http://127.0.0.1:7000/static/ to see visualization")
-    logger.info("\nMove the real robot by hand to see predicted trajectories!")
+    logger.info("\nMove the real robot by hand to see predicted EE poses!")
     logger.info("Press Ctrl+C to stop\n")
 
     # ========================================================================
-    # Main Loop
+    # Main Control Loop
     # ========================================================================
     policy.reset()
     preprocessor.reset()
@@ -366,34 +353,38 @@ def main():
     step_count = 0
 
     try:
-        while True:
+        while args.num_steps == 0 or step_count < args.num_steps:
             t0 = time.perf_counter()
 
             # -------------------------------------------------------------------
-            # Get observation from real robot
+            # Get current observation from robot
             # -------------------------------------------------------------------
             obs_dict = robot.get_observation()
-            real_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
-            real_gripper = obs_dict["gripper.pos"] / 100.0
-            real_ee_T = kinematics.forward_kinematics(real_joints)
-            chunk_base_pose = real_ee_T.copy()
+            current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+            current_gripper = obs_dict["gripper.pos"] / 100.0  # Convert to [0,1]
+
+            # Debug: print joint values every 30 steps
+            # if step_count % 30 == 0:
+            #     print(f"Real robot joints: {current_joints}")
 
             # -------------------------------------------------------------------
-            # Update simulation to follow real robot
+            # Get current EE pose as chunk base (predict new chunk every time)
             # -------------------------------------------------------------------
-            sim_robot.set_joints(real_joints)
-            robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+            current_ee_T = kinematics.forward_kinematics(current_joints)
+            chunk_base_pose = current_ee_T.copy()
 
             # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
+            # Create relative observation (UMI-style: identity at current)
             obs_state, history_buffer = create_relative_observation(
                 current_ee_T=chunk_base_pose,
-                gripper_pos=real_gripper,
+                gripper_pos=current_gripper,
                 obs_state_horizon=policy.config.n_obs_steps,
                 history_buffer=history_buffer,
             )
 
+            # Prepare batch for policy
             if obs_state.shape[0] == 1:
                 state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
             else:
@@ -401,7 +392,7 @@ def main():
 
             batch = {"observation.state": state_tensor}
 
-            # Add camera images
+            # Add camera images if available
             for cam_name in cameras.keys():
                 img = obs_dict.get(cam_name)
                 if img is not None:
@@ -410,16 +401,15 @@ def main():
                     batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
 
             # -------------------------------------------------------------------
-            # Get predicted trajectory from policy
+            # Get full chunk for visualization - predict new chunk every time
             # -------------------------------------------------------------------
+            t_inference = time.perf_counter()
             with torch.no_grad():
                 processed_batch = preprocessor(batch)
-
-            # Get the full chunk of actions
-            temp_obs = processed_batch.copy()
-            chunk_actions_list = []
-            for _ in range(policy.config.chunk_size):
-                with torch.no_grad():
+                chunk_actions_list = []
+                # Get all actions from the chunk
+                temp_obs = processed_batch.copy()
+                for _ in range(policy.config.chunk_size):
                     pred = policy.select_action(temp_obs)
                     pred = postprocessor(pred)
                     if isinstance(pred, dict):
@@ -427,47 +417,75 @@ def main():
                     else:
                         action = pred[0].cpu().numpy()
                     chunk_actions_list.append(action.copy())
-
-            chunk_actions = np.array(chunk_actions_list)
+            inference_time = time.perf_counter() - t_inference
+            print(f"Inference time: {inference_time*1000:.1f}ms ({policy.config.chunk_size} actions)")
 
             # -------------------------------------------------------------------
-            # Compute predicted trajectory (FK) and visualize
+            # Compute full trajectory for visualization
             # -------------------------------------------------------------------
             pred_positions = []
-            pred_joints = real_joints.copy()
-            for rel_action in chunk_actions:
-                # Convert to joints via pipeline
-                act_dict = {"rel_pose": rel_action}
-                rob_obs = {f"{name}.pos": pred_joints[i] for i, name in enumerate(MOTOR_NAMES)}
-                trans = robot_action_observation_to_transition((act_dict, rob_obs))
-                trans[TransitionKey.COMPLEMENTARY_DATA] = {"chunk_base_pose": chunk_base_pose.copy()}
-                proc = ee_to_joints_pipeline._forward(trans)
-                joints = transition_to_robot_action(proc)
-                pred_joints = np.array([joints[f"{name}.pos"] for name in MOTOR_NAMES])
+            ik_fk_positions = []  # Yellow: IK -> FK results
 
-                # FK to get EE position
-                ee_T = kinematics.forward_kinematics(pred_joints)
-                pred_positions.append(ee_T[:3, 3].copy())
+            # Track IK joints for smooth trajectory (use previous result as initial guess)
+            ik_joints_tracking = current_joints.copy()
 
-            # Visualize predicted trajectory
+            for rel_action in chunk_actions_list:
+                rel_T = pose10d_to_mat(rel_action[:9])
+                target_ee = chunk_base_pose @ rel_T
+                pred_positions.append(target_ee[:3, 3].copy())
+
+                # Compute IK -> FK for yellow trajectory
+                try:
+                    # Solve IK using previous IK result as initial guess (tracking mode)
+                    ik_joints_tracking = kinematics.inverse_kinematics(
+                        ik_joints_tracking,  # Use previous IK result as initial guess
+                        target_ee,
+                        position_weight=1.0,
+                        orientation_weight=0.01,
+                    )
+                    # Compute FK from IK joints to get actual EE pose
+                    ik_fk_ee_T = kinematics.forward_kinematics(ik_joints_tracking)
+                    ik_fk_positions.append(ik_fk_ee_T[:3, 3].copy())
+                except Exception as e:
+                    # If IK fails, add NaN to break the line and reset tracking
+                    ik_fk_positions.append(np.array([np.nan, np.nan, np.nan]))
+                    ik_joints_tracking = current_joints.copy()  # Reset to current robot state
+
+            # Visualize predicted trajectory (GREEN)
             if pred_positions:
-                points_viz("predicted_trajectory", np.array(pred_positions), color=0xff0000)
+                points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00)
 
-            # Print status every 10 steps
-            if step_count % 10 == 0:
-                pos = chunk_base_pose[:3, 3]
-                logger.info(f"Step {step_count}: EE pos {pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}")
+            # Visualize IK -> FK trajectory (YELLOW) - shows what joints can actually achieve
+            if ik_fk_positions:
+                points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
+
+            # -------------------------------------------------------------------
+            # Update simulation to follow real robot
+            # -------------------------------------------------------------------
+            sim_robot.set_joints(current_joints)
+            robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+
+            # Print status
+            # if step_count % 10 == 0:
+            #     print(f"Step {step_count}: EE pos {chunk_base_pose[:3, 3]}")
 
             step_count += 1
 
+            # -------------------------------------------------------------------
             # Maintain timing
+            # -------------------------------------------------------------------
             elapsed = time.perf_counter() - t0
             sleep_time = max(0, 1.0 / args.fps - elapsed)
             if sleep_time > 0:
-                time.sleep(sleep_time)
+                precise_sleep(sleep_time)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
+
+    except Exception as e:
+        logger.error(f"Error during control loop: {e}")
+        import traceback
+        traceback.print_exc()
 
     finally:
         # Re-enable torque before disconnect for safety
