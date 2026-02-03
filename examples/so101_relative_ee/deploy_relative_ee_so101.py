@@ -771,6 +771,26 @@ def main():
             except Exception:
                 pass  # Ignore cv2 errors in headless mode
 
+        # Shutdown placo visualization
+        if sim_robot is not None:
+            try:
+                logger.info("Shutting down placo visualization...")
+                # Try to stop the web server explicitly
+                import placo
+                if hasattr(placo, 'kill_web_server'):
+                    placo.kill_web_server()
+                # Delete viz to stop the background server
+                if hasattr(sim_robot, 'viz') and sim_robot.viz is not None:
+                    del sim_robot.viz
+                if hasattr(sim_robot, 'solver') and sim_robot.solver is not None:
+                    del sim_robot.solver
+                if hasattr(sim_robot, 'robot') and sim_robot.robot is not None:
+                    del sim_robot.robot
+                sim_robot = None
+                logger.info("Placo visualization shut down")
+            except Exception as e:
+                logger.warning(f"Error shutting down placo: {e}")
+
         # Disconnect robot
         logger.info("Disconnecting robot...")
         robot.disconnect()
