@@ -356,7 +356,7 @@ def main():
             InverseKinematicsEEToJoints(
                 kinematics=kinematics,
                 motor_names=MOTOR_NAMES,
-                initial_guess_current_joints=False,
+                initial_guess_current_joints=True,
             ),
         ],
         to_transition=robot_action_observation_to_transition,
@@ -552,6 +552,9 @@ def main():
             # print("policy.config.n_action_steps:", policy.config.n_action_steps)
 
             # Reset chunk counter when we've processed n_action_steps actions
+            # IMPORTANT: The next chunk's base_pose will be computed from ACTUAL robot pose via FK (line 457),
+            # not from an expected position. So even though action[0] is identity, the chunk alignment
+            # is maintained because each chunk starts from the current robot pose.
             if actions_processed_in_chunk >= args.n_action_steps:
                 print(f"Completed {actions_processed_in_chunk} actions in chunk at step {step_count}")
                 actions_processed_in_chunk = 0
