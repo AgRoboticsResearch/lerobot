@@ -580,12 +580,16 @@ def main():
             # Predict new chunk when queue is empty (like visualize_dataset_predictions.py)
             # ====================================================================
             if len(action_queue) == 0:
-                # Get CURRENT robot pose as base for new chunk
+                # Get FRESH observation for accurate chunk_base_pose
+                fresh_obs_dict = robot.get_observation()
+                current_joints = np.array([fresh_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
                 current_ee_T = kinematics.forward_kinematics(current_joints)
                 chunk_base_pose = current_ee_T.copy()
                 chunk_start_joints = current_joints.copy()
                 chunk_actions_for_viz = []
 
+                # Update obs_dict with fresh observation so pipeline uses current state
+                obs_dict = fresh_obs_dict
                 logger.info(f"Predicting new chunk at step {step_count}, base pos: {chunk_base_pose[:3,3]}")
 
                 # Predict full chunk (same as visualize_dataset_predictions.py)
@@ -720,13 +724,18 @@ def main():
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
 
-            # Update sim_robot to reflect the commanded joint positions
+            # Update sim_robot to reflect actual robot position (not commanded position)
             if args.placo_vis and sim_robot is not None:
-                # Extract joint positions from joints_action and update sim_robot
-                sim_joints = np.array([joints_action[f"{name}.pos"] for name in MOTOR_NAMES])
-                sim_robot.set_joints(sim_joints)
+                # Small delay to let robot start moving, then get FRESH observation
+                time.sleep(0.01)
+                fresh_obs_dict = robot.get_observation()
+                actual_joints = np.array([fresh_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+                sim_robot.set_joints(actual_joints)
                 # Show robot frame at current position
                 robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+                # Show target EE pose point (RED - where robot is commanded to go)
+                target_pos = target_ee_pose[:3, 3]
+                points_viz("target_ee", np.array([target_pos]), color=0xff0000)
 
             step_count += 1
 
@@ -739,8 +748,11 @@ def main():
                 precise_sleep(sleep_time)
 
             if step_count % 100 == 0:
-                pos = target_ee_pose[:3, 3]
-                logger.info(f"Step {step_count}: EE pos {pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}")
+                # Log both target (where we want to go) and actual (where we are)
+                actual_ee_T = kinematics.forward_kinematics(current_joints)
+                actual_pos = actual_ee_T[:3, 3]
+                target_pos = target_ee_pose[:3, 3]
+                logger.info(f"Step {step_count}: EE actual {actual_pos[0]:.3f}, {actual_pos[1]:.3f}, {actual_pos[2]:.3f} | target {target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}")
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
