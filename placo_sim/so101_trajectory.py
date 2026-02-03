@@ -11,8 +11,8 @@ from ischedule import schedule, run_loop
 from placo_utils.visualization import robot_viz, robot_frame_viz, frame_viz, points_viz
 from placo_utils.tf import tf
 
-# Path to SO101 model directory (placo expects a directory with robot.urdf inside)
-URDF_PATH = "../urdf/Simulation/SO101"
+# Path to SO101 URDF file
+URDF_PATH = "../urdf/Simulation/SO101/so101_new_calib.urdf"
 
 # Loading the robot
 robot = placo.RobotWrapper(URDF_PATH, placo.Flags.ignore_collisions)

@@ -48,8 +48,8 @@ HOME_POSE_RAD = np.array([
     0.61,     # gripper (~ 35.13 deg)
 ])
 
-# Path to SO101 model directory (placo expects a directory with robot.urdf inside)
-URDF_PATH = "../urdf/Simulation/SO101"
+# Path to SO101 URDF file
+URDF_PATH = "../urdf/Simulation/SO101/so101_new_calib.urdf"
 
 
 def load_trajectory(file_path: str) -> np.ndarray:

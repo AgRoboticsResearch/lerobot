@@ -14,55 +14,53 @@
 # limitations under the License.
 
 r"""
-Debug script for RelativeEE ACT policy animation visualization.
+Debug script for RelativeEE ACT policy with placo simulation.
 
-This script loads a trained RelativeEE policy and generates frame-by-frame animations
-showing the observation image alongside 3D end-effector trajectory visualization.
+This script loads a trained RelativeEE policy and simulates robot execution
+using placo. It follows the same action chaining logic as deploy_relative_ee_so101.py:
+- Each action in a chunk is relative to chunk_base_pose (NOT chained sequentially)
+- After n_action_steps, get new observation and predict new chunk
+- Uses dataset images + simulation joint observations (closed-loop)
 
 Features:
 - Loads specific episodes from a dataset
-- Runs inference on every frame sequentially
-- Generates 2-subplot figures per frame:
-  - Left: Current observation image
-  - Right: 3D visualization of world frame, EE trajectory history, prediction, ground truth, and IK
+- Runs chunk-based inference with action execution
+- Generates frame-by-frame visualizations showing:
+  - Observation image from dataset
+  - 3D EE trajectory with history, prediction, and simulation EE position
 - Optionally compiles frames to MP4 video
-- Optionally shows IK-constrained trajectory (what robot can actually achieve vs policy intent)
 
 Usage:
-    python debug_relative_ee_animation.py \
+    python debug_relative_ee_simulation.py \
         --dataset_repo_id red_strawberry_picking_260119_merged_ee \
         --dataset_root /path/to/dataset \
-        --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
+        --pretrained_path outputs/train/my_model/checkpoints/020000/pretrained_model \
         --episode_indices 0 \
+        --n_action_steps 10 \
         --save_video
 
-    # Enable IK trajectory visualization (magenta line shows what robot can achieve)
-    python debug_relative_ee_animation.py \
-        --dataset_repo_id red_strawberry_picking_260119_merged_ee \
-        --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
-        --episode_indices 0 \
-        --enable_ik_trajectory \
-        --n_action_steps 10  # Match deployment script
+The key difference from debug_relative_ee_animation.py:
+- Actions are EXECUTED in simulation (not just visualized)
+- Joint observations come from simulation (closed-loop)
+- Shows where robot actually is vs where policy wants to go
 """
 
 import logging
+import time
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-from lerobot.policies.act.modeling_act import ACTPolicy, ACT
+from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.datasets.relative_ee_dataset import (
     RelativeEEDataset,
-    pose10d_to_mat,
     pose_to_mat,
-    rot6d_to_mat,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
@@ -76,6 +74,39 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.robots.so101_follower.relative_ee_processor import pose10d_to_mat
+from lerobot.processor import RobotAction, RobotObservation, RobotProcessorPipeline, TransitionKey
+from lerobot.processor.converters import (
+    robot_action_observation_to_transition,
+    transition_to_robot_action,
+)
+from lerobot.robots.so100_follower.robot_kinematic_processor import (
+    EEBoundsAndSafety,
+    InverseKinematicsEEToJoints,
+)
+from lerobot.robots.so101_follower.relative_ee_processor import (
+    Relative10DAccumulatedToAbsoluteEE,
+)
+
+# Motor names for SO101
+MOTOR_NAMES = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
+]
+
+# Default RESET pose (starting position)
+RESET_POSE_DEG = np.array([
+    -8.00,    # shoulder_pan
+    -62.73,   # shoulder_lift
+    65.05,    # elbow_flex
+    0.86,     # wrist_flex
+    -2.55,    # wrist_roll
+    88.91,    # gripper
+])
 
 
 def make_act_pre_post_processors_with_temporal(
@@ -90,16 +121,7 @@ def make_act_pre_post_processors_with_temporal(
 
     This MUST match the processors used during training, otherwise
     normalization will be inconsistent and predictions will be wrong.
-
-    Args:
-        config: ACT policy configuration
-        dataset_stats: Normalization statistics from dataset
-        obs_state_horizon: Number of temporal steps in observations
-
-    Returns:
-        Tuple of (preprocessor, postprocessor) pipelines
     """
-    # Create custom preprocessor with temporal normalization
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -113,7 +135,6 @@ def make_act_pre_post_processors_with_temporal(
         ),
     ]
 
-    # Standard postprocessor
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
@@ -135,37 +156,150 @@ def make_act_pre_post_processors_with_temporal(
     return preprocessor, postprocessor
 
 
-def create_observation_batch(
+class SimulatedSO101Robot:
+    """Simulated SO101 robot using placo for kinematics and visualization."""
+
+    def __init__(self, urdf_path: str, motor_names: list[str], enable_viz: bool = False):
+        try:
+            import placo
+        except ImportError:
+            raise ImportError(
+                "placo is required for simulation. "
+                "Install with: pip install placo"
+            )
+
+        self.urdf_path = urdf_path
+        self.motor_names = motor_names
+        self.enable_viz = enable_viz
+
+        # Setup placo robot
+        self.robot = placo.RobotWrapper(urdf_path, placo.Flags.ignore_collisions)
+        self.solver = placo.KinematicsSolver(self.robot)
+        self.solver.mask_fbase(True)
+
+        # Setup visualization if enabled
+        self.viz = None
+        if enable_viz:
+            from placo_utils.visualization import robot_viz
+            self.viz = robot_viz(self.robot)
+
+        # Current joint state (in degrees)
+        self.current_joints = RESET_POSE_DEG.copy()
+
+        # Initialize robot state
+        self._update_robot_from_joints()
+
+    def connect(self, calibrate: bool = False):
+        """Simulated connection - just initialize."""
+        print(f"Simulated robot connected")
+        print(f"  URDF: {self.urdf_path}")
+        print(f"  Motors: {self.motor_names}")
+        if self.enable_viz:
+            print(f"  Visualization: ENABLED")
+            print(f"\nOpen http://127.0.0.1:7000/static/ in your browser to see the visualization!")
+
+    def get_observation(self) -> dict:
+        """
+        Get current observation (simulated).
+
+        Returns dict with keys like "shoulder_pan.pos", etc.
+        Values are in degrees.
+        """
+        return {f"{name}.pos": self.current_joints[i] for i, name in enumerate(self.motor_names)}
+
+    def send_action(self, action: dict):
+        """
+        Send action to robot (simulated).
+
+        Args:
+            action: Dict with keys like "shoulder_pan.pos", etc.
+                    Values are in degrees.
+        """
+        # Update current joint state
+        for i, name in enumerate(self.motor_names):
+            if f"{name}.pos" in action:
+                self.current_joints[i] = float(action[f"{name}.pos"])
+
+        # Update robot state
+        self._update_robot_from_joints()
+
+    def _update_robot_from_joints(self):
+        """Update placo robot from current joint state."""
+        # Convert degrees to radians for placo
+        joints_rad = np.deg2rad(self.current_joints)
+
+        for i, name in enumerate(self.motor_names):
+            self.robot.set_joint(name, joints_rad[i])
+
+        self.robot.update_kinematics()
+
+        # Update visualization if enabled
+        if self.viz is not None:
+            self.viz.display(self.robot.state.q)
+
+    def display_ee_frame(self, frame_name: str = "gripper_frame_link"):
+        """Display the end-effector frame in visualization."""
+        if self.viz is not None:
+            from placo_utils.visualization import robot_frame_viz
+            robot_frame_viz(self.robot, frame_name)
+
+    def disconnect(self):
+        """Simulated disconnection."""
+        print("Simulated robot disconnected")
+
+
+def create_observation_batch_with_sim_state(
     dataset: RelativeEEDataset,
     idx: int,
     n_obs_steps: int,
     device: torch.device,
+    sim_joints: np.ndarray,
+    kinematics: RobotKinematics,
+    obs_state_horizon: int = 2,
 ) -> dict[str, torch.Tensor]:
     """
-    Create observation batch for policy inference.
+    Create observation batch for policy inference using simulation joint state.
 
     For RelativeEE with temporal observations:
     - observation.state shape: (T, 10) where T=obs_state_horizon
+      - State is computed from SIMULATION joints (closed-loop)
     - observation.images.camera shape: (T, C, H, W)
-
-    This function adds the batch dimension, so output shapes are:
-    - observation.state: (1, T, 10)
-    - observation.images.camera: (1, T, C, H, W)
+      - Images come from dataset
 
     Args:
         dataset: RelativeEEDataset instance
         idx: Current sample index
         n_obs_steps: Number of observation steps
         device: Torch device
+        sim_joints: Current joint positions from simulation (degrees)
+        kinematics: RobotKinematics instance for FK
+        obs_state_horizon: Temporal observation horizon
 
     Returns:
         Batch dictionary with observation data
     """
+    # Get image observation from dataset
     sample = dataset[idx]
 
     batch = {}
+
+    # Compute EE pose from simulation joints (closed-loop state)
+    # Current observation is identity (relative to itself)
+    current_obs = np.array([
+        0.0, 0.0, 0.0,           # position (identity)
+        1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
+        sim_joints[-1] / 100.0,  # gripper (convert to [0,1])
+    ], dtype=np.float32)
+
+    # Create temporal observations - fill with current obs
+    # (In closed-loop deployment, we'd use actual history buffer)
+    obs_state = np.stack([current_obs] * obs_state_horizon, axis=0)  # (obs_state_horizon, 10)
+
+    batch["observation.state"] = torch.from_numpy(obs_state).unsqueeze(0).to(device)
+
+    # Add images from dataset
     for key, value in sample.items():
-        if isinstance(value, torch.Tensor):
+        if key.startswith("observation.images") and isinstance(value, torch.Tensor):
             batch[key] = value.unsqueeze(0).to(device)
 
     return batch
@@ -173,17 +307,18 @@ def create_observation_batch(
 
 def compute_predicted_ee_trajectory(
     relative_actions: np.ndarray,
-    current_ee_pose: np.ndarray,
+    chunk_base_pose: np.ndarray,
 ) -> np.ndarray:
     """
     Compute absolute EE positions from relative actions.
 
-    In RelativeEE, each action in the chunk is a transform from the BASE (current) pose
-    to a future pose. Actions are NOT sequentially chained.
+    In RelativeEE with UMI-style action chaining:
+    - Each action in the chunk is a transform from chunk_base_pose
+    - Actions are NOT sequentially chained
 
     Args:
         relative_actions: (T, 10) relative actions (pos 3D + rot 6D + gripper 1D)
-        current_ee_pose: (4, 4) current EE transformation matrix
+        chunk_base_pose: (4, 4) base transformation matrix for this chunk
 
     Returns:
         (T, 3) array of absolute EE positions for each predicted timestep
@@ -195,88 +330,11 @@ def compute_predicted_ee_trajectory(
         # Get relative transform for this timestep
         rel_T = pose10d_to_mat(relative_actions[i, :9])
 
-        # Apply relative transform from current pose: T_abs = T_current @ T_rel
-        abs_T = current_ee_pose @ rel_T
+        # Apply relative transform from base pose: T_abs = T_base @ T_rel
+        abs_T = chunk_base_pose @ rel_T
         ee_positions.append(abs_T[:3, 3].copy())
 
     return np.array(ee_positions)
-
-
-def compute_ik_constrained_trajectory(
-    relative_actions: np.ndarray,
-    current_ee_pose: np.ndarray,
-    kinematics: RobotKinematics,
-    current_joint_pos: np.ndarray,
-    pos_tolerance: float = 0.02,
-    rot_tolerance: float = 0.3,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Compute IK-constrained EE positions from relative actions.
-
-    This simulates what the actual robot would achieve by solving IK for each
-    predicted EE pose. Shows the difference between policy intent (ideal EE)
-    and robot capability (IK-constrained).
-
-    Args:
-        relative_actions: (T, 10) relative actions (pos 3D + rot 6D + gripper 1D)
-        current_ee_pose: (4, 4) current EE transformation matrix
-        kinematics: RobotKinematics instance
-        current_joint_pos: Current joint positions in degrees
-        pos_tolerance: Position tolerance for IK verification (meters)
-        rot_tolerance: Rotation tolerance for IK verification (radians)
-
-    Returns:
-        Tuple of:
-        - (T, 3) array of actual EE positions achieved via IK
-        - (6,) final joint position (in degrees) after processing all actions
-    """
-    from scipy.spatial.transform import Rotation
-
-    T = relative_actions.shape[0]
-    ee_positions = []
-    last_valid_joint = current_joint_pos.copy()
-
-    for i in range(T):
-        # Get desired EE pose from relative action
-        rel_T = pose10d_to_mat(relative_actions[i, :9])
-        desired_ee_tf = current_ee_pose @ rel_T
-
-        # Solve IK
-        kinematics.tip_frame.T_world_frame = desired_ee_tf
-        kinematics.tip_frame.configure("task", "soft", 10.0, 0.1)
-
-        # Set current joint positions as initial guess
-        current_joint_rad = np.deg2rad(last_valid_joint[:len(kinematics.joint_names)])
-        for j, name in enumerate(kinematics.joint_names):
-            kinematics.robot.set_joint(name, current_joint_rad[j])
-        kinematics.robot.update_kinematics()
-
-        # Solve
-        kinematics.solver.solve(True)
-        kinematics.robot.update_kinematics()
-
-        # Get resulting joint positions
-        joint_pos_rad = [kinematics.robot.get_joint(name) for name in kinematics.joint_names]
-        joint_pos = np.rad2deg(np.array(joint_pos_rad))
-
-        # Compute FK to get actual EE position
-        actual_ee_tf = kinematics.forward_kinematics(joint_pos)
-        pos_err = np.linalg.norm(actual_ee_tf[:3, 3] - desired_ee_tf[:3, 3])
-
-        r_desired = desired_ee_tf[:3, :3]
-        r_actual = actual_ee_tf[:3, :3]
-        r_rel = r_desired.T @ r_actual
-        rot_err = np.linalg.norm(Rotation.from_matrix(r_rel).as_rotvec())
-
-        # Only update if IK solution is valid
-        is_valid = (pos_err < pos_tolerance) and (rot_err < rot_tolerance)
-        if is_valid:
-            last_valid_joint = joint_pos
-
-        # Store the actual EE position (whether valid or not)
-        ee_positions.append(actual_ee_tf[:3, 3].copy())
-
-    return np.array(ee_positions), last_valid_joint
 
 
 def plot_frame_with_ee_trajectory(
@@ -284,31 +342,33 @@ def plot_frame_with_ee_trajectory(
     ee_history: list[np.ndarray],
     pred_ee_positions: np.ndarray,
     current_ee_position: np.ndarray,
+    sim_ee_position: np.ndarray,
     output_path: str | Path,
     episode_idx: int,
     frame_idx: int,
     axis_limits: dict[str, tuple[float, float]] | None = None,
     gt_ee_positions: np.ndarray = None,
-    ik_ee_positions: np.ndarray = None,
+    chunk_base_pose: np.ndarray = None,
 ):
     """
     Plot a single frame with observation image and EE trajectory.
 
     Creates a 2-subplot figure:
     - Left: Current observation image
-    - Right: 3D EE trajectory with cumulative history, prediction, ground truth, and IK
+    - Right: 3D EE trajectory with history, prediction, ground truth, and simulation EE
 
     Args:
         obs_image: Observation image (C,H,W or H,W,C or T,C,H,W)
         ee_history: List of historical EE positions from episode start
         pred_ee_positions: Predicted EE positions for chunk (chunk_size, 3)
-        current_ee_position: Current EE position (3,)
+        current_ee_position: Current EE position from dataset (3,)
+        sim_ee_position: Current EE position from simulation (3,)
         output_path: Path to save the plot
         episode_idx: Episode index for title
         frame_idx: Frame index for title
         axis_limits: Optional dict with 'x', 'y', 'z' tuples for fixed axis limits
         gt_ee_positions: Ground truth future EE positions (chunk_size, 3)
-        ik_ee_positions: IK-constrained EE positions (chunk_size, 3) - shows what robot can achieve
+        chunk_base_pose: Chunk base pose position (3,) for visualization
     """
     fig = plt.figure(figsize=(16, 8))
 
@@ -355,19 +415,39 @@ def plot_frame_with_ee_trajectory(
         "b-", linewidth=2, label="History", alpha=0.8
     )
 
-    # Plot current EE position as blue circle marker
+    # Plot current EE position (from dataset) as blue circle marker
     ax2.scatter(
         [current_ee_position[0]],
         [current_ee_position[1]],
         [current_ee_position[2]],
         c="blue", marker="o", s=150, edgecolors="black",
-        label="Current EE", zorder=10
+        label="Dataset EE", zorder=10
     )
+
+    # Plot simulation EE position (where robot actually is) as cyan star
+    ax2.scatter(
+        [sim_ee_position[0]],
+        [sim_ee_position[1]],
+        [sim_ee_position[2]],
+        c="cyan", marker="*", s=200, edgecolors="black",
+        label="Simulation EE", zorder=11
+    )
+
+    # Plot chunk base pose if provided
+    if chunk_base_pose is not None:
+        ax2.scatter(
+            [chunk_base_pose[0]],
+            [chunk_base_pose[1]],
+            [chunk_base_pose[2]],
+            c="orange", marker="s", s=100,
+            label="Chunk Base", zorder=9
+        )
 
     # Plot predicted trajectory as red dashed line
     if pred_ee_positions is not None and len(pred_ee_positions) > 0:
-        # Start prediction from current EE position
-        pred_full = np.vstack([current_ee_position.reshape(1, 3), pred_ee_positions])
+        # Start prediction from chunk base pose (or current if not provided)
+        start_pos = chunk_base_pose if chunk_base_pose is not None else current_ee_position
+        pred_full = np.vstack([start_pos.reshape(1, 3), pred_ee_positions])
         ax2.plot(
             pred_full[:, 0],
             pred_full[:, 1],
@@ -402,25 +482,6 @@ def plot_frame_with_ee_trajectory(
             c="green", marker="o", s=30, label="GT Steps", alpha=0.6
         )
 
-    # Plot IK-constrained trajectory as magenta dash-dot line
-    if ik_ee_positions is not None and len(ik_ee_positions) > 0:
-        # Start IK from current EE position
-        ik_full = np.vstack([current_ee_position.reshape(1, 3), ik_ee_positions])
-        ax2.plot(
-            ik_full[:, 0],
-            ik_full[:, 1],
-            ik_full[:, 2],
-            color="magenta", linestyle="-.", linewidth=2, label="IK (Robot)", alpha=0.9
-        )
-
-        # Plot IK EE positions as magenta triangles
-        ax2.scatter(
-            ik_ee_positions[:, 0],
-            ik_ee_positions[:, 1],
-            ik_ee_positions[:, 2],
-            c="magenta", marker="^", s=40, label="IK Steps", alpha=0.8, edgecolors="black"
-        )
-
     ax2.set_xlabel("X (m)", fontsize=10)
     ax2.set_ylabel("Y (m)", fontsize=10)
     ax2.set_zlabel("Z (m)", fontsize=10)
@@ -435,13 +496,13 @@ def plot_frame_with_ee_trajectory(
         ax2.set_zlim(axis_limits['z'])
     else:
         # Compute limits from all data
-        all_pos = np.vstack([ee_hist_array, current_ee_position.reshape(1, 3)])
+        all_pos = np.vstack([ee_hist_array, current_ee_position.reshape(1, 3), sim_ee_position.reshape(1, 3)])
         if pred_ee_positions is not None:
             all_pos = np.vstack([all_pos, pred_ee_positions])
         if gt_ee_positions is not None:
             all_pos = np.vstack([all_pos, gt_ee_positions])
-        if ik_ee_positions is not None:
-            all_pos = np.vstack([all_pos, ik_ee_positions])
+        if chunk_base_pose is not None:
+            all_pos = np.vstack([all_pos, chunk_base_pose.reshape(1, 3)])
 
         x_min, x_max = all_pos[:, 0].min(), all_pos[:, 0].max()
         y_min, y_max = all_pos[:, 1].min(), all_pos[:, 1].max()
@@ -478,7 +539,7 @@ def compute_episode_axis_limits(
     ep_info = dataset.meta.episodes[episode_idx]
     ep_length = ep_info["length"]
 
-    # Find start index in dataset (cumulative sum of previous episode lengths)
+    # Find start index in dataset
     start_idx = 0
     for i in range(episode_idx):
         start_idx += dataset.meta.episodes[i]["length"]
@@ -489,7 +550,7 @@ def compute_episode_axis_limits(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
+        # Get ABSOLUTE EE position from parent LeRobotDataset
         abs_sample = LeRobotDataset.__getitem__(dataset, idx)
         abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
 
@@ -516,170 +577,12 @@ def compute_episode_axis_limits(
     }
 
 
-def write_actions_file(
-    output_path: Path,
-    frame_idx: int,
-    episode_idx: int,
-    current_ee_position: np.ndarray,
-    pred_actions: np.ndarray,
-    gt_actions: np.ndarray,
-    chunk_size: int,
-    ik_ee_positions: np.ndarray | None = None,
-    n_action_steps: int | None = None,
-):
-    """
-    Write action predictions to a structured text file.
-
-    Args:
-        output_path: Path to save the actions file
-        frame_idx: Current frame index
-        episode_idx: Current episode index
-        current_ee_position: Current EE position (3,)
-        pred_actions: Predicted actions (chunk_size, 10)
-        gt_actions: Ground truth actions (chunk_size, 10)
-        chunk_size: Size of the action chunk
-        ik_ee_positions: Optional IK-constrained EE positions (n_action_steps, 3)
-        n_action_steps: Number of action steps executed
-    """
-    with open(output_path, "w") as f:
-        f.write(f"# Frame: {frame_idx}, Episode: {episode_idx}\n")
-        f.write(f"# Format: RelativeEE action = [dx, dy, dz, rot6d_0, rot6d_1, rot6d_2, rot6d_3, rot6d_4, rot6d_5, gripper]\n\n")
-
-        # Header section
-        f.write("[header]\n")
-        f.write(f"frame_idx = {frame_idx}\n")
-        f.write(f"episode_idx = {episode_idx}\n")
-        f.write(f"chunk_size = {chunk_size}\n")
-        if n_action_steps is not None:
-            f.write(f"n_action_steps = {n_action_steps}\n")
-        f.write(f"current_ee_position = [{current_ee_position[0]:.6f}, {current_ee_position[1]:.6f}, {current_ee_position[2]:.6f}]\n")
-        f.write("\n")
-
-        # Predicted actions section
-        f.write("[predicted_actions]\n")
-        f.write("# Format: step_idx: dx, dy, dz, r00, r01, r02, r10, r11, r12, gripper\n")
-        for i, action in enumerate(pred_actions):
-            vals = ", ".join([f"{v:.6f}" for v in action])
-            f.write(f"{i}: {vals}\n")
-        f.write("\n")
-
-        # Ground truth actions section
-        f.write("[ground_truth_actions]\n")
-        f.write("# Format: step_idx: dx, dy, dz, r00, r01, r02, r10, r11, r12, gripper\n")
-        for i, action in enumerate(gt_actions):
-            vals = ", ".join([f"{v:.6f}" for v in action])
-            f.write(f"{i}: {vals}\n")
-        f.write("\n")
-
-        # IK-constrained EE positions section (optional)
-        if ik_ee_positions is not None:
-            f.write("[ik_ee_positions]\n")
-            f.write("# Format: step_idx: x, y, z (meters)\n")
-            for i, pos in enumerate(ik_ee_positions):
-                f.write(f"{i}: [{pos[0]:.6f}, {pos[1]:.6f}, {pos[2]:.6f}]\n")
-
-
-def read_actions_file(input_path: Path) -> dict:
-    """
-    Read action predictions from a structured text file.
-
-    Args:
-        input_path: Path to the actions file
-
-    Returns:
-        Dict with keys: header, predicted_actions, ground_truth_actions, ik_ee_positions
-    """
-    result = {
-        "header": {},
-        "predicted_actions": None,
-        "ground_truth_actions": None,
-        "ik_ee_positions": None,
-    }
-
-    with open(input_path, "r") as f:
-        lines = f.readlines()
-
-    current_section = None
-    action_data = []
-
-    for line in lines:
-        line = line.strip()
-
-        # Skip comments and empty lines
-        if not line or line.startswith("#"):
-            continue
-
-        # Section headers
-        if line.startswith("[") and line.endswith("]"):
-            # Save previous section data
-            if current_section == "predicted_actions":
-                result["predicted_actions"] = np.array(action_data)
-            elif current_section == "ground_truth_actions":
-                result["ground_truth_actions"] = np.array(action_data)
-            elif current_section == "ik_ee_positions":
-                result["ik_ee_positions"] = np.array(action_data)
-
-            # Start new section
-            current_section = line[1:-1]
-            action_data = []
-            continue
-
-        # Parse header lines (key = value)
-        if current_section == "header":
-            if "=" in line:
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-
-                # Parse different value types
-                if key in ["frame_idx", "episode_idx", "chunk_size", "n_action_steps"]:
-                    result["header"][key] = int(value)
-                elif key == "current_ee_position":
-                    # Parse [x, y, z]
-                    nums = value.strip("[]").split(",")
-                    result["header"][key] = np.array([float(n) for n in nums])
-                else:
-                    result["header"][key] = value
-
-        # Parse action lines (step_idx: val1, val2, ...)
-        elif current_section in ["predicted_actions", "ground_truth_actions"]:
-            if ":" in line:
-                parts = line.split(":", 1)
-                values = [float(v.strip()) for v in parts[1].split(",")]
-                action_data.append(values)
-
-        # Parse IK position lines (step_idx: [x, y, z])
-        elif current_section == "ik_ee_positions":
-            if ":" in line:
-                parts = line.split(":", 1)
-                nums = parts[1].strip("[]").split(",")
-                values = [float(n.strip()) for n in nums]
-                action_data.append(values)
-
-    # Save last section
-    if current_section == "predicted_actions":
-        result["predicted_actions"] = np.array(action_data)
-    elif current_section == "ground_truth_actions":
-        result["ground_truth_actions"] = np.array(action_data)
-    elif current_section == "ik_ee_positions":
-        result["ik_ee_positions"] = np.array(action_data)
-
-    return result
-
-
 def create_video_from_frames(
     frames_dir: Path,
     output_path: Path,
     fps: int = 30,
 ):
-    """
-    Create MP4 video from frames.
-
-    Args:
-        frames_dir: Directory containing frame_*.jpg files
-        output_path: Output path for MP4 video
-        fps: Frames per second for video
-    """
+    """Create MP4 video from frames."""
     try:
         import imageio.v2 as imageio
     except ImportError:
@@ -688,21 +591,18 @@ def create_video_from_frames(
             "Install with: pip install imageio imageio-ffmpeg"
         )
 
-    # Get all frame files sorted
     frame_files = sorted(frames_dir.glob("frame_*.jpg"))
 
     if not frame_files:
         raise ValueError(f"No frames found in {frames_dir}")
 
-    # Read frames
     frames = []
     for frame_file in frame_files:
         frames.append(imageio.imread(frame_file))
 
-    # Ensure all frames have the same size by using the first frame's size
-    # and resizing any frames that don't match
+    # Ensure uniform frame sizes
     from PIL import Image
-    target_size = frames[0].shape[:2][::-1]  # (width, height)
+    target_size = frames[0].shape[:2][::-1]
     uniform_frames = []
     for frame in frames:
         if frame.shape[:2][::-1] != target_size:
@@ -712,7 +612,6 @@ def create_video_from_frames(
         else:
             uniform_frames.append(frame)
 
-    # Write video
     writer = imageio.get_writer(output_path, fps=fps, codec='libx264')
     for frame in uniform_frames:
         writer.append_data(frame)
@@ -723,11 +622,11 @@ def create_video_from_frames(
 
 def main():
     init_logging()
-    logger = logging.getLogger("debug_relative_ee_animation")
+    logger = logging.getLogger("debug_relative_ee_simulation")
 
     import argparse
     parser = argparse.ArgumentParser(
-        description="Debug script for RelativeEE ACT policy animation visualization"
+        description="Debug script for RelativeEE ACT policy with placo simulation"
     )
     parser.add_argument(
         "--dataset_repo_id",
@@ -763,7 +662,7 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./outputs/debug/animation_relative_ee",
+        default="./outputs/debug/simulation_relative_ee",
         help="Output directory for results",
     )
     parser.add_argument(
@@ -780,7 +679,7 @@ def main():
     parser.add_argument(
         "--fixed_axis_limits",
         action="store_true",
-        help="Use fixed axis limits computed from full episode (recommended for animation)",
+        help="Use fixed axis limits computed from full episode",
     )
     parser.add_argument(
         "--obs_state_horizon",
@@ -789,9 +688,10 @@ def main():
         help="Observation state horizon (auto-detected from policy if not specified)",
     )
     parser.add_argument(
-        "--enable_ik_trajectory",
-        action="store_true",
-        help="Enable IK-constrained trajectory visualization (shows what robot can actually achieve)",
+        "--n_action_steps",
+        type=int,
+        default=10,
+        help="Number of actions to execute from each chunk prediction (default: 10)",
     )
     parser.add_argument(
         "--urdf_path",
@@ -809,35 +709,57 @@ def main():
         "--reset_pose",
         type=float,
         nargs=6,
-        default=[-8.00, -62.73, 65.05, 0.86, -2.55, 88.91],
+        default=list(RESET_POSE_DEG),
         metavar=("PAN", "LIFT", "ELBOW", "FLEX", "ROLL", "GRIPPER"),
-        help="Reset pose in degrees for IK (default: -8.00 -62.73 65.05 0.86 -2.55 88.91)",
+        help="Reset pose in degrees for simulation (default: -8.00 -62.73 65.05 0.86 -2.55 88.91)",
     )
     parser.add_argument(
-        "--pos_tolerance",
+        "--ee_bounds_min",
         type=float,
-        default=0.02,
-        help="Position tolerance for IK verification in meters (default: 0.02 = 20mm)",
+        nargs=3,
+        default=[-0.5, -0.5, 0.0],
+        help="EE position bounds minimum (x, y, z) in meters",
     )
     parser.add_argument(
-        "--rot_tolerance",
+        "--ee_bounds_max",
         type=float,
-        default=0.3,
-        help="Rotation tolerance for IK verification in radians (default: 0.3 = ~17 deg)",
+        nargs=3,
+        default=[0.5, 0.5, 0.4],
+        help="EE position bounds maximum (x, y, z) in meters",
     )
     parser.add_argument(
-        "--joint_names",
-        type=str,
-        nargs=6,
-        default=["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
-        metavar=("J1", "J2", "J3", "J4", "J5", "J6"),
-        help="Joint names for IK (default: shoulder_pan shoulder_lift elbow_flex wrist_flex wrist_roll gripper)",
+        "--max_ee_step_m",
+        type=float,
+        default=0.05,
+        help="Maximum EE step size in meters (safety)",
     )
     parser.add_argument(
-        "--n_action_steps",
-        type=int,
-        default=10,
-        help="Number of actions to execute from each chunk prediction (default: 10, must match deployment)",
+        "--gripper_lower",
+        type=float,
+        default=0.0,
+        help="Gripper lower bound in degrees",
+    )
+    parser.add_argument(
+        "--gripper_upper",
+        type=float,
+        default=100.0,
+        help="Gripper upper bound in degrees",
+    )
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Enable placo 3D visualization at http://127.0.0.1:7000/static/",
+    )
+    parser.add_argument(
+        "--step_delay",
+        type=float,
+        default=0.0,
+        help="Delay in seconds between action steps (for visualization, default: 0.0 = no delay)",
+    )
+    parser.add_argument(
+        "--keep_viz_alive",
+        action="store_true",
+        help="Keep script running after processing to view visualization (press Ctrl+C to exit)",
     )
 
     args = parser.parse_args()
@@ -854,18 +776,12 @@ def main():
             job_name = pretrained_path_obj.parts[outputs_idx + 2]
             logger.info(f"Job name: {job_name}")
 
-    # Extract model step
-    model_step = None
-    if "checkpoints" in pretrained_path_obj.parts:
-        checkpoints_idx = pretrained_path_obj.parts.index("checkpoints")
-        if checkpoints_idx + 1 < len(pretrained_path_obj.parts):
-            model_step = pretrained_path_obj.parts[checkpoints_idx + 1]
-            logger.info(f"Model step: {model_step}")
-
     # Create output directory
     output_dir = Path(args.output_dir) / job_name
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir}")
+
+    reset_pose = np.array(args.reset_pose, dtype=np.float64)
 
     # ========================================================================
     # Load Policy
@@ -938,7 +854,7 @@ def main():
     logger.info("Policy loaded successfully")
     logger.info(f"  Chunk size: {chunk_size}")
     logger.info(f"  n_obs_steps: {policy.config.n_obs_steps}")
-    logger.info(f"  n_action_steps: {policy.config.n_action_steps}")
+    logger.info(f"  n_action_steps: {args.n_action_steps}")
 
     # ========================================================================
     # Load Dataset
@@ -951,7 +867,6 @@ def main():
     action_delta_timestamps = [i / fps for i in range(chunk_size)]
     delta_timestamps = {"action": action_delta_timestamps}
 
-    # Load full dataset without episodes filter (schema mismatch issue)
     dataset = RelativeEEDataset(
         repo_id=args.dataset_repo_id,
         root=args.dataset_root,
@@ -966,27 +881,70 @@ def main():
     logger.info(f"  Processing episodes: {args.episode_indices}")
 
     # ========================================================================
-    # Initialize IK if enabled
+    # Initialize Kinematics
     # ========================================================================
-    kinematics = None
-    reset_pose = np.array(args.reset_pose, dtype=np.float64)
+    logger.info("Initializing kinematics solver...")
 
-    if args.enable_ik_trajectory:
-        logger.info("Initializing IK solver...")
-        logger.info(f"  URDF: {args.urdf_path}")
-        logger.info(f"  Target frame: {args.target_frame}")
-        logger.info(f"  Reset pose: {reset_pose}")
-        logger.info(f"  Position tolerance: {args.pos_tolerance * 1000:.1f} mm")
-        logger.info(f"  Rotation tolerance: {np.rad2deg(args.rot_tolerance):.1f} deg")
+    urdf_path = Path(args.urdf_path)
+    if not urdf_path.exists():
+        raise FileNotFoundError(f"URDF not found at {urdf_path}")
 
-        kinematics = RobotKinematics(
-            urdf_path=args.urdf_path,
-            target_frame_name=args.target_frame,
-            joint_names=args.joint_names,
-        )
-        logger.info("IK solver initialized successfully!")
+    # For RobotKinematics, we need the actual URDF file path
+    if urdf_path.is_dir():
+        urdf_file = urdf_path / "robot.urdf"
     else:
-        logger.info("IK trajectory visualization disabled (use --enable_ik_trajectory to enable)")
+        urdf_file = urdf_path
+
+    kinematics = RobotKinematics(
+        urdf_path=str(urdf_file),
+        target_frame_name=args.target_frame,
+        joint_names=MOTOR_NAMES,
+    )
+    logger.info(f"URDF loaded: {urdf_file}")
+
+    # ========================================================================
+    # Build Processor Pipeline
+    # ========================================================================
+    logger.info("Building processor pipeline...")
+
+    ee_to_joints_pipeline = RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ](
+        steps=[
+            Relative10DAccumulatedToAbsoluteEE(
+                gripper_lower_deg=args.gripper_lower,
+                gripper_upper_deg=args.gripper_upper,
+            ),
+            EEBoundsAndSafety(
+                end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
+                max_ee_step_m=args.max_ee_step_m,
+            ),
+            InverseKinematicsEEToJoints(
+                kinematics=kinematics,
+                motor_names=MOTOR_NAMES,
+                initial_guess_current_joints=False,
+            ),
+        ],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+
+    logger.info("Pipeline built")
+
+    # ========================================================================
+    # Initialize Simulation Robot
+    # ========================================================================
+    logger.info("Initializing simulated SO101 robot...")
+
+    robot = SimulatedSO101Robot(str(urdf_path), MOTOR_NAMES, enable_viz=args.visualize)
+    robot.connect(calibrate=False)
+
+    # Set robot to reset pose
+    robot.current_joints = reset_pose.copy()
+    robot.send_action({f"{name}.pos": val for name, val in zip(MOTOR_NAMES, reset_pose)})
+
+    sim_joints = reset_pose.copy()
+    logger.info(f"Robot initialized at reset pose: {reset_pose}")
 
     # ========================================================================
     # Process each episode
@@ -1027,14 +985,42 @@ def main():
         ep_output_dir = output_dir / f"episode_{ep_idx}"
         ep_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Run inference on each frame
-        ee_history = []  # Cumulative EE positions
-        current_joint_pos = reset_pose.copy()  # Track current joint position for IK
+        # Reset simulation to reset pose
+        sim_joints = reset_pose.copy()
+        robot.current_joints = reset_pose.copy()
+        robot.send_action({f"{name}.pos": val for name, val in zip(MOTOR_NAMES, reset_pose)})
+        ee_to_joints_pipeline.reset()
 
-        for frame_idx in range(start_idx, ep_end):
+        # Get initial EE pose from simulation
+        chunk_base_pose = kinematics.forward_kinematics(sim_joints)
+        sim_start_ee = chunk_base_pose[:3, 3].copy()
+
+        # Get dataset start frame EE position
+        abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
+        abs_state = abs_sample['observation.state'].cpu().numpy()
+        abs_pose_6d = abs_state[:6]
+        dataset_start_ee_pose = pose_to_mat(abs_pose_6d)
+        dataset_start_ee = dataset_start_ee_pose[:3, 3].copy()
+
+        # Compute alignment transform: dataset -> simulation
+        # T_align maps dataset positions to simulation frame
+        # For position only: sim_pos = dataset_pos + offset
+        ee_offset = sim_start_ee - dataset_start_ee
+
+        logger.info(f"  Simulation start EE: {sim_start_ee}")
+        logger.info(f"  Dataset start EE: {dataset_start_ee}")
+        logger.info(f"  Alignment offset: {ee_offset}")
+
+        # Run chunk-based inference with action execution
+        ee_history = []  # Cumulative EE positions (from simulation)
+        chunk_count = 0
+
+        frame_idx = start_idx
+        while frame_idx < ep_end:
+            # Get observation image from dataset at current frame
             sample = dataset[frame_idx]
 
-            # Get observation image
+            # Get observation image for visualization
             obs_img = None
             for key in sample.keys():
                 if key.startswith("observation.images"):
@@ -1043,28 +1029,37 @@ def main():
 
             if obs_img is None:
                 logger.warning(f"No observation image found for frame {frame_idx}")
+                frame_idx += 1
                 continue
 
-            # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
-            # The RelativeEEDataset.__getitem__ returns relative poses, but the parent stores absolute
+            # Get ground truth EE position from dataset (for reference)
             abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx)
-            abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
+            abs_state = abs_sample['observation.state'].cpu().numpy()
+            abs_pose_6d = abs_state[:6]
+            dataset_ee_pose = pose_to_mat(abs_pose_6d)
+            dataset_ee_position = dataset_ee_pose[:3, 3].copy()
 
-            # Convert absolute state to 4x4 matrix
-            # The state is [x, y, z, rx, ry, rz, gripper] in axis-angle format
-            abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
-            current_ee_pose = pose_to_mat(abs_pose_6d)
-            current_ee_position = current_ee_pose[:3, 3].copy()
+            # Apply alignment offset to map dataset frame to simulation frame
+            aligned_dataset_ee_position = dataset_ee_position + ee_offset
 
-            # Add to history
-            ee_history.append(current_ee_position.copy())
-
-            # Get ground truth action (for reference)
+            # Get GT action (for reference)
             gt_actions = sample['action'].cpu().numpy()  # (chunk_size, 10)
 
-            # Create observation batch and run inference
-            batch = create_observation_batch(dataset, frame_idx, policy.config.n_obs_steps, device)
+            # Set chunk base pose from SIMULATION joints (closed-loop)
+            chunk_base_pose = kinematics.forward_kinematics(sim_joints)
 
+            # Create observation batch with simulation state
+            batch = create_observation_batch_with_sim_state(
+                dataset=dataset,
+                idx=frame_idx,
+                n_obs_steps=policy.config.n_obs_steps,
+                device=device,
+                sim_joints=sim_joints,
+                kinematics=kinematics,
+                obs_state_horizon=obs_state_horizon,
+            )
+
+            # Predict action chunk
             with torch.no_grad():
                 processed_batch = preprocessor(batch)
                 pred_actions = policy.predict_action_chunk(processed_batch)
@@ -1074,59 +1069,73 @@ def main():
                 pred_actions = pred_actions["action"]
             pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
 
-            # Compute predicted EE trajectory (absolute positions)
-            pred_ee_positions = compute_predicted_ee_trajectory(pred_actions, current_ee_pose)
+            # Compute predicted EE trajectory from chunk base pose
+            pred_ee_positions = compute_predicted_ee_trajectory(pred_actions, chunk_base_pose)
 
-            # Compute ground truth EE trajectory (absolute positions)
-            gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, current_ee_pose)
+            # Compute ground truth EE trajectory from ALIGNED dataset pose
+            # Create aligned dataset EE pose (same orientation, shifted position)
+            aligned_dataset_ee_pose = dataset_ee_pose.copy()
+            aligned_dataset_ee_pose[:3, 3] = aligned_dataset_ee_position
+            gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, aligned_dataset_ee_pose)
 
-            # Compute IK-constrained trajectory if enabled
-            # IMPORTANT: Only process n_action_steps from chunk to match deployment behavior!
-            # In deployment, we execute n_action_steps actions, then predict a new chunk.
-            ik_ee_positions = None
-            if kinematics is not None:
-                ik_ee_positions, current_joint_pos = compute_ik_constrained_trajectory(
-                    relative_actions=pred_actions[:args.n_action_steps],  # Only first N actions
-                    current_ee_pose=current_ee_pose,
-                    kinematics=kinematics,
-                    current_joint_pos=current_joint_pos,
-                    pos_tolerance=args.pos_tolerance,
-                    rot_tolerance=args.rot_tolerance,
-                )
+            # Get current simulation EE position
+            sim_ee_pose = kinematics.forward_kinematics(sim_joints)
+            sim_ee_position = sim_ee_pose[:3, 3].copy()
 
-            # Save action predictions to text file
-            actions_output = ep_output_dir / f"actions_{frame_idx:04d}.txt"
-            write_actions_file(
-                output_path=actions_output,
-                frame_idx=frame_idx,
-                episode_idx=ep_idx,
-                current_ee_position=current_ee_position,
-                pred_actions=pred_actions,
-                gt_actions=gt_actions,
-                chunk_size=pred_actions.shape[0],
-                ik_ee_positions=ik_ee_positions,
-                n_action_steps=args.n_action_steps if kinematics is not None else None,
-            )
+            # Add simulation EE position to history
+            ee_history.append(sim_ee_position.copy())
 
-            # Generate and save plot
+            # Generate and save plot BEFORE executing actions
             frame_output = ep_output_dir / f"frame_{frame_idx:04d}.jpg"
             plot_frame_with_ee_trajectory(
                 obs_image=obs_img,
                 ee_history=ee_history,
                 pred_ee_positions=pred_ee_positions,
-                current_ee_position=current_ee_position,
+                current_ee_position=aligned_dataset_ee_position,  # Use aligned position
+                sim_ee_position=sim_ee_position,
                 output_path=frame_output,
                 episode_idx=ep_idx,
                 frame_idx=frame_idx,
                 axis_limits=axis_limits,
                 gt_ee_positions=gt_ee_positions,
-                ik_ee_positions=ik_ee_positions,
+                chunk_base_pose=chunk_base_pose[:3, 3],
             )
 
-            if (frame_idx - start_idx) % 10 == 0:
-                logger.info(f"  Processed {frame_idx - start_idx}/{ep_end - start_idx} frames")
+            # Execute n_action_steps from the predicted chunk
+            logger.info(f"Chunk {chunk_count} at frame {frame_idx}: executing {args.n_action_steps} actions")
+            for action_i in range(min(args.n_action_steps, len(pred_actions))):
+                rel_action = pred_actions[action_i]
+                rel_T = pose10d_to_mat(rel_action[:9])
 
-        logger.info(f"  Episode {ep_idx} complete: {ep_end - start_idx} frames saved to {ep_output_dir}")
+                # Target EE = chunk_base_pose @ rel_T (NOT chained)
+                target_ee_pose = chunk_base_pose @ rel_T
+
+                # Solve IK
+                joints = kinematics.inverse_kinematics(sim_joints, target_ee_pose)
+
+                # Send to simulation
+                action = {f"{name}.pos": val for name, val in zip(MOTOR_NAMES, joints)}
+                robot.send_action(action)
+
+                # Display EE frame in visualization
+                if args.visualize:
+                    robot.display_ee_frame("gripper_frame_link")
+
+                # Update sim_joints for next iteration (closed-loop)
+                sim_joints = joints
+
+                # Add delay for visualization
+                if args.step_delay > 0:
+                    time.sleep(args.step_delay)
+
+            # Advance dataset index by n_action_steps
+            frame_idx += args.n_action_steps
+            chunk_count += 1
+
+            if chunk_count % 5 == 0:
+                logger.info(f"  Processed {chunk_count} chunks, frame {frame_idx}/{ep_end}")
+
+        logger.info(f"  Episode {ep_idx} complete: {chunk_count} chunks, {len(ee_history)} frames saved to {ep_output_dir}")
 
         # Create video if requested
         if args.save_video:
@@ -1134,6 +1143,20 @@ def main():
             video_output = output_dir / f"episode_{ep_idx}.mp4"
             create_video_from_frames(ep_output_dir, video_output, fps=args.video_fps)
 
+    # Keep visualization alive if requested
+    if args.visualize and args.keep_viz_alive:
+        logger.info("\nVisualization server running at http://127.0.0.1:7000/static/")
+        logger.info("Press Ctrl+C to exit...")
+        try:
+            # Keep displaying the current robot state
+            while True:
+                robot.display_ee_frame("gripper_frame_link")
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            logger.info("\nExiting...")
+
+    # Disconnect robot
+    robot.disconnect()
     logger.info("\nDone!")
 
 
