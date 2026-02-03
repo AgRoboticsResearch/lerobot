@@ -290,7 +290,7 @@ def main():
     parser.add_argument(
         "--max_ee_step_m",
         type=float,
-        default=0.05,
+        default=0.1,
         help="Maximum EE step size in meters (safety)",
     )
     parser.add_argument(
@@ -538,9 +538,10 @@ def main():
             # Prepare observation for policy
             # -------------------------------------------------------------------
             # Create relative observation (UMI-style: identity at current)
-            # chunk_base_pose will be set when new chunk is detected (first action is identity)
+            # IMPORTANT: Always use CURRENT robot pose for observation, not chunk_base_pose
+            current_ee_T = kinematics.forward_kinematics(current_joints)
             obs_state, history_buffer = create_relative_observation(
-                current_ee_T=chunk_base_pose if chunk_base_pose is not None else kinematics.forward_kinematics(current_joints),
+                current_ee_T=current_ee_T,
                 gripper_pos=current_gripper,
                 obs_state_horizon=policy.config.n_obs_steps,
                 history_buffer=history_buffer,
@@ -610,6 +611,10 @@ def main():
                 # Visualize predicted trajectory immediately (so user can see before executing)
                 # ====================================================================
                 if args.placo_vis and sim_robot is not None:
+                    # First, update sim_robot to current robot pose so visualization starts from correct position
+                    sim_robot.set_joints(current_joints)
+                    robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+
                     pred_positions = []
                     ik_fk_positions = []
                     ik_joints_tracking = chunk_start_joints.copy()
@@ -665,24 +670,21 @@ def main():
             # Pop next action from queue
             rel_action_10d = action_queue.pop(0)
 
-            # Check for n_action_steps boundary - optionally delay
+            # Check for n_action_steps boundary - discard old chunk and predict new one
             actions_remaining = len(action_queue)
             actions_executed = policy.config.chunk_size - actions_remaining - 1
 
             if actions_executed >= args.n_action_steps and actions_remaining > 0:
+                # Discard remaining actions from old chunk - next iteration will predict fresh chunk
+                action_queue.clear()
+                logger.info(f"Executed {args.n_action_steps} actions, discarding {actions_remaining} remaining actions")
+
                 if args.delay_chunk > 0:
-                    logger.info(f"Executed {args.n_action_steps} actions, sleeping {args.delay_chunk}s...")
+                    logger.info(f"Sleeping {args.delay_chunk}s before new chunk...")
                     time.sleep(args.delay_chunk)
                 elif args.delay_chunk < 0:
-                    # Also pause after n_action_steps if in interactive mode
-                    print("\n" + "="*60)
-                    print(f"Executed {args.n_action_steps} actions, {actions_remaining} remaining")
-                    print("="*60)
-                    try:
-                        input("Press Enter to continue...")
-                    except (EOFError, KeyboardInterrupt):
-                        logger.info("Interrupted by user")
-                        raise
+                    # Interactive mode - will wait for Enter after new chunk is predicted
+                    pass
 
             # ====================================================================
             # Apply action from chunk base pose (UMI-style: all actions relative to base)
