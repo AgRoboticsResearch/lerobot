@@ -56,8 +56,11 @@ import torch
 from placo_utils.visualization import robot_frame_viz, points_viz, robot_viz
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.relative_ee_dataset import RelativeEEDataset, pose_to_mat
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.act.temporal_wrapper import TemporalACTWrapper
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.robots.so101_follower.relative_ee_processor import (
     pose10d_to_mat,
@@ -107,29 +110,68 @@ class SimulatedSO101Robot:
         self.viz.display(self.robot.state.q)
 
 
-def create_relative_observation(
-    gripper_pos: float,
+def make_act_pre_post_processors_with_temporal(
+    config: ACTConfig,
+    dataset_stats: dict | None = None,
     obs_state_horizon: int = 2,
-    history_buffer: list | None = None,
-) -> tuple[np.ndarray, list]:
-    """
-    Create the observation state for the RelativeEEDataset policy.
-    """
-    current_obs = np.array([
-        0.0, 0.0, 0.0,           # position (identity)
-        1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
-        gripper_pos,
-    ], dtype=np.float32)
+) -> tuple:
+    """Create ACT processors with temporal observation handling (UMI-style).
 
-    if history_buffer is None:
-        history_buffer = [current_obs.copy() for _ in range(obs_state_horizon)]
-    else:
-        history_buffer.append(current_obs.copy())
-        if len(history_buffer) > obs_state_horizon:
-            history_buffer.pop(0)
+    This MUST match the processors used during training, otherwise
+    normalization will be inconsistent and predictions will be wrong.
 
-    obs_state = np.stack(history_buffer, axis=0)
-    return obs_state, history_buffer
+    Args:
+        config: ACT policy configuration
+        dataset_stats: Normalization statistics from dataset
+        obs_state_horizon: Number of temporal steps in observations
+
+    Returns:
+        Tuple of (preprocessor, postprocessor) pipelines
+    """
+    from lerobot.processor import (
+        PolicyProcessorPipeline,
+        RenameObservationsProcessorStep,
+        TemporalNormalizeProcessor,
+        AddBatchDimensionProcessorStep,
+        DeviceProcessorStep,
+        UnnormalizerProcessorStep,
+    )
+    from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+
+    # Create custom preprocessor with temporal normalization
+    input_steps = [
+        RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        DeviceProcessorStep(device=config.device),
+        TemporalNormalizeProcessor(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+            device=config.device,
+            obs_state_horizon=obs_state_horizon,
+        ),
+    ]
+
+    # Standard postprocessor
+    output_steps = [
+        UnnormalizerProcessorStep(
+            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        DeviceProcessorStep(device="cpu"),
+    ]
+
+    preprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=input_steps,
+        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+    )
+    postprocessor = PolicyProcessorPipeline[dict, dict](
+        steps=output_steps,
+        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    )
+
+    logging.info(f"Created temporal ACT processors with obs_state_horizon={obs_state_horizon}")
+
+    return preprocessor, postprocessor
 
 
 def main():
@@ -215,16 +257,76 @@ def main():
     policy.eval()
     policy.config.device = str(device)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-        postprocessor_overrides={},
-    )
+    # Get obs_state_horizon from policy config (or use default)
+    policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
+
+    # Only wrap with TemporalACTWrapper if obs_state_horizon > 1
+    if obs_state_horizon > 1:
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, policy.config)
+        policy.model = policy.model.to(device)
+        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+        # Load wrapper parameters if temporal_wrapper.pt exists
+        wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
+        if wrapper_path.exists():
+            wrapper_state_dict = torch.load(wrapper_path, map_location=device)
+            model_state = policy.model.state_dict()
+            filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+            if filtered_state:
+                policy.model.load_state_dict(filtered_state, strict=False)
+                policy.model = policy.model.to(device)
+                logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+            else:
+                logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+        else:
+            logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+    else:
+        logger.info(f"obs_state_horizon=1, TemporalACTWrapper not needed")
+
+    # Load processors (use standard or temporal based on obs_state_horizon)
+    if obs_state_horizon > 1:
+        logger.info("Loading temporal processors from pretrained model...")
+        temp_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
+
+        # Extract stats from loaded preprocessor
+        dataset_stats = None
+        for step in temp_preprocessor.steps:
+            if hasattr(step, 'stats') and step.stats is not None:
+                dataset_stats = step.stats
+                break
+
+        if dataset_stats is None:
+            raise ValueError("Could not extract normalization stats from pretrained model!")
+
+        # Create temporal processors with the loaded stats
+        preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
+            config=policy.config,
+            dataset_stats=dataset_stats,
+            obs_state_horizon=obs_state_horizon,
+        )
+    else:
+        # Use standard processors for obs_state_horizon=1
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
 
     logger.info("Policy loaded successfully")
     logger.info(f"  Chunk size: {policy.config.chunk_size}")
-    logger.info(f"  obs_state_horizon: {policy.config.n_obs_steps}")
+    logger.info(f"  obs_state_horizon: {obs_state_horizon}")
 
     # ========================================================================
     # Load Dataset
@@ -238,9 +340,21 @@ def main():
         # Infer repo_id from path (last directory name)
         repo_id = Path(args.dataset_root).name
 
-    dataset = LeRobotDataset(repo_id=repo_id, root=args.dataset_root)
+    # Use RelativeEEDataset to get temporal images (T frames instead of 1)
+    fps = getattr(policy.config, 'fps', 30)
+    action_delta_timestamps = [i / fps for i in range(policy.config.chunk_size)]
+    delta_timestamps = {"action": action_delta_timestamps}
+
+    dataset = RelativeEEDataset(
+        repo_id=repo_id,
+        root=args.dataset_root,
+        obs_state_horizon=obs_state_horizon,
+        delta_timestamps=delta_timestamps,
+        compute_stats=False,
+    )
 
     logger.info(f"Dataset loaded: {len(dataset)} frames")
+    logger.info(f"Using RelativeEEDataset for temporal images (shape: T={obs_state_horizon}, C, H, W)")
 
     # Find the requested episode
     episode_start_idx = 0
@@ -312,15 +426,17 @@ def main():
     # ========================================================================
     logger.info("Extracting ground truth trajectory...")
 
+    # RelativeEEDataset.action contains relative poses, not absolute EE poses
+    # Need to get absolute EE poses from parent LeRobotDataset
     gt_positions = []
     for i in range(episode_start_idx, episode_end_idx):
-        frame = dataset[i]
-        # Action contains EE pose: [x, y, z, rx, ry, rz, gripper]
-        action = frame['action'].numpy()
-        if action.ndim == 1:
-            ee_pos = action[:3]
+        # Get absolute EE pose from parent dataset
+        parent_frame = LeRobotDataset.__getitem__(dataset, i)
+        parent_action = parent_frame['action'].numpy()
+        if parent_action.ndim == 1:
+            ee_pos = parent_action[:3]  # [x, y, z]
         else:
-            ee_pos = action[0, :3]
+            ee_pos = parent_action[0, :3]
         gt_positions.append(ee_pos.copy())
 
     gt_positions = np.array(gt_positions)
@@ -355,7 +471,6 @@ def main():
     preprocessor.reset()
     postprocessor.reset()
 
-    history_buffer = None
     current_joints = np.array([0, -90, 90, 45, 0, 50])  # Initial joint values
 
     for step_idx in range(start_step, end_step):
@@ -364,22 +479,26 @@ def main():
         frame_idx = episode_start_idx + step_idx
         frame = dataset[frame_idx]
 
-        # Extract GT EE pose and gripper
-        action = frame['action'].numpy()
-        if action.ndim == 1:
-            gt_ee_pose_6d = action[:6]  # [x, y, z, rx, ry, rz]
-            gt_gripper = action[6]
+        # RelativeEEDataset provides:
+        # - observation.state: (T, 10) - temporal relative observations (identity format)
+        # - observation.images.camera: (T, C, H, W) - temporal images
+        # - action: (chunk_size, 10) - relative actions (NOT absolute EE poses!)
+
+        # To get absolute EE pose for IK and visualization, we need the parent dataset
+        parent_frame = LeRobotDataset.__getitem__(dataset, frame_idx)
+        parent_action = parent_frame['action'].numpy()
+        if parent_action.ndim == 1:
+            gt_ee_pose_6d = parent_action[:6]  # [x, y, z, rx, ry, rz]
+            gt_gripper = parent_action[6]
         else:
-            gt_ee_pose_6d = action[0, :6]
-            gt_gripper = action[0, 6]
+            gt_ee_pose_6d = parent_action[0, :6]
+            gt_gripper = parent_action[0, 6]
 
         # Get GT EE position
         gt_ee_pos = gt_ee_pose_6d[:3]
 
         # For relative EE dataset, we need the current robot joints
         # Since we're following GT, use FK to get joints from EE pose
-        # For simplicity, we'll track joints through IK
-        from lerobot.datasets.relative_ee_dataset import pose_to_mat
         T_ee = pose_to_mat(gt_ee_pose_6d)
 
         if step_idx == start_step:
@@ -415,50 +534,23 @@ def main():
         sim_robot.set_joints(current_joints)
         chunk_base_pose = kinematics.forward_kinematics(current_joints)
 
-        # Get current gripper in [0, 1]
-        current_gripper = gt_gripper
-
         # -------------------------------------------------------------------
-        # Prepare observation for policy
+        # Prepare observation for policy (using RelativeEEDataset format)
         # -------------------------------------------------------------------
-        obs_state, history_buffer = create_relative_observation(
-            gripper_pos=current_gripper,
-            obs_state_horizon=policy.config.n_obs_steps,
-            history_buffer=history_buffer,
-        )
+        # RelativeEEDataset already provides correctly formatted observations:
+        # - observation.state: (T, 10) temporal relative observations
+        # - observation.images.camera: (T, C, H, W) temporal images
 
         # Prepare batch for policy
-        if obs_state.shape[0] == 1:
-            state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
-        else:
-            state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)
+        batch = {}
+        for key, value in frame.items():
+            if isinstance(value, torch.Tensor) and key.startswith('observation.'):
+                # Add batch dimension
+                batch[key] = value.unsqueeze(0).to(device)
 
-        batch = {"observation.state": state_tensor}
-
-        # Add camera image from dataset
-        img = frame[camera_key]
-        if img is not None:
-            # Dataset stores images as tensors in CHW format (3, H, W)
-            # Just convert to float and add batch dimension
-            if isinstance(img, torch.Tensor):
-                img_tensor = img.float() / 255.0  # Convert uint8 [0, 255] to float [0, 1]
-                if img_tensor.ndim == 3:  # (C, H, W)
-                    img_tensor = img_tensor.unsqueeze(0)  # Add batch dim: (1, C, H, W)
-                batch[f"observation.images.{args.camera_name}"] = img_tensor.to(device)
-            else:
-                # Fallback for numpy arrays
-                img_array = np.array(img)
-                if img_array.ndim == 3 and img_array.shape[0] not in [1, 3]:
-                    # HWC format
-                    img_array = img_array.transpose(2, 0, 1)  # HWC -> CHW
-                elif img_array.ndim == 4:
-                    img_array = img_array[0]
-                    if img_array.shape[0] not in [1, 3]:
-                        img_array = img_array.transpose(2, 0, 1)
-                img_array = img_array.astype(np.float32) / 255.0
-                if img_array.ndim == 3:
-                    img_array = img_array[np.newaxis, ...]  # Add batch dim
-                batch[f"observation.images.{args.camera_name}"] = torch.from_numpy(img_array).to(device)
+        # The observation.state from RelativeEEDataset is already in the correct format:
+        # - All timesteps are identity-like relative observations
+        # - Shape is (T, 10) where T = obs_state_horizon
 
         # -------------------------------------------------------------------
         # Get full chunk for visualization
@@ -466,17 +558,22 @@ def main():
         t_inference = time.perf_counter()
         with torch.no_grad():
             processed_batch = preprocessor(batch)
-            chunk_actions_list = []
-            temp_obs = processed_batch.copy()
-            for _ in range(policy.config.chunk_size):
-                pred = policy.select_action(temp_obs)
-                pred = postprocessor(pred)
-                if isinstance(pred, dict):
-                    action = pred["action"][0].cpu().numpy()
-                else:
-                    action = pred[0].cpu().numpy()
-                chunk_actions_list.append(action.copy())
+            pred_actions = policy.predict_action_chunk(processed_batch)
+
+            # Call postprocessor differently based on processor type
+            if obs_state_horizon > 1:
+                # Temporal processors: wrap in dict
+                pred_actions = postprocessor({"action": pred_actions})
+            else:
+                # Standard processors: call directly
+                pred_actions = postprocessor(pred_actions)
+
+            if isinstance(pred_actions, dict) and "action" in pred_actions:
+                pred_actions = pred_actions["action"]
+            pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
         inference_time = time.perf_counter() - t_inference
+
+        chunk_actions_list = [pred_actions[i] for i in range(pred_actions.shape[0])]
 
         # -------------------------------------------------------------------
         # Compute trajectories for visualization
