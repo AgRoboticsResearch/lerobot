@@ -205,6 +205,22 @@ def create_relative_observation(
     return obs_state, history_buffer
 
 
+def read_robot_state(robot, motor_names):
+    """Read current robot state from sensors.
+
+    Args:
+        robot: Robot instance
+        motor_names: List of motor names
+
+    Returns:
+        obs_dict: Full observation dictionary
+        current_joints: Joint positions as numpy array
+    """
+    obs_dict = robot.get_observation()
+    current_joints = np.array([obs_dict[f"{name}.pos"] for name in motor_names])
+    return obs_dict, current_joints
+
+
 def main():
     init_logging()
     logger = logging.getLogger("deploy_relative_ee_so101")
@@ -489,8 +505,7 @@ def main():
     print(f"Using fixed safe pose: {initial_safe_joints}")
 
     # Get actual robot pose (after warm_start, robot might be at reset_pose)
-    obs_dict = robot.get_observation()
-    current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+    obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
     logger.info(f"Actual robot joints: {current_joints}")
 
     # Update sim_robot to match actual robot pose
@@ -530,8 +545,7 @@ def main():
             # -------------------------------------------------------------------
             # Get current observation from robot
             # -------------------------------------------------------------------
-            obs_dict = robot.get_observation()
-            current_joints = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+            obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
             current_gripper = obs_dict["gripper.pos"] / 100.0  # Convert to [0,1]
 
             # -------------------------------------------------------------------
@@ -581,15 +595,12 @@ def main():
             # ====================================================================
             if len(action_queue) == 0:
                 # Get FRESH observation for accurate chunk_base_pose
-                fresh_obs_dict = robot.get_observation()
-                current_joints = np.array([fresh_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+                obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
                 current_ee_T = kinematics.forward_kinematics(current_joints)
                 chunk_base_pose = current_ee_T.copy()
                 chunk_start_joints = current_joints.copy()
                 chunk_actions_for_viz = []
 
-                # Update obs_dict with fresh observation so pipeline uses current state
-                obs_dict = fresh_obs_dict
                 logger.info(f"Predicting new chunk at step {step_count}, base pos: {chunk_base_pose[:3,3]}")
 
                 # Predict full chunk (same as visualize_dataset_predictions.py)
@@ -728,8 +739,7 @@ def main():
             if args.placo_vis and sim_robot is not None:
                 # Small delay to let robot start moving, then get FRESH observation
                 time.sleep(0.01)
-                fresh_obs_dict = robot.get_observation()
-                actual_joints = np.array([fresh_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+                _, actual_joints = read_robot_state(robot, MOTOR_NAMES)
                 sim_robot.set_joints(actual_joints)
                 # Show robot frame at current position
                 robot_frame_viz(sim_robot.robot, "gripper_frame_link")

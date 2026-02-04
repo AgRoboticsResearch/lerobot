@@ -158,6 +158,7 @@ def teleop_loop(
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
         # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
+        print("robot_action_to_send:", robot_action_to_send)
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:

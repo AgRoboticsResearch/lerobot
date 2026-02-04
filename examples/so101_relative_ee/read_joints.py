@@ -5,12 +5,16 @@ Simple script to read and display SO101 robot joint positions.
 
 Usage:
     python read_joints.py --port /dev/ttyACM0
+    python read_joints.py --port /dev/ttyACM0 --display
 """
 
 import argparse
 import time
 
+import rerun as rr
+
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 # Motor names for SO101
 MOTOR_NAMES = [
@@ -37,7 +41,16 @@ def main():
         default=10,
         help="Read frequency (Hz)",
     )
+    parser.add_argument(
+        "--display",
+        action="store_true",
+        help="Enable rerun visualization",
+    )
     args = parser.parse_args()
+
+    # Initialize rerun if display is enabled
+    if args.display:
+        init_rerun(session_name="read_joints")
 
     # Create robot config
     robot_config = SO101FollowerConfig(
@@ -66,12 +79,18 @@ def main():
             # Print in simple key=value format
             print(", ".join([f"{name}={val:.2f}" for name, val in zip(MOTOR_NAMES, joints)]))
 
+            # Log to rerun if display is enabled
+            if args.display:
+                log_rerun_data(observation=obs, action={})
+
             time.sleep(1.0 / args.fps)
 
     except KeyboardInterrupt:
         print("\n\nStopped by user")
 
     finally:
+        if args.display:
+            rr.rerun_shutdown()
         robot.disconnect()
         print("Robot disconnected")
 
