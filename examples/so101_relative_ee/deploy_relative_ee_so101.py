@@ -85,12 +85,12 @@ MOTOR_NAMES = [
 
 # Default RESET pose (starting position)
 RESET_POSE_DEG = np.array([
-    -8.00,    # shoulder_pan
-    -62.73,   # shoulder_lift
-    65.05,    # elbow_flex
-    0.86,    # wrist_flex
-    -2.55,    # wrist_roll
-    65,    # gripper
+    -3.43,    # shoulder_pan
+    -94.77,   # shoulder_lift
+    92.92,    # elbow_flex
+    17.01,    # wrist_flex
+    -0.66,    # wrist_roll
+    55.28,    # gripper
 ])
 
 FPS = 30  # Control loop frequency (Hz) - must match training fps
@@ -338,6 +338,12 @@ def main():
         action="store_true",
         help="Enable rerun visualization for actions and observations (joint poses)",
     )
+    parser.add_argument(
+        "--use_commanded_for_chunk_base",
+        action="store_true",
+        help="Use last commanded action (sent joints) instead of sensor readings for chunk_base_pose. "
+             "Helps with noisy sensors but may accumulate drift.",
+    )
 
     args = parser.parse_args()
 
@@ -549,6 +555,9 @@ def main():
     chunk_start_joints = current_joints.copy()
     chunk_actions_for_viz = []  # Store all actions for visualization
 
+    # Track last commanded joints for --use_commanded_for_chunk_base option
+    last_commanded_joints = current_joints.copy()
+
     try:
         while args.num_steps == 0 or step_count < args.num_steps:
             t0 = time.perf_counter()
@@ -605,11 +614,19 @@ def main():
             # Predict new chunk when queue is empty (like visualize_dataset_predictions.py)
             # ====================================================================
             if len(action_queue) == 0:
-                # Get FRESH observation for accurate chunk_base_pose
-                obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
-                current_ee_T = kinematics.forward_kinematics(current_joints)
+                # Determine chunk_base_pose based on toggle setting
+                if args.use_commanded_for_chunk_base:
+                    # Use last commanded joints (what we sent to robot)
+                    current_ee_T = kinematics.forward_kinematics(last_commanded_joints)
+                    logger.info(f"Using last COMMANDED joints for chunk_base_pose")
+                else:
+                    # Get FRESH observation for accurate chunk_base_pose (default)
+                    obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
+                    current_ee_T = kinematics.forward_kinematics(current_joints)
+                    logger.info(f"Using actual SENSOR readings for chunk_base_pose")
+                # THIS IS WHERE CHUNK BASE POSE IS SET
                 chunk_base_pose = current_ee_T.copy()
-                chunk_start_joints = current_joints.copy()
+                chunk_start_joints = last_commanded_joints.copy() if args.use_commanded_for_chunk_base else current_joints.copy()
                 chunk_actions_for_viz = []
 
                 logger.info(f"Predicting new chunk at step {step_count}, base pos: {chunk_base_pose[:3,3]}")
@@ -745,6 +762,9 @@ def main():
             # Send action to robot
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
+
+            # Update last_commanded_joints with what we sent
+            last_commanded_joints = np.array([joints_action[f"{name}.pos"] for name in MOTOR_NAMES])
 
             # Log to rerun if display_data is enabled
             if args.display_data:
