@@ -204,79 +204,73 @@ def compute_predicted_ee_trajectory(
 
 def compute_ik_constrained_trajectory(
     relative_actions: np.ndarray,
-    current_ee_pose: np.ndarray,
+    chunk_base_pose: np.ndarray,
     kinematics: RobotKinematics,
-    current_joint_pos: np.ndarray,
-    pos_tolerance: float = 0.02,
-    rot_tolerance: float = 0.3,
+    reset_pose: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute IK-constrained EE positions from relative actions.
 
-    This simulates what the actual robot would achieve by solving IK for each
-    predicted EE pose. Shows the difference between policy intent (ideal EE)
-    and robot capability (IK-constrained).
+    This matches the approach in visualize_dataset_predictions.py:
+    - First, solve IK to find joints that achieve chunk_base_pose from reset_pose
+    - Each action in the chunk is a relative transform from chunk_base_pose
+    - IK is solved for each target, chaining within the chunk
 
     Args:
         relative_actions: (T, 10) relative actions (pos 3D + rot 6D + gripper 1D)
-        current_ee_pose: (4, 4) current EE transformation matrix
+        chunk_base_pose: (4, 4) chunk base EE transformation matrix
         kinematics: RobotKinematics instance
-        current_joint_pos: Current joint positions in degrees
-        pos_tolerance: Position tolerance for IK verification (meters)
-        rot_tolerance: Rotation tolerance for IK verification (radians)
+        reset_pose: Starting joint positions (in degrees)
 
     Returns:
         Tuple of:
         - (T, 3) array of actual EE positions achieved via IK
         - (6,) final joint position (in degrees) after processing all actions
     """
-    from scipy.spatial.transform import Rotation
-
     T = relative_actions.shape[0]
     ee_positions = []
-    last_valid_joint = current_joint_pos.copy()
+
+    # Step 1: Find joints that achieve chunk_base_pose from reset_pose
+    # This is the "chunk_start_joints" equivalent
+    try:
+        chunk_start_joints = kinematics.inverse_kinematics(
+            reset_pose,
+            chunk_base_pose,
+            position_weight=1.0,
+            orientation_weight=0.01,
+        )
+    except Exception as e:
+        # If IK fails, use reset_pose as fallback
+        chunk_start_joints = reset_pose.copy()
+
+    # Step 2: Track IK joint positions within the chunk
+    ik_joints_tracking = chunk_start_joints.copy()
 
     for i in range(T):
         # Get desired EE pose from relative action
+        # Each action is relative to the SAME chunk_base_pose (UMI-style)
         rel_T = pose10d_to_mat(relative_actions[i, :9])
-        desired_ee_tf = current_ee_pose @ rel_T
+        target_ee = chunk_base_pose @ rel_T
 
-        # Solve IK
-        kinematics.tip_frame.T_world_frame = desired_ee_tf
-        kinematics.tip_frame.configure("task", "soft", 10.0, 0.1)
+        # Solve IK using previous IK result as initial guess
+        # This chains the IK within the chunk
+        try:
+            ik_joints_tracking = kinematics.inverse_kinematics(
+                ik_joints_tracking,  # Use previous IK result as initial guess
+                target_ee,
+                position_weight=1.0,
+                orientation_weight=0.01,
+            )
+            # Compute FK to get actual EE position achieved
+            actual_ee_T = kinematics.forward_kinematics(ik_joints_tracking)
+            ee_positions.append(actual_ee_T[:3, 3].copy())
+        except Exception as e:
+            # IK failed - add NaN to indicate discontinuity
+            ee_positions.append(np.array([np.nan, np.nan, np.nan]))
+            # Reset to chunk start joints
+            ik_joints_tracking = chunk_start_joints.copy()
 
-        # Set current joint positions as initial guess
-        current_joint_rad = np.deg2rad(last_valid_joint[:len(kinematics.joint_names)])
-        for j, name in enumerate(kinematics.joint_names):
-            kinematics.robot.set_joint(name, current_joint_rad[j])
-        kinematics.robot.update_kinematics()
-
-        # Solve
-        kinematics.solver.solve(True)
-        kinematics.robot.update_kinematics()
-
-        # Get resulting joint positions
-        joint_pos_rad = [kinematics.robot.get_joint(name) for name in kinematics.joint_names]
-        joint_pos = np.rad2deg(np.array(joint_pos_rad))
-
-        # Compute FK to get actual EE position
-        actual_ee_tf = kinematics.forward_kinematics(joint_pos)
-        pos_err = np.linalg.norm(actual_ee_tf[:3, 3] - desired_ee_tf[:3, 3])
-
-        r_desired = desired_ee_tf[:3, :3]
-        r_actual = actual_ee_tf[:3, :3]
-        r_rel = r_desired.T @ r_actual
-        rot_err = np.linalg.norm(Rotation.from_matrix(r_rel).as_rotvec())
-
-        # Only update if IK solution is valid
-        is_valid = (pos_err < pos_tolerance) and (rot_err < rot_tolerance)
-        if is_valid:
-            last_valid_joint = joint_pos
-
-        # Store the actual EE position (whether valid or not)
-        ee_positions.append(actual_ee_tf[:3, 3].copy())
-
-    return np.array(ee_positions), last_valid_joint
+    return np.array(ee_positions), ik_joints_tracking
 
 
 def plot_frame_with_ee_trajectory(
@@ -290,6 +284,7 @@ def plot_frame_with_ee_trajectory(
     axis_limits: dict[str, tuple[float, float]] | None = None,
     gt_ee_positions: np.ndarray = None,
     ik_ee_positions: np.ndarray = None,
+    use_display_frame_for_limits: bool = False,
 ):
     """
     Plot a single frame with observation image and EE trajectory.
@@ -309,6 +304,8 @@ def plot_frame_with_ee_trajectory(
         axis_limits: Optional dict with 'x', 'y', 'z' tuples for fixed axis limits
         gt_ee_positions: Ground truth future EE positions (chunk_size, 3)
         ik_ee_positions: IK-constrained EE positions (chunk_size, 3) - shows what robot can achieve
+        use_display_frame_for_limits: If True, use current_ee_position for axis limits
+                                    (useful when trajectories are in same frame as display)
     """
     fig = plt.figure(figsize=(16, 8))
 
@@ -413,12 +410,12 @@ def plot_frame_with_ee_trajectory(
             color="magenta", linestyle="-.", linewidth=2, label="IK (Robot)", alpha=0.9
         )
 
-        # Plot IK EE positions as magenta triangles
+        # Plot IK EE positions as magenta triangles (larger markers)
         ax2.scatter(
             ik_ee_positions[:, 0],
             ik_ee_positions[:, 1],
             ik_ee_positions[:, 2],
-            c="magenta", marker="^", s=40, label="IK Steps", alpha=0.8, edgecolors="black"
+            c="magenta", marker="^", s=100, label="IK Steps", alpha=0.9, edgecolors="black", linewidth=1.5
         )
 
     ax2.set_xlabel("X (m)", fontsize=10)
@@ -435,7 +432,12 @@ def plot_frame_with_ee_trajectory(
         ax2.set_zlim(axis_limits['z'])
     else:
         # Compute limits from all data
-        all_pos = np.vstack([ee_hist_array, current_ee_position.reshape(1, 3)])
+        # When ee_history is empty, start from current_ee_position (avoid origin point from wrong frame)
+        if ee_history:
+            all_pos = np.vstack([ee_hist_array, current_ee_position.reshape(1, 3)])
+        else:
+            all_pos = current_ee_position.reshape(1, 3)
+
         if pred_ee_positions is not None:
             all_pos = np.vstack([all_pos, pred_ee_positions])
         if gt_ee_positions is not None:
@@ -454,6 +456,22 @@ def plot_frame_with_ee_trajectory(
         ax2.set_xlim(x_min - x_pad, x_max + x_pad)
         ax2.set_ylim(y_min - y_pad, y_max + y_pad)
         ax2.set_zlim(z_min - z_pad, z_max + z_pad)
+
+        # Set equal aspect ratio for XYZ axes
+        # Make all axes have the same scale by extending the shorter ranges
+        x_range = (x_max + x_pad) - (x_min - x_pad)
+        y_range = (y_max + y_pad) - (y_min - y_pad)
+        z_range = (z_max + z_pad) - (z_min - z_pad)
+        max_range = max(x_range, y_range, z_range)
+
+        # Extend shorter ranges to match the maximum, centered on original range
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        z_center = (z_min + z_max) / 2
+
+        ax2.set_xlim(x_center - max_range/2, x_center + max_range/2)
+        ax2.set_ylim(y_center - max_range/2, y_center + max_range/2)
+        ax2.set_zlim(z_center - max_range/2, z_center + max_range/2)
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -1029,7 +1047,24 @@ def main():
 
         # Run inference on each frame
         ee_history = []  # Cumulative EE positions
-        current_joint_pos = reset_pose.copy()  # Track current joint position for IK
+
+        # Compute transform from world frame to reset_pose_ee frame
+        # This is done ONCE per episode to maintain consistency
+        if kinematics is not None:
+            reset_pose_ee = kinematics.forward_kinematics(reset_pose)
+
+            # Get the first frame's EE pose to compute the fixed offset
+            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
+            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
+            first_pose_6d = first_abs_state[:6]
+            first_ee_pose = pose_to_mat(first_pose_6d)
+
+            # Fixed offset from world frame to reset_pose_ee frame
+            # T_offset = reset_pose_ee @ inv(first_ee_pose)
+            T_offset_fixed = reset_pose_ee @ np.linalg.inv(first_ee_pose)
+        else:
+            reset_pose_ee = None
+            T_offset_fixed = None
 
         for frame_idx in range(start_idx, ep_end):
             sample = dataset[frame_idx]
@@ -1056,8 +1091,14 @@ def main():
             current_ee_pose = pose_to_mat(abs_pose_6d)
             current_ee_position = current_ee_pose[:3, 3].copy()
 
-            # Add to history
-            ee_history.append(current_ee_position.copy())
+            # Transform to reset_pose_ee frame if IK is enabled
+            if T_offset_fixed is not None:
+                current_ee_position_aligned = (T_offset_fixed @ np.array([current_ee_position[0], current_ee_position[1], current_ee_position[2], 1.0]))[:3]
+            else:
+                current_ee_position_aligned = current_ee_position
+
+            # Add to history (in reset_pose_ee frame if applicable)
+            ee_history.append(current_ee_position_aligned.copy())
 
             # Get ground truth action (for reference)
             gt_actions = sample['action'].cpu().numpy()  # (chunk_size, 10)
@@ -1074,25 +1115,29 @@ def main():
                 pred_actions = pred_actions["action"]
             pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
 
-            # Compute predicted EE trajectory (absolute positions)
-            pred_ee_positions = compute_predicted_ee_trajectory(pred_actions, current_ee_pose)
+            # Compute predicted EE trajectory
+            # IMPORTANT: Use reset_pose_ee as the base, NOT current_ee_pose!
+            # This ensures predicted trajectory aligns with IK trajectory (both from reset_pose_ee)
+            pred_ee_positions = compute_predicted_ee_trajectory(pred_actions, reset_pose_ee)
 
-            # Compute ground truth EE trajectory (absolute positions)
-            gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, current_ee_pose)
+            # Compute ground truth EE trajectory (also from reset_pose_ee for comparison)
+            gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, reset_pose_ee)
 
             # Compute IK-constrained trajectory if enabled
             # IMPORTANT: Only process n_action_steps from chunk to match deployment behavior!
             # In deployment, we execute n_action_steps actions, then predict a new chunk.
             ik_ee_positions = None
             if kinematics is not None:
-                ik_ee_positions, current_joint_pos = compute_ik_constrained_trajectory(
+                # All trajectories (pred, GT, IK) are now in reset_pose_ee frame - no transformation needed!
+                ik_ee_positions, _ = compute_ik_constrained_trajectory(
                     relative_actions=pred_actions[:args.n_action_steps],  # Only first N actions
-                    current_ee_pose=current_ee_pose,
+                    chunk_base_pose=reset_pose_ee,  # Use reset_pose_ee as chunk base
                     kinematics=kinematics,
-                    current_joint_pos=current_joint_pos,
-                    pos_tolerance=args.pos_tolerance,
-                    rot_tolerance=args.rot_tolerance,
+                    reset_pose=reset_pose,
                 )
+            else:
+                # No IK - trajectories are in world frame, use original current_ee_position
+                pass
 
             # Save action predictions to text file
             actions_output = ep_output_dir / f"actions_{frame_idx:04d}.txt"
@@ -1110,11 +1155,16 @@ def main():
 
             # Generate and save plot
             frame_output = ep_output_dir / f"frame_{frame_idx:04d}.jpg"
+            # For visualization, show reset_pose_ee position as "current EE" since all trajectories
+            # are relative to reset_pose_ee (simulating robot starting from reset_pose)
+            # When IK is enabled, don't show history since it's in a different frame
+            current_ee_for_viz = reset_pose_ee[:3, 3].copy() if kinematics is not None else current_ee_position
+            ee_history_for_viz = [] if kinematics is not None else ee_history
             plot_frame_with_ee_trajectory(
                 obs_image=obs_img,
-                ee_history=ee_history,
+                ee_history=ee_history_for_viz,
                 pred_ee_positions=pred_ee_positions,
-                current_ee_position=current_ee_position,
+                current_ee_position=current_ee_for_viz,
                 output_path=frame_output,
                 episode_idx=ep_idx,
                 frame_idx=frame_idx,
