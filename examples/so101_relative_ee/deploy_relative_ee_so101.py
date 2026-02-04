@@ -44,6 +44,7 @@ from typing import Any
 import numpy as np
 import cv2
 import placo
+import rerun as rr
 import torch
 import yaml
 
@@ -69,6 +70,7 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
 )
 from lerobot.utils.utils import init_logging
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from placo_utils.visualization import robot_frame_viz, points_viz, robot_viz
 
 # Motor names for SO101
@@ -331,8 +333,17 @@ def main():
         default=0.0,
         help="Delay between chunks: >0 = sleep N seconds, <0 = wait for Enter key (interactive mode)",
     )
+    parser.add_argument(
+        "--display_data",
+        action="store_true",
+        help="Enable rerun visualization for actions and observations (joint poses)",
+    )
 
     args = parser.parse_args()
+
+    # Initialize rerun if display_data is enabled
+    if args.display_data:
+        init_rerun(session_name="deploy_relative_ee")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
@@ -735,6 +746,15 @@ def main():
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
 
+            # Log to rerun if display_data is enabled
+            if args.display_data:
+                # Prepare action dict for rerun (use joint positions)
+                action_for_rerun = {f"{name}.pos": joints_action.get(f"{name}.pos", 0.0) for name in MOTOR_NAMES}
+                # Prepare observation dict for rerun
+                obs_for_rerun = {f"{name}.pos": obs_dict.get(f"{name}.pos", 0.0) for name in MOTOR_NAMES}
+                obs_for_rerun["gripper.pos"] = obs_dict.get("gripper.pos", 0.0)
+                log_rerun_data(observation=obs_for_rerun, action=action_for_rerun)
+
             # Update sim_robot to reflect actual robot position (not commanded position)
             if args.placo_vis and sim_robot is not None:
                 # Small delay to let robot start moving, then get FRESH observation
@@ -792,6 +812,13 @@ def main():
                 cv2.destroyAllWindows()
             except Exception:
                 pass  # Ignore cv2 errors in headless mode
+
+        # Shutdown rerun visualization
+        if args.display_data:
+            try:
+                rr.rerun_shutdown()
+            except Exception:
+                pass  # Ignore rerun errors
 
         # Shutdown placo visualization
         if sim_robot is not None:

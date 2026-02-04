@@ -4,8 +4,8 @@
 Simple script to read and display SO101 robot joint positions.
 
 Usage:
-    python read_joints.py --port /dev/ttyACM0
-    python read_joints.py --port /dev/ttyACM0 --display
+    python read_joints.py --robot_id oscar_so101_follower --robot_port /dev/ttyACM0
+    python read_joints.py --robot_id oscar_so101_follower --robot_port /dev/ttyACM0 --display
 """
 
 import argparse
@@ -30,10 +30,16 @@ MOTOR_NAMES = [
 def main():
     parser = argparse.ArgumentParser(description="Read SO101 robot joint positions")
     parser.add_argument(
-        "--port",
+        "--robot_port",
         type=str,
         default="/dev/ttyACM0",
         help="Serial port for SO101 robot connection",
+    )
+    parser.add_argument(
+        "--robot_id",
+        type=str,
+        default="so101",
+        help="Robot ID for loading/saving calibration files",
     )
     parser.add_argument(
         "--fps",
@@ -54,7 +60,8 @@ def main():
 
     # Create robot config
     robot_config = SO101FollowerConfig(
-        port=args.port,
+        id=args.robot_id,
+        port=args.robot_port,
         use_degrees=True,
         cameras={},
     )
@@ -62,7 +69,7 @@ def main():
     # Connect to robot
     robot = SO101Follower(robot_config)
     robot.connect(calibrate=False)
-    print(f"Robot connected on {args.port}")
+    print(f"Robot connected on {args.robot_port}")
 
     # Disable torque for all motors (free move mode)
     print("Disabling torque for all motors (robot can be moved freely)...")

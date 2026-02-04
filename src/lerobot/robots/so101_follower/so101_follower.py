@@ -152,9 +152,15 @@ class SO101Follower(Robot):
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
                 # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                if motor == "elbow_flex":
+                    self.bus.write("P_Coefficient", motor, 45)
+                    self.bus.write("I_Coefficient", motor, 0)
+
+                else:
+                    self.bus.write("P_Coefficient", motor, 25)
+                    self.bus.write("I_Coefficient", motor, 0)
+
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
-                self.bus.write("I_Coefficient", motor, 0)
                 self.bus.write("D_Coefficient", motor, 32)
 
                 if motor == "gripper":
