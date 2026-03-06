@@ -432,18 +432,64 @@ def main():
     # ========================================================================
     logger.info("Extracting ground truth trajectory...")
 
-    # RelativeEEDataset.action contains relative poses, not absolute EE poses
-    # Need to get absolute EE poses from parent LeRobotDataset
+    # The dataset stores EE poses in a reference frame where the first frame
+    # is at origin. We need to compute the full transformation from this
+    # dataset frame to the robot's base frame, then apply it to all GT poses.
+    # This matches the logic in visualize_predictions.py: target_ee = chunk_base_pose @ rel_T
+
+    # Get first frame to compute the transformation
+    first_frame = LeRobotDataset.__getitem__(dataset, episode_start_idx)
+    first_action = first_frame['action'].numpy()
+    if first_action.ndim == 1:
+        first_ee_pose_6d = first_action[:6]
+    else:
+        first_ee_pose_6d = first_action[0, :6]
+
+    # The first action in the dataset is at origin [0,0,0, rot]
+    # We compute where this pose actually is in the robot frame via IK
+    dataset_origin_T = pose_to_mat(first_ee_pose_6d)
+    initial_safe_joints = np.array([
+    -3.43,    # shoulder_pan
+    -94.77,   # shoulder_lift
+    82.92,    # elbow_flex
+    17.01,    # wrist_flex
+    -0.66,    # wrist_roll
+    55.28,    # gripper
+])
+
+
+    try:
+        # Use FK of initial_safe_joints as the robot origin
+        # This ensures the GT trajectory starts from the actual EE position at frame 0
+        robot_origin_T = kinematics.forward_kinematics(initial_safe_joints)
+        logger.info(f"Robot origin EE position (from initial_safe_joints FK): {robot_origin_T[:3, 3]}")
+    except Exception as e:
+        logger.warning(f"Failed to compute FK for initial_safe_joints: {e}")
+        robot_origin_T = np.eye(4)
+
+    # Compute the transform that maps dataset frame -> robot frame
+    # At frame 0: dataset_T = dataset_origin_T, and we want robot_T = robot_origin_T
+    # So: robot_T = robot_origin_T @ inv(dataset_origin_T) @ dataset_T
+    dataset_to_robot_T = robot_origin_T @ np.linalg.inv(dataset_origin_T)
+
+    # Transform each GT pose: robot_T = dataset_to_robot_T @ dataset_T
     gt_positions = []
     for i in range(episode_start_idx, episode_end_idx):
-        # Get absolute EE pose from parent dataset
         parent_frame = LeRobotDataset.__getitem__(dataset, i)
         parent_action = parent_frame['action'].numpy()
         if parent_action.ndim == 1:
-            ee_pos = parent_action[:3]  # [x, y, z]
+            ee_pose_6d = parent_action[:6]
         else:
-            ee_pos = parent_action[0, :3]
-        gt_positions.append(ee_pos.copy())
+            ee_pose_6d = parent_action[0, :6]
+
+        # Convert dataset pose to 4x4 transform matrix
+        dataset_T = pose_to_mat(ee_pose_6d)
+
+        # Apply full transformation: robot_T = dataset_to_robot_T @ dataset_T
+        robot_T = dataset_to_robot_T @ dataset_T
+
+        # Extract position
+        gt_positions.append(robot_T[:3, 3].copy())
 
     gt_positions = np.array(gt_positions)
     logger.info(f"GT trajectory: {len(gt_positions)} points")
@@ -460,7 +506,7 @@ def main():
 
     # Visualize full GT trajectory in blue
     points_viz("gt_trajectory", gt_positions, color=0x0000ff)
-    logger.info("GT trajectory visualized in BLUE")
+    logger.info("GT trajectory visualized in BLUE (4x4 transform matrix chaining)")
 
     logger.info("Digital twin initialized")
     logger.info("Open http://127.0.0.1:7000/static/ to see visualization")
@@ -485,11 +531,12 @@ def main():
     # Main Visualization Loop
     # ========================================================================
     try:
+      while True:
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
 
-        current_joints = np.array([0, -90, 90, 45, 0, 50])  # Initial joint values
+        current_joints = initial_safe_joints.copy()  # Initial joint values
 
         for step_idx in range(start_step, end_step):
             t0 = time.perf_counter()
@@ -517,20 +564,12 @@ def main():
 
             # For relative EE dataset, we need the current robot joints
             # Since we're following GT, use FK to get joints from EE pose
-            T_ee = pose_to_mat(gt_ee_pose_6d)
+            # Transform dataset pose to robot base frame (same as GT trajectory)
+            T_ee = dataset_to_robot_T @ pose_to_mat(gt_ee_pose_6d)
 
             if step_idx == start_step:
-                # Initialize: use IK to get joints from first GT pose
-                try:
-                    current_joints = kinematics.inverse_kinematics(
-                        np.array([0, -90, 90, 45, 0, 50]),  # Initial guess
-                        T_ee,
-                        position_weight=1.0,
-                        orientation_weight=0.01,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to get initial IK: {e}")
-                    current_joints = np.array([0, -90, 90, 45, 0, 50])
+                # Use initial safe joints directly for the first frame
+                current_joints = initial_safe_joints.copy()
             else:
                 # Use IK to get to current GT pose from previous joints
                 try:
@@ -659,7 +698,11 @@ def main():
             robot_frame_viz(sim_robot.robot, "gripper_frame_link")
 
             # Print status every step
-            logger.info(f"Step {step_idx}/{end_step-1}: GT pos {gt_ee_pos}, Inference: {inference_time*1000:.1f}ms")
+            logger.info(f"Step {step_idx}/{end_step-1}: GT pos {gt_ee_pos}, Inference: {inference_time*1000:.1f}ms, Joints: {np.array2string(current_joints, precision=2, separator=', ')}")
+
+            # Pause on first frame of each loop for inspection
+            if step_idx == start_step:
+                input("First frame visualized. Press Enter to continue...")
 
             # Maintain timing
             elapsed = time.perf_counter() - t0
@@ -667,14 +710,10 @@ def main():
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        logger.info("\nVisualization complete!")
-        logger.info("Press Ctrl+C to exit...")
+        logger.info("\nLoop complete, restarting...")
 
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("Done!")
+    except KeyboardInterrupt:
+        logger.info("Done!")
 
     finally:
         # Clean up cv2 windows
