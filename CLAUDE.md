@@ -82,6 +82,11 @@ lerobot-dataset-viz --repo-id lerobot/pusht --episode-index 0
 
 **Datasets (`src/lerobot/datasets/`)**
 - `LeRobotDataset`: Main dataset class that loads from Hugging Face Hub or local folders
+- `RelativeEEDataset`: UMI-style wrapper that transforms absolute EE poses to relative SE(3) transformations
+  - Uses 10D pose representation: `[dx, dy, dz, rot6d_0..5, gripper]`
+  - Temporal observations with `obs_state_horizon` (historical frames)
+  - All actions in a chunk are relative to the same base pose (chunk start), NOT chained
+  - Format: `T_rel = T_base^{-1} @ T_future` (training), `T_abs = T_base @ T_rel` (inference)
 - Stores observations (images, states) and actions as PyTorch tensors
 - Uses Hugging Face `datasets` library with Arrow/Parquet backend
 - Videos stored as mp4 files to save space
@@ -113,8 +118,19 @@ lerobot-dataset-viz --repo-id lerobot/pusht --episode-index 0
 
 **Processor Pipeline (`src/lerobot/processor/`)**
 - `PolicyProcessorPipeline`: Chain of processors for input/output transformation
-- Common processors: normalization, device placement, delta actions, observation filtering
-- Processors are stateful and serializable
+- `RobotProcessorPipeline`: Chain for robot action/observation transformation
+- Common processors: normalization, device placement, delta actions, observation filtering, temporal flatten, temporal normalize
+- Processors are stateful and serializable, registered via `ProcessorStepRegistry`
+- Key processors for relative EE deployment:
+  - `Relative10DAccumulatedToAbsoluteEE`: Converts 10D relative actions to absolute EE poses
+  - `InverseKinematicsEEToJoints`: Converts EE poses to joint commands via IK
+  - `EEBoundsAndSafety`: Clips to workspace bounds and checks for unsafe jumps
+
+**Robot Kinematics (`src/lerobot/model/kinematics.py`)**
+- `RobotKinematics`: Placo-based FK/IK solver
+- Uses URDF for robot description
+- Target frame is typically `gripper_frame_link` for SO101
+- SO101's `gripper_frame_link` has `rpy="0 3.14159 0"` (180° rotation around Y-axis)
 
 **Configs (`src/lerobot/configs/`)**
 - `parser.py`: Draccus-based CLI parser with `@parser.wrap()` decorator
@@ -137,7 +153,9 @@ lerobot-dataset-viz --repo-id lerobot/pusht --episode-index 0
 
 4. **Config-Driven**: All training/eval parameters are dataclasses in `configs/`, overridden via CLI using Draccus.
 
-5. **Dataset Format**: LeRobotDataset wraps Hugging Face datasets with video support, episode indexing, and temporal querying.
+5. **Processor Pipeline**: Modular transformation chains registered via `@ProcessorStepRegistry.register("name")`. Use `RobotProcessorPipeline` for deployment to convert policy outputs to robot commands.
+
+6. **UMI-Style Relative Actions**: `RelativeEEDataset` and related processors use SE(3) transformations where actions are relative to a base pose. Critical: all actions in a chunk are relative to the SAME base, not accumulated sequentially.
 
 ## Adding New Features
 
@@ -153,6 +171,13 @@ lerobot-dataset-viz --repo-id lerobot/pusht --episode-index 0
 ### New Dataset
 1. Update `available_datasets_per_env` in `lerobot/__init__.py`
 
+### New Processor
+1. Create a processor class inheriting from `ProcessorStep`, `RobotActionProcessorStep`, or `ObservationProcessorStep`
+2. Decorate with `@ProcessorStepRegistry.register("name")`
+3. Implement `action()`, `observation()`, or `__call__()` as appropriate
+4. Implement `transform_features()` to update feature metadata
+5. Import and register in `src/lerobot/processor/__init__.py`
+
 ## Configuration System
 
 - Use `@parser.wrap()` decorator on main functions for automatic CLI parsing
@@ -160,10 +185,33 @@ lerobot-dataset-viz --repo-id lerobot/pusht --episode-index 0
 - Resume training with `--config_path=outputs/.../train_config.json --resume=true`
 - Pretrained policies loaded via `--policy.path=<repo_id_or_local_path>`
 
+## Relative EE Action Format (UMI-Style)
+
+For policies trained with `RelativeEEDataset`:
+
+**10D Pose Representation**: `[dx, dy, dz, rot6d_0, rot6d_1, rot6d_2, rot6d_3, rot6d_4, rot6d_5, gripper]`
+- `dx, dy, dz`: Translation along the gripper frame's X, Y, Z axes
+- `rot6d_0..5`: First two rows of the rotation matrix (6D rotation representation)
+- `gripper`: Gripper state in [0, 1] (normalized)
+
+**Action Application**:
+```
+At chunk start:
+  chunk_base_pose = forward_kinematics(current_joints)
+
+For each action in chunk:
+  T_rel = pose10d_to_mat(action[:9])
+  T_target = chunk_base_pose @ T_rel  # NOT chaining!
+  target_joints = inverse_kinematics(current_joints, T_target)
+```
+
+**Critical**: All actions in a chunk are relative to `chunk_base_pose`, NOT accumulated sequentially. This matches how `RelativeEEDataset` generates training data.
+
 ## Project Structure Notes
 
 - `src/lerobot/`: Main package
 - `tests/`: Pytest test suite (mirrors `src/lerobot/` structure)
-- `examples/`: Example scripts
+- `examples/`: Example scripts (including `examples/so101_relative_ee/` for UMI-style deployment)
 - `configs/`: YAML config files referenced in documentation
 - `outputs/`: Training outputs (checkpoints, logs, videos)
+- `placo_sim/`: Placo-based simulation scripts for visualization
