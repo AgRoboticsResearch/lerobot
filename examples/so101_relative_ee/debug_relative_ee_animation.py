@@ -695,7 +695,7 @@ def create_trajectory_projection_views(
 ):
     """
     Create a 3-figure image showing trajectory projections (x-y, y-z, x-z views).
-    
+
     Args:
         gt_trajectories: List of GT trajectory arrays, each shape (N, 3)
         pred_trajectories: List of predicted trajectory arrays, each shape (N, 3)
@@ -704,43 +704,61 @@ def create_trajectory_projection_views(
         episode_idx: Episode index for title
     """
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    
-    # Concatenate all trajectories for each type
+
+    # For GT: just show the concatenated full trajectory (it's the actual path)
     all_gt = np.concatenate(gt_trajectories, axis=0) if gt_trajectories else np.empty((0, 3))
-    all_pred = np.concatenate(pred_trajectories, axis=0) if pred_trajectories else np.empty((0, 3))
-    all_ik = np.concatenate(ik_trajectories, axis=0) if ik_trajectories else None
-    
+
+    # For predictions: show only every Nth trajectory to avoid clutter
+    sample_every = max(1, len(pred_trajectories) // 10)  # Show ~10 sample predictions
+    sampled_pred = [pred_trajectories[i] for i in range(0, len(pred_trajectories), sample_every)]
+
+    # For IK: same sampling
+    if ik_trajectories:
+        sampled_ik = [ik_trajectories[i] for i in range(0, len(ik_trajectories), sample_every)]
+    else:
+        sampled_ik = None
+
     # Define projections: (x_idx, y_idx, xlabel, ylabel)
     projections = [
         (0, 1, 'X (m)', 'Y (m)'),      # x-y view
-        (1, 2, 'Y (m)', 'Z (m)'),      # y-z view  
+        (1, 2, 'Y (m)', 'Z (m)'),      # y-z view
         (0, 2, 'X (m)', 'Z (m)'),      # x-z view
     ]
-    
+
     for ax_idx, (x_idx, y_idx, xlabel, ylabel) in enumerate(projections):
         ax = axes[ax_idx]
-        
-        # Plot GT trajectory
+
+        # Plot GT trajectory (single continuous line)
         if len(all_gt) > 0:
-            ax.plot(all_gt[:, x_idx], all_gt[:, y_idx], 'b-', linewidth=1, alpha=0.5, label='GT')
-            ax.scatter(all_gt[0, x_idx], all_gt[0, y_idx], c='blue', s=30, marker='o', label='GT start')
-            ax.scatter(all_gt[-1, x_idx], all_gt[-1, y_idx], c='blue', s=30, marker='x', label='GT end')
-        
-        # Plot predicted trajectory
-        if len(all_pred) > 0:
-            ax.plot(all_pred[:, x_idx], all_pred[:, y_idx], 'g-', linewidth=1, alpha=0.5, label='Pred')
-        
-        # Plot IK trajectory if available
-        if all_ik is not None and len(all_ik) > 0:
-            ax.plot(all_ik[:, x_idx], all_ik[:, y_idx], 'm-', linewidth=1, alpha=0.5, label='IK')
-        
+            ax.plot(all_gt[:, x_idx], all_gt[:, y_idx], 'b-', linewidth=2, alpha=0.8, label='GT', zorder=10)
+            ax.scatter(all_gt[0, x_idx], all_gt[0, y_idx], c='blue', s=50, marker='o', zorder=11)
+            ax.scatter(all_gt[-1, x_idx], all_gt[-1, y_idx], c='blue', s=50, marker='x', zorder=11)
+
+        # Plot sampled predicted trajectories (thinner, more transparent)
+        for pred_traj in sampled_pred:
+            if len(pred_traj) > 0:
+                ax.plot(pred_traj[:, x_idx], pred_traj[:, y_idx], 'g-', linewidth=0.5, alpha=0.3)
+
+        # Add legend for predicted
+        if len(sampled_pred) > 0 and len(sampled_pred[0]) > 0:
+            ax.plot([], [], 'g-', linewidth=0.5, alpha=0.3, label=f'Pred ({len(sampled_pred)} samples)')
+
+        # Plot sampled IK trajectories
+        if sampled_ik:
+            for ik_traj in sampled_ik:
+                if len(ik_traj) > 0:
+                    ax.plot(ik_traj[:, x_idx], ik_traj[:, y_idx], 'm-', linewidth=0.5, alpha=0.3)
+
+            if len(sampled_ik) > 0 and len(sampled_ik[0]) > 0:
+                ax.plot([], [], 'm-', linewidth=0.5, alpha=0.3, label=f'IK ({len(sampled_ik)} samples)')
+
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(f'{xlabel}-{ylabel} View - Episode {episode_idx}')
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
         ax.axis('equal')
-    
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
