@@ -686,83 +686,212 @@ def read_actions_file(input_path: Path) -> dict:
 
 
 
-def create_trajectory_projection_views(
-    gt_trajectories: list[np.ndarray],
-    pred_trajectories: list[np.ndarray],
-    ik_trajectories: list[np.ndarray] | None,
+def create_trajectory_projection_view(
+    gt_trajectory: np.ndarray,
+    pred_trajectory: np.ndarray,
+    ik_trajectory: np.ndarray | None,
     output_path: Path,
-    episode_idx: int,
+    frame_idx: int,
 ):
     """
-    Create a 3-figure image showing trajectory projections (x-y, y-z, x-z views).
+    Create a 3-subplot image showing trajectory projections (x-y, y-z, x-z views).
 
     Args:
-        gt_trajectories: List of GT trajectory arrays, each shape (N, 3)
-        pred_trajectories: List of predicted trajectory arrays, each shape (N, 3)
-        ik_trajectories: List of IK trajectory arrays, each shape (N, 3), or None
+        gt_trajectory: GT trajectory array, shape (N, 3)
+        pred_trajectory: Predicted trajectory array, shape (N, 3)
+        ik_trajectory: IK trajectory array, shape (N, 3), or None
         output_path: Path to save the image
-        episode_idx: Episode index for title
+        frame_idx: Frame index for title
     """
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-    # For GT: just show the concatenated full trajectory (it's the actual path)
-    all_gt = np.concatenate(gt_trajectories, axis=0) if gt_trajectories else np.empty((0, 3))
-
-    # For predictions: show only every Nth trajectory to avoid clutter
-    sample_every = max(1, len(pred_trajectories) // 10)  # Show ~10 sample predictions
-    sampled_pred = [pred_trajectories[i] for i in range(0, len(pred_trajectories), sample_every)]
-
-    # For IK: same sampling
-    if ik_trajectories:
-        sampled_ik = [ik_trajectories[i] for i in range(0, len(ik_trajectories), sample_every)]
-    else:
-        sampled_ik = None
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
     # Define projections: (x_idx, y_idx, xlabel, ylabel)
     projections = [
-        (0, 1, 'X (m)', 'Y (m)'),      # x-y view
-        (1, 2, 'Y (m)', 'Z (m)'),      # y-z view
-        (0, 2, 'X (m)', 'Z (m)'),      # x-z view
+        (0, 1, 'X', 'Y'),      # x-y view
+        (1, 2, 'Y', 'Z'),      # y-z view
+        (0, 2, 'X', 'Z'),      # x-z view
     ]
 
     for ax_idx, (x_idx, y_idx, xlabel, ylabel) in enumerate(projections):
         ax = axes[ax_idx]
 
-        # Plot GT trajectory (single continuous line)
-        if len(all_gt) > 0:
-            ax.plot(all_gt[:, x_idx], all_gt[:, y_idx], 'b-', linewidth=2, alpha=0.8, label='GT', zorder=10)
-            ax.scatter(all_gt[0, x_idx], all_gt[0, y_idx], c='blue', s=50, marker='o', zorder=11)
-            ax.scatter(all_gt[-1, x_idx], all_gt[-1, y_idx], c='blue', s=50, marker='x', zorder=11)
+        # Plot GT trajectory
+        if len(gt_trajectory) > 0:
+            ax.plot(gt_trajectory[:, x_idx], gt_trajectory[:, y_idx], 'b-', linewidth=2, alpha=0.8, label='GT')
+            ax.scatter(gt_trajectory[0, x_idx], gt_trajectory[0, y_idx], c='blue', s=30, marker='o')
 
-        # Plot sampled predicted trajectories (thinner, more transparent)
-        for pred_traj in sampled_pred:
-            if len(pred_traj) > 0:
-                ax.plot(pred_traj[:, x_idx], pred_traj[:, y_idx], 'g-', linewidth=0.5, alpha=0.3)
+        # Plot predicted trajectory
+        if len(pred_trajectory) > 0:
+            ax.plot(pred_trajectory[:, x_idx], pred_trajectory[:, y_idx], 'g-', linewidth=1.5, alpha=0.8, label='Pred')
+            ax.scatter(pred_trajectory[0, x_idx], pred_trajectory[0, y_idx], c='green', s=20, marker='s')
 
-        # Add legend for predicted
-        if len(sampled_pred) > 0 and len(sampled_pred[0]) > 0:
-            ax.plot([], [], 'g-', linewidth=0.5, alpha=0.3, label=f'Pred ({len(sampled_pred)} samples)')
+        # Plot IK trajectory if available
+        if ik_trajectory is not None and len(ik_trajectory) > 0:
+            ax.plot(ik_trajectory[:, x_idx], ik_trajectory[:, y_idx], 'm-', linewidth=1.5, alpha=0.8, label='IK')
 
-        # Plot sampled IK trajectories
-        if sampled_ik:
-            for ik_traj in sampled_ik:
-                if len(ik_traj) > 0:
-                    ax.plot(ik_traj[:, x_idx], ik_traj[:, y_idx], 'm-', linewidth=0.5, alpha=0.3)
-
-            if len(sampled_ik) > 0 and len(sampled_ik[0]) > 0:
-                ax.plot([], [], 'm-', linewidth=0.5, alpha=0.3, label=f'IK ({len(sampled_ik)} samples)')
-
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_title(f'{xlabel}-{ylabel} View - Episode {episode_idx}')
-        ax.legend(loc='best')
+        ax.set_xlabel(f'{xlabel} (m)')
+        ax.set_ylabel(f'{ylabel} (m)')
+        ax.set_title(f'Frame {frame_idx}')
+        ax.legend(loc='best', fontsize='small')
         ax.grid(True, alpha=0.3)
         ax.axis('equal')
 
     plt.tight_layout()
+    plt.savefig(output_path, dpi=100, bbox_inches="tight")
+    plt.close()
+
+
+def plot_frame_with_ee_trajectory_debug(
+    gt_trajectory: np.ndarray,
+    pred_trajectory: np.ndarray,
+    ik_trajectory: np.ndarray | None,
+    base_T: np.ndarray,
+    ee_frame_T: np.ndarray,
+    ee_frame_name: str,
+    output_path: Path,
+    frame_idx: int,
+):
+    """
+    Create a 3D visualization showing base frame, EE frame, and trajectories with RGB axes.
+
+    Args:
+        gt_trajectory: GT trajectory array, shape (N, 3)
+        pred_trajectory: Predicted trajectory array, shape (N, 3)
+        ik_trajectory: IK trajectory array, shape (N, 3), or None
+        base_T: Base frame transform (4x4)
+        ee_frame_T: EE frame transform (4x4)
+        ee_frame_name: Name of the EE frame
+        output_path: Path to save the plot
+        frame_idx: Frame index for title
+    """
+    fig = plt.figure(figsize=(14, 10))
+    ax = fig.add_subplot(1, 1, 1, projection="3d")
+
+    # Helper function to draw RGB frame axes
+    def draw_frame_axes(origin, R, length=0.05, label_prefix=""):
+        """Draw RGB axes for a coordinate frame."""
+        # X-axis = Red, Y-axis = Green, Z-axis = Blue
+        colors = ['red', 'green', 'blue']
+        labels = ['X', 'Y', 'Z']
+
+        for i in range(3):
+            # Direction vector for this axis
+            direction = R[:, i]
+            end_point = origin + direction * length
+
+            # Draw the axis line
+            ax.plot(
+                [origin[0], end_point[0]],
+                [origin[1], end_point[1]],
+                [origin[2], end_point[2]],
+                color=colors[i], linewidth=3, alpha=0.9
+            )
+
+            # Add label at the end
+            ax.text(
+                end_point[0], end_point[1], end_point[2],
+                f'{label_prefix}{labels[i]}',
+                color=colors[i], fontsize=10, fontweight='bold'
+            )
+
+    # Draw base_link frame at origin (RGB axes)
+    base_origin = base_T[:3, 3]
+    base_R = base_T[:3, :3]
+    draw_frame_axes(base_origin, base_R, length=0.1, label_prefix="Base ")
+
+    # Draw EE frame (RGB axes)
+    ee_origin = ee_frame_T[:3, 3]
+    ee_R = ee_frame_T[:3, :3]
+    draw_frame_axes(ee_origin, ee_R, length=0.08, label_prefix="EE ")
+
+    # Add a line from base origin to EE origin (dashed gray)
+    ax.plot(
+        [base_origin[0], ee_origin[0]],
+        [base_origin[1], ee_origin[1]],
+        [base_origin[2], ee_origin[2]],
+        'gray', linestyle='--', linewidth=1, alpha=0.5
+    )
+
+    # Plot GT trajectory
+    if len(gt_trajectory) > 0:
+        ax.plot(
+            gt_trajectory[:, 0], gt_trajectory[:, 1], gt_trajectory[:, 2],
+            'b-', linewidth=2, alpha=0.7, label='GT trajectory'
+        )
+        ax.scatter(
+            gt_trajectory[0, 0], gt_trajectory[0, 1], gt_trajectory[0, 2],
+            c='blue', s=50, marker='o'
+        )
+        ax.scatter(
+            gt_trajectory[-1, 0], gt_trajectory[-1, 1], gt_trajectory[-1, 2],
+            c='blue', s=50, marker='x'
+        )
+
+    # Plot predicted trajectory
+    if len(pred_trajectory) > 0:
+        ax.plot(
+            pred_trajectory[:, 0], pred_trajectory[:, 1], pred_trajectory[:, 2],
+            'g-', linewidth=2, alpha=0.7, label='Predicted trajectory'
+        )
+        ax.scatter(
+            pred_trajectory[0, 0], pred_trajectory[0, 1], pred_trajectory[0, 2],
+            c='green', s=40, marker='s'
+        )
+
+    # Plot IK trajectory if available
+    if ik_trajectory is not None and len(ik_trajectory) > 0:
+        ax.plot(
+            ik_trajectory[:, 0], ik_trajectory[:, 1], ik_trajectory[:, 2],
+            'm-', linewidth=2, alpha=0.7, label='IK trajectory'
+        )
+
+    # Add sphere at origin to show base frame location
+    u, v = np.mgrid[0:2*np.pi:20j, 0:np.pi:10j]
+    sphere_x = 0.02 * np.cos(u) * np.sin(v)
+    sphere_y = 0.02 * np.sin(u) * np.sin(v)
+    sphere_z = 0.02 * np.cos(v)
+    ax.plot_surface(sphere_x, sphere_y, sphere_z, color='gray', alpha=0.2)
+
+    # Labels and formatting
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title(f'Frame {frame_idx} - Frames & Trajectories\\nBase Frame (RGB at origin), EE Frame (RGB offset)', fontsize=12)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+
+    # Make axes equal scale
+    all_points = []
+    all_points.append(base_origin)
+    all_points.append(ee_origin)
+    if len(gt_trajectory) > 0:
+        all_points.extend(gt_trajectory)
+    if len(pred_trajectory) > 0:
+        all_points.extend(pred_trajectory)
+    if ik_trajectory is not None and len(ik_trajectory) > 0:
+        all_points.extend(ik_trajectory)
+
+    all_points = np.array(all_points)
+    x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
+    y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
+    z_min, z_max = all_points[:, 2].min(), all_points[:, 2].max()
+
+    max_range = max(x_max - x_min, y_max - y_min, z_max - z_min)
+    x_center = (x_min + x_max) / 2
+    y_center = (y_min + y_max) / 2
+    z_center = (z_min + z_max) / 2
+
+    ax.set_xlim(x_center - max_range/2, x_center + max_range/2)
+    ax.set_ylim(y_center - max_range/2, y_center + max_range/2)
+    ax.set_zlim(z_center - max_range/2, z_center + max_range/2)
+
+    # Set viewing angle
+    ax.view_init(elev=20, azim=45)
+
+    plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Trajectory projection views saved to: {output_path}")
+
 
 def create_video_from_frames(
     frames_dir: Path,
@@ -1126,10 +1255,6 @@ def main():
 
         # Run inference on each frame
         ee_history = []  # Cumulative EE positions
-        # Collect trajectories for projection views
-        gt_traj_list = []  # List to collect GT trajectories
-        pred_traj_list = []  # List to collect predicted trajectories
-        ik_traj_list = [] if kinematics is not None else None  # List to collect IK trajectories
 
         # Compute transform from world frame to reset_pose_ee frame
         # This is done ONCE per episode to maintain consistency
@@ -1219,12 +1344,6 @@ def main():
                     reset_pose=reset_pose,
                 )
 
-            # Collect trajectories for projection views
-            gt_traj_list.append(gt_ee_positions)
-            pred_traj_list.append(pred_ee_positions)
-            if ik_traj_list is not None and ik_ee_positions is not None:
-                ik_traj_list.append(ik_ee_positions)
-
             # Save action predictions to text file
             actions_output = ep_output_dir / f"actions_{frame_idx:04d}.txt"
             write_actions_file(
@@ -1238,6 +1357,32 @@ def main():
                 ik_ee_positions=ik_ee_positions,
                 n_action_steps=args.n_action_steps if kinematics is not None else None,
             )
+
+            # Save trajectory projection view (x-y, y-z, x-z)
+            traj_output = ep_output_dir / f"traj_{frame_idx:04d}.jpg"
+            create_trajectory_projection_view(
+                gt_trajectory=gt_ee_positions,
+                pred_trajectory=pred_ee_positions,
+                ik_trajectory=ik_ee_positions,
+                output_path=traj_output,
+                frame_idx=frame_idx,
+            )
+
+            # Save debug view with base frame, EE frame (RGB axes), and trajectories
+            if kinematics is not None:
+                # Create base frame transform (identity at origin)
+                base_T = np.eye(4)
+                debug_output = ep_output_dir / f"debug_{frame_idx:04d}.jpg"
+                plot_frame_with_ee_trajectory_debug(
+                    gt_trajectory=gt_ee_positions,
+                    pred_trajectory=pred_ee_positions,
+                    ik_trajectory=ik_ee_positions,
+                    base_T=base_T,
+                    ee_frame_T=reset_pose_ee,
+                    ee_frame_name=args.target_frame,
+                    output_path=debug_output,
+                    frame_idx=frame_idx,
+                )
 
             # Generate and save plot
             frame_output = ep_output_dir / f"frame_{frame_idx:04d}.jpg"
@@ -1269,17 +1414,6 @@ def main():
             logger.info("  Creating video...")
             video_output = output_dir / f"episode_{ep_idx}.mp4"
             create_video_from_frames(ep_output_dir, video_output, fps=args.video_fps)
-
-        # Create trajectory projection views (x-y, y-z, x-z)
-        logger.info("  Creating trajectory projection views...")
-        projection_output = output_dir / f"episode_{ep_idx}.png"
-        create_trajectory_projection_views(
-            gt_trajectories=gt_traj_list,
-            pred_trajectories=pred_traj_list,
-            ik_trajectories=ik_traj_list,
-            output_path=projection_output,
-            episode_idx=ep_idx,
-        )
 
     logger.info("\nDone!")
 
