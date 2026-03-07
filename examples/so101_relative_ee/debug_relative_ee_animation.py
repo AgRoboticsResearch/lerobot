@@ -685,6 +685,67 @@ def read_actions_file(input_path: Path) -> dict:
     return result
 
 
+
+def create_trajectory_projection_views(
+    gt_trajectories: list[np.ndarray],
+    pred_trajectories: list[np.ndarray],
+    ik_trajectories: list[np.ndarray] | None,
+    output_path: Path,
+    episode_idx: int,
+):
+    """
+    Create a 3-figure image showing trajectory projections (x-y, y-z, x-z views).
+    
+    Args:
+        gt_trajectories: List of GT trajectory arrays, each shape (N, 3)
+        pred_trajectories: List of predicted trajectory arrays, each shape (N, 3)
+        ik_trajectories: List of IK trajectory arrays, each shape (N, 3), or None
+        output_path: Path to save the image
+        episode_idx: Episode index for title
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Concatenate all trajectories for each type
+    all_gt = np.concatenate(gt_trajectories, axis=0) if gt_trajectories else np.empty((0, 3))
+    all_pred = np.concatenate(pred_trajectories, axis=0) if pred_trajectories else np.empty((0, 3))
+    all_ik = np.concatenate(ik_trajectories, axis=0) if ik_trajectories else None
+    
+    # Define projections: (x_idx, y_idx, xlabel, ylabel)
+    projections = [
+        (0, 1, 'X (m)', 'Y (m)'),      # x-y view
+        (1, 2, 'Y (m)', 'Z (m)'),      # y-z view  
+        (0, 2, 'X (m)', 'Z (m)'),      # x-z view
+    ]
+    
+    for ax_idx, (x_idx, y_idx, xlabel, ylabel) in enumerate(projections):
+        ax = axes[ax_idx]
+        
+        # Plot GT trajectory
+        if len(all_gt) > 0:
+            ax.plot(all_gt[:, x_idx], all_gt[:, y_idx], 'b-', linewidth=1, alpha=0.5, label='GT')
+            ax.scatter(all_gt[0, x_idx], all_gt[0, y_idx], c='blue', s=30, marker='o', label='GT start')
+            ax.scatter(all_gt[-1, x_idx], all_gt[-1, y_idx], c='blue', s=30, marker='x', label='GT end')
+        
+        # Plot predicted trajectory
+        if len(all_pred) > 0:
+            ax.plot(all_pred[:, x_idx], all_pred[:, y_idx], 'g-', linewidth=1, alpha=0.5, label='Pred')
+        
+        # Plot IK trajectory if available
+        if all_ik is not None and len(all_ik) > 0:
+            ax.plot(all_ik[:, x_idx], all_ik[:, y_idx], 'm-', linewidth=1, alpha=0.5, label='IK')
+        
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f'{xlabel}-{ylabel} View - Episode {episode_idx}')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        ax.axis('equal')
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Trajectory projection views saved to: {output_path}")
+
 def create_video_from_frames(
     frames_dir: Path,
     output_path: Path,
@@ -1047,6 +1108,10 @@ def main():
 
         # Run inference on each frame
         ee_history = []  # Cumulative EE positions
+        # Collect trajectories for projection views
+        gt_traj_list = []  # List to collect GT trajectories
+        pred_traj_list = []  # List to collect predicted trajectories
+        ik_traj_list = [] if kinematics is not None else None  # List to collect IK trajectories
 
         # Compute transform from world frame to reset_pose_ee frame
         # This is done ONCE per episode to maintain consistency
@@ -1135,9 +1200,12 @@ def main():
                     kinematics=kinematics,
                     reset_pose=reset_pose,
                 )
-            else:
-                # No IK - trajectories are in world frame, use original current_ee_position
-                pass
+
+            # Collect trajectories for projection views
+            gt_traj_list.append(gt_ee_positions)
+            pred_traj_list.append(pred_ee_positions)
+            if ik_traj_list is not None and ik_ee_positions is not None:
+                ik_traj_list.append(ik_ee_positions)
 
             # Save action predictions to text file
             actions_output = ep_output_dir / f"actions_{frame_idx:04d}.txt"
@@ -1183,6 +1251,17 @@ def main():
             logger.info("  Creating video...")
             video_output = output_dir / f"episode_{ep_idx}.mp4"
             create_video_from_frames(ep_output_dir, video_output, fps=args.video_fps)
+
+        # Create trajectory projection views (x-y, y-z, x-z)
+        logger.info("  Creating trajectory projection views...")
+        projection_output = output_dir / f"episode_{ep_idx}.png"
+        create_trajectory_projection_views(
+            gt_trajectories=gt_traj_list,
+            pred_trajectories=pred_traj_list,
+            ik_trajectories=ik_traj_list,
+            output_path=projection_output,
+            episode_idx=ep_idx,
+        )
 
     logger.info("\nDone!")
 
