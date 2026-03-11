@@ -285,6 +285,7 @@ def plot_frame_with_ee_trajectory(
     gt_ee_positions: np.ndarray = None,
     ik_ee_positions: np.ndarray = None,
     use_display_frame_for_limits: bool = False,
+    full_episode_gt_trajectory: np.ndarray | None = None,
 ):
     """
     Plot a single frame with observation image and EE trajectory.
@@ -302,10 +303,11 @@ def plot_frame_with_ee_trajectory(
         episode_idx: Episode index for title
         frame_idx: Frame index for title
         axis_limits: Optional dict with 'x', 'y', 'z' tuples for fixed axis limits
-        gt_ee_positions: Ground truth future EE positions (chunk_size, 3)
+        gt_ee_positions: Ground truth future EE positions (chunk_size, 3) - only used if full_episode_gt_trajectory is None
         ik_ee_positions: IK-constrained EE positions (chunk_size, 3) - shows what robot can achieve
         use_display_frame_for_limits: If True, use current_ee_position for axis limits
                                     (useful when trajectories are in same frame as display)
+        full_episode_gt_trajectory: Optional full episode GT trajectory for static reference
     """
     fig = plt.figure(figsize=(16, 8))
 
@@ -380,9 +382,17 @@ def plot_frame_with_ee_trajectory(
             c="red", marker="x", s=50, label="Pred Steps", alpha=0.8
         )
 
-    # Plot ground truth future trajectory as green dotted line
-    if gt_ee_positions is not None and len(gt_ee_positions) > 0:
-        # Start GT from current EE position
+    # Plot ground truth trajectory - prefer full episode GT if available
+    if full_episode_gt_trajectory is not None and len(full_episode_gt_trajectory) > 0:
+        # Plot full episode GT as reference (blue dotted)
+        ax2.plot(
+            full_episode_gt_trajectory[:, 0],
+            full_episode_gt_trajectory[:, 1],
+            full_episode_gt_trajectory[:, 2],
+            color="blue", linewidth=1.5, linestyle=":", label="Ground Truth", alpha=0.4
+        )
+    elif gt_ee_positions is not None and len(gt_ee_positions) > 0:
+        # Fallback: plot chunk GT if full episode GT is not available
         gt_full = np.vstack([current_ee_position.reshape(1, 3), gt_ee_positions])
         ax2.plot(
             gt_full[:, 0],
@@ -532,6 +542,67 @@ def compute_episode_axis_limits(
         'y': (y_min - y_pad, y_max + y_pad),
         'z': (z_min - z_pad, z_max + z_pad),
     }
+
+
+def compute_full_episode_gt_trajectory(
+    dataset: RelativeEEDataset,
+    episode_idx: int,
+    reset_pose_ee: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute full episode GT trajectory in reset_pose_ee frame.
+
+    This computes the full episode's ground truth end-effector trajectory
+    transformed to the reset_pose_ee coordinate frame for static reference.
+
+    Args:
+        dataset: RelativeEEDataset instance
+        episode_idx: Episode index
+        reset_pose_ee: (4, 4) reset pose EE transformation matrix
+
+    Returns:
+        (N, 3) array of EE positions in reset_pose_ee frame
+    """
+    # Get episode info from dataset
+    ep_info = dataset.meta.episodes[episode_idx]
+    ep_length = ep_info["length"]
+
+    # Find start index in dataset
+    start_idx = 0
+    for i in range(episode_idx):
+        start_idx += dataset.meta.episodes[i]["length"]
+
+    # Get the first frame's EE pose to compute the offset
+    first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
+    first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
+    first_pose_6d = first_abs_state[:6]
+    first_ee_pose = pose_to_mat(first_pose_6d)
+
+    # Fixed offset from world frame to reset_pose_ee frame
+    T_offset_fixed = reset_pose_ee @ np.linalg.inv(first_ee_pose)
+
+    all_ee_positions = []
+
+    # Process each frame to get EE positions
+    for i in range(ep_length):
+        idx = start_idx + i
+
+        # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
+        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
+        abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
+
+        # Convert absolute state to 4x4 matrix
+        abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
+        current_ee_pose = pose_to_mat(abs_pose_6d)
+        current_ee_position = current_ee_pose[:3, 3].copy()
+
+        # Transform to reset_pose_ee frame using the fixed offset
+        current_ee_position_aligned = (T_offset_fixed @ np.array([current_ee_position[0], current_ee_position[1], current_ee_position[2], 1.0]))[:3]
+
+        all_ee_positions.append(current_ee_position_aligned.copy())
+
+    # Stack all positions into (N, 3) array
+    return np.array(all_ee_positions)
 
 
 def write_actions_file(
@@ -692,16 +763,18 @@ def create_trajectory_projection_view(
     ik_trajectory: np.ndarray | None,
     output_path: Path,
     frame_idx: int,
+    full_episode_gt_trajectory: np.ndarray | None = None,
 ):
     """
     Create a 3-subplot image showing trajectory projections (x-y, y-z, x-z views).
 
     Args:
-        gt_trajectory: GT trajectory array, shape (N, 3)
+        gt_trajectory: GT trajectory array, shape (N, 3) - only used if full_episode_gt_trajectory is None
         pred_trajectory: Predicted trajectory array, shape (N, 3)
         ik_trajectory: IK trajectory array, shape (N, 3), or None
         output_path: Path to save the image
         frame_idx: Frame index for title
+        full_episode_gt_trajectory: Optional full episode GT trajectory for static reference
     """
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
@@ -715,8 +788,11 @@ def create_trajectory_projection_view(
     for ax_idx, (x_idx, y_idx, xlabel, ylabel) in enumerate(projections):
         ax = axes[ax_idx]
 
-        # Plot GT trajectory
-        if len(gt_trajectory) > 0:
+        # Plot GT trajectory - prefer full episode GT if available
+        if full_episode_gt_trajectory is not None and len(full_episode_gt_trajectory) > 0:
+            ax.plot(full_episode_gt_trajectory[:, x_idx], full_episode_gt_trajectory[:, y_idx],
+                    color='blue', linewidth=1.5, alpha=0.4, linestyle=':', label='GT')
+        elif len(gt_trajectory) > 0:
             ax.plot(gt_trajectory[:, x_idx], gt_trajectory[:, y_idx], 'b-', linewidth=2, alpha=0.8, label='GT')
             ax.scatter(gt_trajectory[0, x_idx], gt_trajectory[0, y_idx], c='blue', s=30, marker='o')
 
@@ -750,6 +826,8 @@ def plot_frame_with_ee_trajectory_debug(
     ee_frame_name: str,
     output_path: Path,
     frame_idx: int,
+    axis_limits: dict[str, tuple[float, float]] | None = None,
+    full_episode_gt_trajectory: np.ndarray | None = None,
 ):
     """
     Create a 3D visualization showing base frame, EE frame, and trajectories with RGB axes.
@@ -763,6 +841,8 @@ def plot_frame_with_ee_trajectory_debug(
         ee_frame_name: Name of the EE frame
         output_path: Path to save the plot
         frame_idx: Frame index for title
+        axis_limits: Optional dict with 'x', 'y', 'z' tuples for fixed axis limits
+        full_episode_gt_trajectory: Optional full episode GT trajectory for static reference
     """
     fig = plt.figure(figsize=(14, 10))
     ax = fig.add_subplot(1, 1, 1, projection="3d")
@@ -812,8 +892,16 @@ def plot_frame_with_ee_trajectory_debug(
         'gray', linestyle='--', linewidth=1, alpha=0.5
     )
 
-    # Plot GT trajectory
-    if len(gt_trajectory) > 0:
+    # Plot full episode GT trajectory as static reference
+    if full_episode_gt_trajectory is not None and len(full_episode_gt_trajectory) > 0:
+        ax.plot(
+            full_episode_gt_trajectory[:, 0],
+            full_episode_gt_trajectory[:, 1],
+            full_episode_gt_trajectory[:, 2],
+            color='blue', linewidth=1.5, alpha=0.4, linestyle=':', label='GT trajectory'
+        )
+    elif len(gt_trajectory) > 0:
+        # Fallback: plot chunk GT if full episode GT is not available
         ax.plot(
             gt_trajectory[:, 0], gt_trajectory[:, 1], gt_trajectory[:, 2],
             'b-', linewidth=2, alpha=0.7, label='GT trajectory'
@@ -861,29 +949,39 @@ def plot_frame_with_ee_trajectory_debug(
     ax.grid(True, alpha=0.3)
 
     # Make axes equal scale
-    all_points = []
-    all_points.append(base_origin)
-    all_points.append(ee_origin)
-    if len(gt_trajectory) > 0:
-        all_points.extend(gt_trajectory)
-    if len(pred_trajectory) > 0:
-        all_points.extend(pred_trajectory)
-    if ik_trajectory is not None and len(ik_trajectory) > 0:
-        all_points.extend(ik_trajectory)
+    if axis_limits is not None:
+        # Use fixed axis limits
+        ax.set_xlim(axis_limits['x'])
+        ax.set_ylim(axis_limits['y'])
+        ax.set_zlim(axis_limits['z'])
+    else:
+        # Auto-compute from visible points
+        all_points = []
+        all_points.append(base_origin)
+        all_points.append(ee_origin)
+        # Use full episode GT for axis scaling if available, otherwise use chunk GT
+        if full_episode_gt_trajectory is not None and len(full_episode_gt_trajectory) > 0:
+            all_points.extend(full_episode_gt_trajectory)
+        elif len(gt_trajectory) > 0:
+            all_points.extend(gt_trajectory)
+        if len(pred_trajectory) > 0:
+            all_points.extend(pred_trajectory)
+        if ik_trajectory is not None and len(ik_trajectory) > 0:
+            all_points.extend(ik_trajectory)
 
-    all_points = np.array(all_points)
-    x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
-    y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
-    z_min, z_max = all_points[:, 2].min(), all_points[:, 2].max()
+        all_points = np.array(all_points)
+        x_min, x_max = all_points[:, 0].min(), all_points[:, 0].max()
+        y_min, y_max = all_points[:, 1].min(), all_points[:, 1].max()
+        z_min, z_max = all_points[:, 2].min(), all_points[:, 2].max()
 
-    max_range = max(x_max - x_min, y_max - y_min, z_max - z_min)
-    x_center = (x_min + x_max) / 2
-    y_center = (y_min + y_max) / 2
-    z_center = (z_min + z_max) / 2
+        max_range = max(x_max - x_min, y_max - y_max, z_max - z_min)
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        z_center = (z_min + z_max) / 2
 
-    ax.set_xlim(x_center - max_range/2, x_center + max_range/2)
-    ax.set_ylim(y_center - max_range/2, y_center + max_range/2)
-    ax.set_zlim(z_center - max_range/2, z_center + max_range/2)
+        ax.set_xlim(x_center - max_range/2, x_center + max_range/2)
+        ax.set_ylim(y_center - max_range/2, y_center + max_range/2)
+        ax.set_zlim(z_center - max_range/2, z_center + max_range/2)
 
     # Set viewing angle
     ax.view_init(elev=20, azim=45)
@@ -897,14 +995,16 @@ def create_video_from_frames(
     frames_dir: Path,
     output_path: Path,
     fps: int = 30,
+    pattern: str = "frame_*.jpg",
 ):
     """
     Create MP4 video from frames.
 
     Args:
-        frames_dir: Directory containing frame_*.jpg files
+        frames_dir: Directory containing frame files
         output_path: Output path for MP4 video
         fps: Frames per second for video
+        pattern: Glob pattern for frame files (default: "frame_*.jpg")
     """
     try:
         import imageio.v2 as imageio
@@ -915,7 +1015,7 @@ def create_video_from_frames(
         )
 
     # Get all frame files sorted
-    frame_files = sorted(frames_dir.glob("frame_*.jpg"))
+    frame_files = sorted(frames_dir.glob(pattern))
 
     if not frame_files:
         raise ValueError(f"No frames found in {frames_dir}")
@@ -1064,6 +1164,11 @@ def main():
         type=int,
         default=10,
         help="Number of actions to execute from each chunk prediction (default: 10, must match deployment)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug visualizations (traj_XXXX.jpg and debug_XXXX.jpg)",
     )
 
     args = parser.parse_args()
@@ -1242,13 +1347,6 @@ def main():
         else:
             ep_end = end_idx
 
-        # Compute axis limits for this episode if requested
-        axis_limits = None
-        if args.fixed_axis_limits:
-            logger.info("  Computing axis limits from full episode...")
-            axis_limits = compute_episode_axis_limits(dataset, ep_idx)
-            logger.info(f"  Axis limits: X={axis_limits['x']}, Y={axis_limits['y']}, Z={axis_limits['z']}")
-
         # Create episode output directory
         ep_output_dir = output_dir / f"episode_{ep_idx}"
         ep_output_dir.mkdir(parents=True, exist_ok=True)
@@ -1256,10 +1354,18 @@ def main():
         # Run inference on each frame
         ee_history = []  # Cumulative EE positions
 
+        # Initialize full episode GT trajectory (will be computed if IK is enabled)
+        full_episode_gt_trajectory = None
+
         # Compute transform from world frame to reset_pose_ee frame
         # This is done ONCE per episode to maintain consistency
         if kinematics is not None:
             reset_pose_ee = kinematics.forward_kinematics(reset_pose)
+
+            # Compute full episode GT trajectory for static reference
+            logger.info("  Computing full episode GT trajectory for static reference...")
+            full_episode_gt_trajectory = compute_full_episode_gt_trajectory(dataset, ep_idx, reset_pose_ee)
+            logger.info(f"  Full GT trajectory shape: {full_episode_gt_trajectory.shape}")
 
             # Get the first frame's EE pose to compute the fixed offset
             first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
@@ -1273,6 +1379,38 @@ def main():
         else:
             reset_pose_ee = None
             T_offset_fixed = None
+            full_episode_gt_trajectory = None
+
+        # Compute axis limits for this episode if requested
+        axis_limits = None
+        # Auto-compute axis limits when IK is enabled (we have full GT trajectory)
+        # Or when explicitly requested via --fixed_axis_limits flag
+        if args.fixed_axis_limits or (kinematics is not None and full_episode_gt_trajectory is not None):
+            logger.info("  Computing axis limits from full episode...")
+            if full_episode_gt_trajectory is not None:
+                # Compute from GT trajectory in reset_pose_ee frame
+                x_min, x_max = full_episode_gt_trajectory[:, 0].min(), full_episode_gt_trajectory[:, 0].max()
+                y_min, y_max = full_episode_gt_trajectory[:, 1].min(), full_episode_gt_trajectory[:, 1].max()
+                z_min, z_max = full_episode_gt_trajectory[:, 2].min(), full_episode_gt_trajectory[:, 2].max()
+            else:
+                # Fallback: compute from absolute positions
+                axis_limits = compute_episode_axis_limits(dataset, ep_idx)
+                logger.info(f"  Axis limits: X={axis_limits['x']}, Y={axis_limits['y']}, Z={axis_limits['z']}")
+                x_min, x_max = axis_limits['x']
+                y_min, y_max = axis_limits['y']
+                z_min, z_max = axis_limits['z']
+
+            # Add padding
+            x_pad = max((x_max - x_min) * 0.15, 0.02)
+            y_pad = max((y_max - y_min) * 0.15, 0.02)
+            z_pad = max((z_max - z_min) * 0.15, 0.02)
+
+            axis_limits = {
+                'x': (x_min - x_pad, x_max + x_pad),
+                'y': (y_min - y_pad, y_max + y_pad),
+                'z': (z_min - z_pad, z_max + z_pad),
+            }
+            logger.info(f"  Axis limits: X={axis_limits['x']}, Y={axis_limits['y']}, Z={axis_limits['z']}")
 
         for frame_idx in range(start_idx, ep_end):
             sample = dataset[frame_idx]
@@ -1324,25 +1462,36 @@ def main():
             pred_actions = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
 
             # Compute predicted EE trajectory
-            # IMPORTANT: Use reset_pose_ee as the base, NOT current_ee_pose!
-            # This ensures predicted trajectory aligns with IK trajectory (both from reset_pose_ee)
-            pred_ee_positions = compute_predicted_ee_trajectory(pred_actions, reset_pose_ee)
+            # Actions are relative to the CURRENT frame's EE pose, so use current_ee_pose as base.
+            # Then transform the world-frame positions into the reset_pose_ee visualization frame.
+            pred_ee_positions_world = compute_predicted_ee_trajectory(pred_actions, current_ee_pose)
+            gt_ee_positions_world = compute_predicted_ee_trajectory(gt_actions, current_ee_pose)
 
-            # Compute ground truth EE trajectory (also from reset_pose_ee for comparison)
-            gt_ee_positions = compute_predicted_ee_trajectory(gt_actions, reset_pose_ee)
+            if T_offset_fixed is not None:
+                # Transform from world frame to reset_pose_ee visualization frame
+                ones = np.ones((pred_ee_positions_world.shape[0], 1))
+                pred_ee_positions = (T_offset_fixed @ np.hstack([pred_ee_positions_world, ones]).T).T[:, :3]
+                ones_gt = np.ones((gt_ee_positions_world.shape[0], 1))
+                gt_ee_positions = (T_offset_fixed @ np.hstack([gt_ee_positions_world, ones_gt]).T).T[:, :3]
+            else:
+                pred_ee_positions = pred_ee_positions_world
+                gt_ee_positions = gt_ee_positions_world
 
             # Compute IK-constrained trajectory if enabled
             # IMPORTANT: Only process n_action_steps from chunk to match deployment behavior!
             # In deployment, we execute n_action_steps actions, then predict a new chunk.
             ik_ee_positions = None
             if kinematics is not None:
-                # All trajectories (pred, GT, IK) are now in reset_pose_ee frame - no transformation needed!
+                # IK expects targets in placo/URDF world frame. current_ee_pose is in dataset
+                # world frame, so transform it to placo world using T_offset_fixed first.
+                chunk_base_pose_placo = T_offset_fixed @ current_ee_pose
                 ik_ee_positions, _ = compute_ik_constrained_trajectory(
                     relative_actions=pred_actions[:args.n_action_steps],  # Only first N actions
-                    chunk_base_pose=reset_pose_ee,  # Use reset_pose_ee as chunk base
+                    chunk_base_pose=chunk_base_pose_placo,  # Placo world frame
                     kinematics=kinematics,
                     reset_pose=reset_pose,
                 )
+                # FK results are already in placo world frame (= viz frame), no transform needed
 
             # Save action predictions to text file
             actions_output = ep_output_dir / f"actions_{frame_idx:04d}.txt"
@@ -1366,22 +1515,29 @@ def main():
                 ik_trajectory=ik_ee_positions,
                 output_path=traj_output,
                 frame_idx=frame_idx,
+                full_episode_gt_trajectory=full_episode_gt_trajectory,
             )
 
             # Save debug view with base frame, EE frame (RGB axes), and trajectories
             if kinematics is not None:
                 # Create base frame transform (identity at origin)
                 base_T = np.eye(4)
+                # EE frame should move along GT trajectory - use current EE position
+                # (already transformed to reset_pose_ee frame as current_ee_position_aligned)
+                current_ee_frame_T = reset_pose_ee.copy()
+                current_ee_frame_T[:3, 3] = current_ee_position_aligned
                 debug_output = ep_output_dir / f"debug_{frame_idx:04d}.jpg"
                 plot_frame_with_ee_trajectory_debug(
                     gt_trajectory=gt_ee_positions,
                     pred_trajectory=pred_ee_positions,
                     ik_trajectory=ik_ee_positions,
                     base_T=base_T,
-                    ee_frame_T=reset_pose_ee,
+                    ee_frame_T=current_ee_frame_T,
                     ee_frame_name=args.target_frame,
                     output_path=debug_output,
                     frame_idx=frame_idx,
+                    axis_limits=axis_limits,
+                    full_episode_gt_trajectory=full_episode_gt_trajectory,
                 )
 
             # Generate and save plot
@@ -1402,6 +1558,7 @@ def main():
                 axis_limits=axis_limits,
                 gt_ee_positions=gt_ee_positions,
                 ik_ee_positions=ik_ee_positions,
+                full_episode_gt_trajectory=full_episode_gt_trajectory,
             )
 
             if (frame_idx - start_idx) % 10 == 0:
@@ -1414,6 +1571,14 @@ def main():
             logger.info("  Creating video...")
             video_output = output_dir / f"episode_{ep_idx}.mp4"
             create_video_from_frames(ep_output_dir, video_output, fps=args.video_fps)
+
+        # Create debug video if IK is enabled and debug images exist
+        if kinematics is not None:
+            debug_frame_files = list(ep_output_dir.glob("debug_*.jpg"))
+            if debug_frame_files:
+                logger.info("  Creating debug video from debug_*.jpg...")
+                debug_video_output = output_dir / f"episode_{ep_idx}_debug.mp4"
+                create_video_from_frames(ep_output_dir, debug_video_output, fps=args.video_fps, pattern="debug_*.jpg")
 
     logger.info("\nDone!")
 

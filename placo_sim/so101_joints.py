@@ -4,7 +4,6 @@ SO101 joint space simulation using placo.
 Controls the robot directly in joint space with sinusoidal motion patterns.
 """
 
-import pinocchio
 import placo
 import numpy as np
 from ischedule import schedule, run_loop
@@ -61,12 +60,33 @@ def loop():
 
     # Display the robot
     viz.display(robot.state.q)
-    robot_frame_viz(robot, "gripper_frame_link")
+
+    # Display all frames with RGB axes
+    for frame in robot.model.frames:
+        robot_frame_viz(robot, frame.name)
 
 
 if __name__ == "__main__":
     print("Starting SO101 joint space simulation...")
     print(f"URDF: {URDF_PATH}")
     print("Joints: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper")
-    print("Press Ctrl+C to stop")
+
+    # Display all links and their names
+    print("\n--- Robot Links ---")
+    model = robot.model
+    print(f"Link names in model: {len(model.names)} entries")
+    for i, link_name in enumerate(model.names):
+        if link_name:  # Skip empty names
+            try:
+                frame_id = model.getFrameId(link_name)
+                print(f"  [{i:2d}] '{link_name}' (frame_id={frame_id})")
+            except Exception as e:
+                print(f"  [{i:2d}] '{link_name}' (error: {e})")
+
+    # Also display all frames
+    print(f"\n--- Robot Frames (model.frames) ---")
+    for i, frame in enumerate(model.frames):
+        print(f"  [{i:2d}] '{frame.name}' (type={frame.type}, parent={frame.parentJoint})")
+
+    print("\nPress Ctrl+C to stop")
     run_loop()
