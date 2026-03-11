@@ -71,22 +71,33 @@ if __name__ == "__main__":
     print(f"URDF: {URDF_PATH}")
     print("Joints: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper")
 
-    # Display all links and their names
-    print("\n--- Robot Links ---")
-    model = robot.model
-    print(f"Link names in model: {len(model.names)} entries")
-    for i, link_name in enumerate(model.names):
-        if link_name:  # Skip empty names
-            try:
-                frame_id = model.getFrameId(link_name)
-                print(f"  [{i:2d}] '{link_name}' (frame_id={frame_id})")
-            except Exception as e:
-                print(f"  [{i:2d}] '{link_name}' (error: {e})")
+    # Display TF tree in ASCII
+    print("\n--- TF Tree (Transform Frame Hierarchy) ---")
+    print("""
+    universe (FIXED_JOINT)
+    └── root_joint (JOINT)
+        └── base_link (BODY)
+            ├── shoulder_pan (JOINT)
+            │   ├── shoulder_link (BODY)
+            │   └── shoulder_lift (JOINT)
+            │       ├── upper_arm_link (BODY)
+            │       └── elbow_flex (JOINT)
+            │           ├── lower_arm_link (BODY)
+            │           └── wrist_flex (JOINT)
+            │               ├── wrist_link (BODY)
+            │               └── wrist_roll (JOINT)
+            │                   ├── gripper_link (BODY)
+            │                   │   └── gripper (JOINT)
+            │                   │       └── moving_jaw_so101_v1_link (BODY)
+            │                   └── gripper_frame_joint (FIXED_JOINT)
+            │                       └── gripper_frame_link (BODY) [EE frame, 180° Y-rotation]
+    """)
 
-    # Also display all frames
-    print(f"\n--- Robot Frames (model.frames) ---")
-    for i, frame in enumerate(model.frames):
-        print(f"  [{i:2d}] '{frame.name}' (type={frame.type}, parent={frame.parentJoint})")
+    # Display all frames
+    print("--- Robot Frames (model.frames) ---")
+    for i, frame in enumerate(robot.model.frames):
+        type_str = str(frame.type).split('.')[-1]
+        print(f"  [{i:2d}] '{frame.name}' (type={type_str:12s}, parent={frame.parentJoint})")
 
     print("\nPress Ctrl+C to stop")
     run_loop()
