@@ -281,6 +281,7 @@ def plot_frame_with_gt_trajectory(
     output_path: Path,
     episode_idx: int,
     frame_idx: int,
+    target_frame: str = "camera_link",
 ):
     """
     Create a 3D visualization showing base frame, EE frame, and GT trajectory with RGB axes.
@@ -327,7 +328,7 @@ def plot_frame_with_gt_trajectory(
     # Draw EE frame (RGB axes)
     ee_origin = ee_frame_T[:3, 3]
     ee_R = ee_frame_T[:3, :3]
-    draw_frame_axes(ee_origin, ee_R, length=0.08, label_prefix="EE ")
+    draw_frame_axes(ee_origin, ee_R, length=0.08, label_prefix=f"{target_frame} ")
 
     # Add a line from base origin to EE origin
     ax.plot(
@@ -357,7 +358,7 @@ def plot_frame_with_gt_trajectory(
         # Mark current EE position on trajectory
         ax.scatter(
             ee_origin[0], ee_origin[1], ee_origin[2],
-            c='orange', s=150, marker='*', label='Current EE', zorder=10
+            c='orange', s=150, marker='*', label=f'Current {target_frame}', zorder=10
         )
 
     # Add sphere at origin
@@ -373,7 +374,7 @@ def plot_frame_with_gt_trajectory(
     ax.set_zlabel('Z (m)')
     ax.set_title(
         f'Episode {episode_idx}, Frame {frame_idx} - Dataset Frames & GT Trajectory\n'
-        f'Base Frame (RGB at origin), EE Frame (RGB offset)',
+        f'Base Frame (RGB at origin), {target_frame} Frame (RGB offset)',
         fontsize=12
     )
     ax.legend(loc='upper right')
@@ -512,6 +513,7 @@ def plot_raw_gt_with_frames(
     output_path: Path,
     episode_idx: int,
     frame_stride: int = 10,
+    target_frame: str = "camera_link",
 ):
     """
     Create a 3D visualization showing raw GT trajectory with RGB frames at regular intervals.
@@ -587,7 +589,7 @@ def plot_raw_gt_with_frames(
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Z (m)')
     ax.set_title(
-        f'Episode {episode_idx} - Raw GT Trajectory with EE Frames\n'
+        f'Episode {episode_idx} - Raw GT Trajectory with {target_frame} Frames\n'
         f'RGB frames shown every {frame_stride} poses (baselink coordinates)',
         fontsize=12
     )
@@ -927,6 +929,7 @@ def main():
             output_path=output_path,
             episode_idx=ep_idx,
             frame_idx=args.frame_idx,
+            target_frame=args.target_frame,
         )
 
         # Compute and plot raw GT trajectory with poses (no frame transformation)
@@ -943,6 +946,7 @@ def main():
             output_path=raw_gt_with_frames_output_path,
             episode_idx=ep_idx,
             frame_stride=10,
+            target_frame=args.target_frame,
         )
 
         # Plot raw action trajectory (3D with RGB frame)
