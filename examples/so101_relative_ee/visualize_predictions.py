@@ -481,7 +481,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="gripper_frame_link",
+        target_frame_name="camera_link",
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -700,7 +700,7 @@ def main():
             # Update simulation to follow real robot
             # -------------------------------------------------------------------
             sim_robot.set_joints(current_joints)
-            robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+            robot_frame_viz(sim_robot.robot, "camera_link")
 
             # Print status
             # if step_count % 10 == 0:

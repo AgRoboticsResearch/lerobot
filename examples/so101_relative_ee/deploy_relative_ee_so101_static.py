@@ -412,7 +412,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="gripper_frame_link",
+        target_frame_name="camera_link",
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -715,7 +715,7 @@ def main():
                 current_joints[i] = float(joints_action[f"{name}.pos"])
 
             # Display EE frame on digital twin
-            robot_frame_viz(digital_twin.robot, "gripper_frame_link")
+            robot_frame_viz(digital_twin.robot, "camera_link")
 
             # Update counters
             actions_processed_in_chunk += 1

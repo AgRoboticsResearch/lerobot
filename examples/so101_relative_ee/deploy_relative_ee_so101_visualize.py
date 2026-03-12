@@ -428,7 +428,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="gripper_frame_link",
+        target_frame_name="camera_link",
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")

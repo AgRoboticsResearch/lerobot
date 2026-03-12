@@ -237,7 +237,7 @@ class SimulatedSO101Robot:
         if self.viz is not None:
             self.viz.display(self.robot.state.q)
 
-    def display_ee_frame(self, frame_name: str = "gripper_frame_link"):
+    def display_ee_frame(self, frame_name: str = "camera_link"):
         """Display the end-effector frame in visualization."""
         if self.viz is not None:
             from placo_utils.visualization import robot_frame_viz
@@ -696,14 +696,14 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        default="urdf/Simulation/SO101/so101_new_calib.urdf",
-        help="Path to robot URDF file for IK (default: urdf/Simulation/SO101/so101_new_calib.urdf)",
+        default="urdf/Simulation/SO101/so101_sroi.urdf",
+        help="Path to robot URDF file for IK (default: urdf/Simulation/SO101/so101_sroi.urdf)",
     )
     parser.add_argument(
         "--target_frame",
         type=str,
-        default="gripper_frame_link",
-        help="Name of end-effector frame in URDF (default: gripper_frame_link)",
+        default="camera_link",
+        help="Name of end-effector frame in URDF (default: camera_link)",
     )
     parser.add_argument(
         "--reset_pose",
@@ -1119,7 +1119,7 @@ def main():
 
                 # Display EE frame in visualization
                 if args.visualize:
-                    robot.display_ee_frame("gripper_frame_link")
+                    robot.display_ee_frame("camera_link")
 
                 # Update sim_joints for next iteration (closed-loop)
                 sim_joints = joints
@@ -1150,7 +1150,7 @@ def main():
         try:
             # Keep displaying the current robot state
             while True:
-                robot.display_ee_frame("gripper_frame_link")
+                robot.display_ee_frame("camera_link")
                 time.sleep(0.1)
         except KeyboardInterrupt:
             logger.info("\nExiting...")

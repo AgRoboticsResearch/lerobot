@@ -412,7 +412,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="gripper_frame_link",
+        target_frame_name="camera_link",
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -528,7 +528,7 @@ def main():
     # Update sim_robot to match actual robot pose
     if sim_robot is not None:
         sim_robot.set_joints(current_joints)
-        robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+        robot_frame_viz(sim_robot.robot, "camera_link")
 
     # Get initial EE pose via FK
     current_ee_T = kinematics.forward_kinematics(current_joints)
@@ -656,7 +656,7 @@ def main():
                 if args.placo_vis and sim_robot is not None:
                     # First, update sim_robot to current robot pose so visualization starts from correct position
                     sim_robot.set_joints(current_joints)
-                    robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+                    robot_frame_viz(sim_robot.robot, "camera_link")
 
                     pred_positions = []
                     ik_fk_positions = []
@@ -689,7 +689,7 @@ def main():
                         points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
 
                     # Show robot frame
-                    robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+                    robot_frame_viz(sim_robot.robot, "camera_link")
 
                     logger.info(f"Visualized {len(pred_positions)} trajectory points")
 
@@ -782,7 +782,7 @@ def main():
                 _, actual_joints = read_robot_state(robot, MOTOR_NAMES)
                 sim_robot.set_joints(actual_joints)
                 # Show robot frame at current position
-                robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+                robot_frame_viz(sim_robot.robot, "camera_link")
                 # Show target EE pose point (RED - where robot is commanded to go)
                 target_pos = target_ee_pose[:3, 3]
                 points_viz("target_ee", np.array([target_pos]), color=0xff0000)

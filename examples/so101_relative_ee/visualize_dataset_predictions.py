@@ -25,7 +25,7 @@ Usage:
         --dataset_root /mnt/ldata/sroi_lerobot/red_strawberry_picking_260119_merged_ee \
         --episode_index 0 \
         --pretrained_path ./outputs/train/red_strawberry_picking_260119_merged_obs1_ds_1/checkpoints/100000/pretrained_model \
-        --urdf_path ./urdf/Simulation/SO101/so101_new_calib.urdf
+        --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf
 
 === Visualization Colors ===
 
@@ -403,7 +403,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="gripper_frame_link",
+        target_frame_name="camera_link",
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -695,7 +695,7 @@ def main():
                 points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
 
             # Show robot frame
-            robot_frame_viz(sim_robot.robot, "gripper_frame_link")
+            robot_frame_viz(sim_robot.robot, "camera_link")
 
             # Print status every step
             logger.info(f"Step {step_idx}/{end_step-1}: GT pos {gt_ee_pos}, Inference: {inference_time*1000:.1f}ms, Joints: {np.array2string(current_joints, precision=2, separator=', ')}")

@@ -149,7 +149,7 @@ RESET_POSE_DEG = np.array([
     43.18,    # gripper
 ])
 
-# Transformation matrix from dataset EE frame to placo gripper_frame_link
+# Transformation matrix from dataset EE frame to placo camera_link
 #
 # Based on user analysis:
 # - Dataset EE frame: X points DOWN, Z points FORWARD
@@ -457,7 +457,7 @@ class SimulatedSO101Robot:
         if self.viz is not None:
             self.viz.display(self.robot.state.q)
 
-    def display_ee_frame(self, frame_name: str = "gripper_frame_link"):
+    def display_ee_frame(self, frame_name: str = "camera_link"):
         """Display the end-effector frame in visualization."""
         if self.viz is not None:
             robot_frame_viz(self.robot, frame_name)
@@ -502,13 +502,13 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        default="urdf/Simulation/SO101/so101_new_calib.urdf",
+        default="urdf/Simulation/SO101/so101_sroi.urdf",
         help="Path to SO101 URDF file for IK",
     )
     parser.add_argument(
         "--target_frame",
         type=str,
-        default="gripper_frame_link",
+        default="camera_link",
         help="Name of end-effector frame in URDF",
     )
     parser.add_argument(
