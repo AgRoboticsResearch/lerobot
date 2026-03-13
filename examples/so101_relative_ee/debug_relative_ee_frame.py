@@ -775,7 +775,7 @@ def main():
         "--frame_idx",
         type=int,
         default=0,
-        help="Frame index within episode to visualize (EE frame position)",
+        help="Frame index within episode to visualize (EE frame position). Use -1 to process all frames and create MP4.",
     )
     parser.add_argument(
         "--target_frame",
@@ -883,107 +883,188 @@ def main():
         )
         logger.info(f"  GT trajectory shape: {gt_trajectory.shape}")
 
-        # Compute GT trajectory in first GT frame (for debugging)
-        logger.info("  Computing GT trajectory in first GT frame...")
-        gt_trajectory_in_first_frame = compute_gt_trajectory_in_first_frame(
-            dataset, ep_idx
-        )
-        logger.info(f"  GT trajectory in first frame shape: {gt_trajectory_in_first_frame.shape}")
-
-        # Get current EE position for the specified frame
-        frame_idx_global = start_idx + args.frame_idx
-        abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx_global)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-        current_ee_pose = pose_to_mat(abs_state[:6])
-
-        # Get the first frame's EE pose
-        first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-        first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-        first_ee_pose = pose_to_mat(first_abs_state[:6])
-
-        # Use SE(3) transform-based reparenting (same as GT trajectory computation)
-        # Step 1: T_in_first_frame = inv(T_first_gt) @ T_current_ee
-        T_current_ee_in_first_frame = np.linalg.inv(first_ee_pose) @ current_ee_pose
-
-        # Step 2 & 3: T_in_baselink = T_baselink_to_ee @ T_in_ee
-        T_current_ee_in_baselink = reset_pose_ee @ T_current_ee_in_first_frame
-        current_ee_position_aligned = T_current_ee_in_baselink[:3, 3].copy()
-
-        # Build EE frame transform (use reset orientation, current position)
-        ee_frame_T = reset_pose_ee.copy()
-        ee_frame_T[:3, 3] = current_ee_position_aligned
-
-        # Create base frame transform (identity at origin)
-        base_T = np.eye(4)
-
         # Create output directory
         output_dir = Path("outputs/debug/animation_relative_ee") / args.dataset_repo_id / f"episode_{ep_idx}"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"frame_{args.frame_idx:04d}.png"
 
-        # Plot
-        plot_frame_with_gt_trajectory(
-            base_T=base_T,
-            ee_frame_T=ee_frame_T,
-            gt_trajectory=gt_trajectory,
-            output_path=output_path,
-            episode_idx=ep_idx,
-            frame_idx=args.frame_idx,
-            target_frame=args.target_frame,
-        )
+        # Check if processing all frames (frame_idx == -1)
+        if args.frame_idx == -1:
+            # Process all frames and create MP4
+            logger.info(f"  Processing all {ep_length} frames...")
 
-        # Compute and plot raw GT trajectory with poses (no frame transformation)
-        logger.info("  Computing raw GT trajectory with poses...")
-        raw_gt_positions, raw_gt_poses = compute_raw_gt_trajectory_with_poses(dataset, ep_idx)
-        logger.info(f"  Raw GT positions shape: {raw_gt_positions.shape}")
-        logger.info(f"  Raw GT poses shape: {raw_gt_poses.shape}")
+            # Temporary directory for frames
+            frames_dir = output_dir / "tmp_frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
 
-        # Plot raw GT trajectory with EE frames
-        raw_gt_with_frames_output_path = output_dir / "raw_gt_with_frames.png"
-        plot_raw_gt_with_frames(
-            positions=raw_gt_positions,
-            poses=raw_gt_poses,
-            output_path=raw_gt_with_frames_output_path,
-            episode_idx=ep_idx,
-            frame_stride=10,
-            target_frame=args.target_frame,
-        )
+            # Get the first frame's EE pose (for alignment)
+            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
+            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
+            first_ee_pose = pose_to_mat(first_abs_state[:6])
 
-        # Plot raw action trajectory (3D with RGB frame)
-        raw_action_output_path = output_dir / "raw_action.png"
-        plot_raw_action_trajectory(
-            raw_action_trajectory=raw_gt_positions,
-            output_path=raw_action_output_path,
-            episode_idx=ep_idx,
-        )
+            # Create base frame transform (identity at origin)
+            base_T = np.eye(4)
 
-        # Plot raw action trajectory (2D projections)
-        raw_action_2d_output_path = output_dir / "raw_action_2d.png"
-        plot_raw_action_trajectory_2d(
-            raw_action_trajectory=raw_gt_positions,
-            output_path=raw_action_2d_output_path,
-            episode_idx=ep_idx,
-        )
+            # Process each frame
+            for frame_idx in range(ep_length):
+                frame_idx_global = start_idx + frame_idx
 
-        # Plot GT trajectory in first GT frame (debug visualization)
-        gt_in_first_frame_output_path = output_dir / "gt_in_first_frame.png"
-        plot_raw_action_trajectory(
-            raw_action_trajectory=gt_trajectory_in_first_frame,
-            output_path=gt_in_first_frame_output_path,
-            episode_idx=ep_idx,
-            title_suffix="GT Trajectory in First GT Frame\nT_in_first_frame = inv(T_first_gt) @ T_gt (relative SE(3) transform)",
-        )
-        logger.info(f"  Saved GT trajectory in first frame to {gt_in_first_frame_output_path}")
+                # Get current EE position
+                abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx_global)
+                abs_state = abs_sample['observation.state'].cpu().numpy()
+                current_ee_pose = pose_to_mat(abs_state[:6])
 
-        # Create observation video if requested
-        if args.mp4:
-            obs_video_output_path = output_dir / "observations.mp4"
-            create_observation_video(
-                dataset=dataset,
-                episode_idx=ep_idx,
-                output_path=obs_video_output_path,
-                fps=30,
+                # Use SE(3) transform-based reparenting
+                T_current_ee_in_first_frame = np.linalg.inv(first_ee_pose) @ current_ee_pose
+                T_current_ee_in_baselink = reset_pose_ee @ T_current_ee_in_first_frame
+                current_ee_position_aligned = T_current_ee_in_baselink[:3, 3].copy()
+
+                # Build EE frame transform
+                ee_frame_T = reset_pose_ee.copy()
+                ee_frame_T[:3, 3] = current_ee_position_aligned
+
+                # Generate plot and save to temporary location
+                frame_path = frames_dir / f"frame_{frame_idx:04d}.png"
+                plot_frame_with_gt_trajectory(
+                    base_T=base_T,
+                    ee_frame_T=ee_frame_T,
+                    gt_trajectory=gt_trajectory,
+                    output_path=frame_path,
+                    episode_idx=ep_idx,
+                    frame_idx=frame_idx,
+                    target_frame=args.target_frame,
+                )
+
+                if (frame_idx + 1) % 50 == 0:
+                    logger.info(f"  Processed {frame_idx + 1}/{ep_length} frames")
+
+            # Create MP4 from frames
+            logger.info("  Creating MP4 from frames...")
+            video_output_path = output_dir / "ee_trajectory_animation.mp4"
+
+            # Collect all frame files
+            frame_files = sorted(frames_dir.glob("frame_*.png"))
+
+            # Read frames and write MP4
+            frames = [iio.imread(f) for f in frame_files]
+            iio.imwrite(video_output_path, frames, fps=30, codec="libx264", quality=8)
+            logger.info(f"  Saved MP4 to {video_output_path}")
+
+            # Clean up temporary frames
+            for f in frame_files:
+                f.unlink()
+            frames_dir.rmdir()
+
+            # Also create observation video if requested
+            if args.mp4:
+                logger.info("  Creating observation video...")
+                obs_video_output_path = output_dir / "observations.mp4"
+                create_observation_video(
+                    dataset=dataset,
+                    episode_idx=ep_idx,
+                    output_path=obs_video_output_path,
+                    fps=30,
+                )
+
+        else:
+            # Single frame mode (original behavior)
+            # Compute GT trajectory in first GT frame (for debugging)
+            logger.info("  Computing GT trajectory in first GT frame...")
+            gt_trajectory_in_first_frame = compute_gt_trajectory_in_first_frame(
+                dataset, ep_idx
             )
+            logger.info(f"  GT trajectory in first frame shape: {gt_trajectory_in_first_frame.shape}")
+
+            # Get current EE position for the specified frame
+            frame_idx_global = start_idx + args.frame_idx
+            abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx_global)
+            abs_state = abs_sample['observation.state'].cpu().numpy()
+            current_ee_pose = pose_to_mat(abs_state[:6])
+
+            # Get the first frame's EE pose
+            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
+            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
+            first_ee_pose = pose_to_mat(first_abs_state[:6])
+
+            # Use SE(3) transform-based reparenting (same as GT trajectory computation)
+            # Step 1: T_in_first_frame = inv(T_first_gt) @ T_current_ee
+            T_current_ee_in_first_frame = np.linalg.inv(first_ee_pose) @ current_ee_pose
+
+            # Step 2 & 3: T_in_baselink = T_baselink_to_ee @ T_in_ee
+            T_current_ee_in_baselink = reset_pose_ee @ T_current_ee_in_first_frame
+            current_ee_position_aligned = T_current_ee_in_baselink[:3, 3].copy()
+
+            # Build EE frame transform (use reset orientation, current position)
+            ee_frame_T = reset_pose_ee.copy()
+            ee_frame_T[:3, 3] = current_ee_position_aligned
+
+            # Create base frame transform (identity at origin)
+            base_T = np.eye(4)
+
+            output_path = output_dir / f"frame_{args.frame_idx:04d}.png"
+
+            # Plot
+            plot_frame_with_gt_trajectory(
+                base_T=base_T,
+                ee_frame_T=ee_frame_T,
+                gt_trajectory=gt_trajectory,
+                output_path=output_path,
+                episode_idx=ep_idx,
+                frame_idx=args.frame_idx,
+                target_frame=args.target_frame,
+            )
+
+            # Compute and plot raw GT trajectory with poses (no frame transformation)
+            logger.info("  Computing raw GT trajectory with poses...")
+            raw_gt_positions, raw_gt_poses = compute_raw_gt_trajectory_with_poses(dataset, ep_idx)
+            logger.info(f"  Raw GT positions shape: {raw_gt_positions.shape}")
+            logger.info(f"  Raw GT poses shape: {raw_gt_poses.shape}")
+
+            # Plot raw GT trajectory with EE frames
+            raw_gt_with_frames_output_path = output_dir / "raw_gt_with_frames.png"
+            plot_raw_gt_with_frames(
+                positions=raw_gt_positions,
+                poses=raw_gt_poses,
+                output_path=raw_gt_with_frames_output_path,
+                episode_idx=ep_idx,
+                frame_stride=10,
+                target_frame=args.target_frame,
+            )
+
+            # Plot raw action trajectory (3D with RGB frame)
+            raw_action_output_path = output_dir / "raw_action.png"
+            plot_raw_action_trajectory(
+                raw_action_trajectory=raw_gt_positions,
+                output_path=raw_action_output_path,
+                episode_idx=ep_idx,
+            )
+
+            # Plot raw action trajectory (2D projections)
+            raw_action_2d_output_path = output_dir / "raw_action_2d.png"
+            plot_raw_action_trajectory_2d(
+                raw_action_trajectory=raw_gt_positions,
+                output_path=raw_action_2d_output_path,
+                episode_idx=ep_idx,
+            )
+
+            # Plot GT trajectory in first GT frame (debug visualization)
+            gt_in_first_frame_output_path = output_dir / "gt_in_first_frame.png"
+            plot_raw_action_trajectory(
+                raw_action_trajectory=gt_trajectory_in_first_frame,
+                output_path=gt_in_first_frame_output_path,
+                episode_idx=ep_idx,
+                title_suffix="GT Trajectory in First GT Frame\nT_in_first_frame = inv(T_first_gt) @ T_gt (relative SE(3) transform)",
+            )
+            logger.info(f"  Saved GT trajectory in first frame to {gt_in_first_frame_output_path}")
+
+            # Create observation video if requested
+            if args.mp4:
+                obs_video_output_path = output_dir / "observations.mp4"
+                create_observation_video(
+                    dataset=dataset,
+                    episode_idx=ep_idx,
+                    output_path=obs_video_output_path,
+                    fps=30,
+                )
 
         logger.info(f"  Episode {ep_idx} complete!")
 
