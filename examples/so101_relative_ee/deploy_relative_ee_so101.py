@@ -682,11 +682,11 @@ def main():
 
                     # Visualize predicted trajectory (GREEN)
                     if pred_positions:
-                        points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00)
+                        points_viz("predicted_trajectory", np.array(pred_positions), color=0x00ff00, radius=0.003)
 
                     # Visualize IK -> FK trajectory (YELLOW)
                     if ik_fk_positions:
-                        points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00)
+                        points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00, radius=0.003)
 
                     # Show robot frame
                     robot_frame_viz(sim_robot.robot, "camera_link")
