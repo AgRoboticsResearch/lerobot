@@ -50,6 +50,9 @@ import time
 from pathlib import Path
 from typing import Any
 from threading import Thread
+import os
+import sys
+import warnings
 
 import numpy as np
 import cv2
@@ -71,6 +74,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.datasets.relative_ee_dataset import RelativeEEDataset
+from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots.so101_follower.relative_ee_processor import pose10d_to_mat
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.act.configuration_act import ACTConfig
@@ -112,39 +116,88 @@ def load_camera_matrix_from_dataset(dataset_root: str) -> np.ndarray:
     return camera_matrix
 
 
-def actions_to_3d_points(actions: np.ndarray) -> np.ndarray:
-    """Convert relative 10D action chunk to 3D trajectory points.
+def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Calculate transformations from optical to base camera loop and camera to physical gripper."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        old_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+        try:
+            kin_opt = RobotKinematics(str(urdf_path), target_frame_name="camera_optical_link")
+            kin_cam = RobotKinematics(str(urdf_path), target_frame_name="camera_link")
+            kin_grip = RobotKinematics(str(urdf_path), target_frame_name="gripper_frame_link")
 
-    Each action is a 10D relative pose [dx,dy,dz,rot6d_0..5,gripper] applied
-    relative to identity (base_pose = eye(4)).
+            joints = np.zeros(len(kin_opt.joint_names))
+            T_base_opt = kin_opt.forward_kinematics(joints)
+            T_base_cam = kin_cam.forward_kinematics(joints)
+            T_base_grip = kin_grip.forward_kinematics(joints)
+
+            # View shift from camera_optical_link to camera_link
+            T_opt_cam = np.linalg.inv(T_base_opt) @ T_base_cam
+            
+            # View shift from camera_link to gripper_frame_link
+            T_cam_grip = np.linalg.inv(T_base_cam) @ T_base_grip
+            
+        finally:
+            sys.stdout.close()
+            sys.stdout = old_stdout
+            
+    return T_opt_cam, T_cam_grip
+
+
+def actions_to_3d_points(actions: np.ndarray, T_opt_cam: np.ndarray, T_cam_grip: np.ndarray) -> np.ndarray:
+    """Convert relative 10D action chunk to 3D trajectory points in optical frame.
+
+    Each action is a 10D relative pose [dx,dy,dz,rot6d_0..5,gripper] targeting camera_link.
 
     Args:
         actions: (N, 10) array of relative actions
+        T_opt_cam: Transform from camera_optical_link to camera_link
+        T_cam_grip: Transform from camera_link to gripper_frame_link
 
     Returns:
-        (N+1, 3) array of 3D positions (origin + one per action)
+        (N+1, 3) array of 3D positions in optical frame (origin + one per action)
     """
-    base_pose = np.eye(4)
-    positions = [np.array([0.0, 0.0, 0.0])]
+    # Base pose in optical frame corresponds to the initial position of the gripper
+    # Without any relative movement, the gripper in optical frame is just T_opt_cam @ T_cam_grip
+    
+    # We want to trace the gripper point.
+    # The action specifies a relative transform applied to camera_link: T_rel
+    # So the new camera_link pose in optical frame = T_opt_cam @ T_rel
+    # The new gripper tip pose in optical frame = T_opt_cam @ T_rel @ T_cam_grip
+    
+    positions = []
+    
+    # Current/start gripper position in optical frame
+    start_pose = T_opt_cam @ T_cam_grip
+    positions.append(start_pose[:3, 3].copy())
 
     for action in actions:
         rel_pose = pose10d_to_mat(action[:9])
-        abs_pose = base_pose @ rel_pose
-        positions.append(abs_pose[:3, 3].copy())
+        future_gripper_optical = T_opt_cam @ rel_pose @ T_cam_grip
+        positions.append(future_gripper_optical[:3, 3].copy())
 
     return np.array(positions)
 
 
-def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label):
+def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label, trajectory_3d_gt=None):
     """Update a matplotlib 3D axes with trajectory data."""
     ax.clear()
+    
+    if trajectory_3d_gt is not None and len(trajectory_3d_gt) > 1:
+        ax.plot(trajectory_3d_gt[:, 0], trajectory_3d_gt[:, 1], trajectory_3d_gt[:, 2],
+                'r--', linewidth=2, label='GT')
+        ax.plot([trajectory_3d_gt[-1, 0]], [trajectory_3d_gt[-1, 1]], [trajectory_3d_gt[-1, 2]],
+                'mo', markersize=6)
+                
     if len(trajectory_3d) > 1:
         ax.plot(trajectory_3d[:, 0], trajectory_3d[:, 1], trajectory_3d[:, 2],
-                'b-', linewidth=2)
+                'b-', linewidth=2, label='Pred' if trajectory_3d_gt is not None else 'Traj')
         ax.plot([trajectory_3d[0, 0]], [trajectory_3d[0, 1]], [trajectory_3d[0, 2]],
                 'go', markersize=8, label='Start')
         ax.plot([trajectory_3d[-1, 0]], [trajectory_3d[-1, 1]], [trajectory_3d[-1, 2]],
-                'ro', markersize=8, label='End')
+                'ro', markersize=8, label='End (Pred)')
+                
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Z (m)')
@@ -167,18 +220,16 @@ def project_points_to_image(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
     """Project 3D points to 2D image coordinates using camera intrinsics.
 
     Args:
-        points_3d: (N, 3) array of 3D points in camera optical frame (x forward, y left, z up)
+        points_3d: (N, 3) array of 3D points in camera optical frame (x right, y down, z forward)
         camera_matrix: (3, 3) camera intrinsics matrix K
 
     Returns:
         (N, 2) array of 2D pixel coordinates
     """
-    # Transform from optical frame (x forward, y left, z up) to camera frame (x right, y down, z forward)
-    # x_cam = -y, y_cam = -z, z_cam = x
-    points_cam = points_3d[:, [1, 2, 0]] * np.array([[-1, -1, 1]])  # (N, 3)
+    # Points are natively in optical frame via RobotKinematics (x right, y down, z forward)
 
     # Project using camera matrix: [u, v, 1]^T = K * [X, Y, Z]^T / Z
-    points_homogeneous = points_cam  # (N, 3)
+    points_homogeneous = points_3d  # (N, 3)
     z = points_homogeneous[:, 2:3]  # (N, 1)
 
     # Avoid division by zero
@@ -190,25 +241,31 @@ def project_points_to_image(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
     return points_2d
 
 
-def draw_trajectory_on_image(img: np.ndarray, points_2d: np.ndarray, colors: list = None) -> np.ndarray:
+def draw_trajectory_on_image(img: np.ndarray, points_2d: np.ndarray, cmap: str = "pred") -> np.ndarray:
     """Draw trajectory on image.
 
     Args:
         img: (H, W, 3) RGB image
         points_2d: (N, 2) array of 2D pixel coordinates
-        colors: list of BGR colors for each segment
+        cmap: Color mapping ('pred' for default blue/green, 'gt' for orange/yellow)
 
     Returns:
         Image with trajectory drawn
     """
     img_draw = img.copy()
 
-    if colors is None:
-        # Gradient from blue to red
-        n = len(points_2d)
+    n = len(points_2d)
+    if n == 0:
+        return img_draw
+
+    if cmap == "gt":
+        # Green to Red for GT
+        colors = [(0, int(255 * (1 - i / max(1, n - 1))), 255) for i in range(max(1, n - 1))]
+    else:
+        # Gradient from blue to green
         colors = [
-            (int(255 * i / n), int(255 * (1 - i / n)), 0)  # BGR
-            for i in range(n - 1)
+            (int(255 * i / max(1, n - 1)), int(255 * (1 - i / max(1, n - 1))), 0)  # BGR
+            for i in range(max(1, n - 1))
         ]
 
     # Draw line segments
@@ -271,38 +328,15 @@ class TrajectoryPlotter:
         self.fig.show()
         self.fig.canvas.flush_events()
 
-    def set_trajectory(self, actions: np.ndarray):
-        """Set the trajectory from relative 10D poses (from origin).
-
-        Each action is a 10D relative pose [dx,dy,dz,rot6d_0..5,gripper] that needs
-        to be converted to a 4x4 transformation matrix and applied to the base pose.
+    def set_trajectory(self, trajectory_3d: np.ndarray):
+        """Set the trajectory from pre-calculated 3D positions in optical frame.
 
         Args:
-            actions: (N, 10) array of relative actions
+            trajectory_3d: (N, 3) matrix of 3D points
         """
-        import numpy as np
-
-        # Start from origin (identity matrix)
-        base_pose = np.eye(4)
-
-        # Start at origin
-        self.trajectory_x = [0.0]
-        self.trajectory_y = [0.0]
-        self.trajectory_z = [0.0]
-
-        # For each action in the chunk, apply the relative transformation
-        for action in actions:
-            # Convert 10D pose to 4x4 transformation matrix
-            rel_pose = pose10d_to_mat(action[:9])
-
-            # Apply to base pose: T_abs = T_base @ T_rel
-            # All actions in chunk are relative to the SAME base pose (UMI-style)
-            abs_pose = base_pose @ rel_pose
-
-            # Extract position
-            self.trajectory_x.append(abs_pose[0, 3])
-            self.trajectory_y.append(abs_pose[1, 3])
-            self.trajectory_z.append(abs_pose[2, 3])
+        self.trajectory_x = trajectory_3d[:, 0]
+        self.trajectory_y = trajectory_3d[:, 1]
+        self.trajectory_z = trajectory_3d[:, 2]
 
     def update(self):
         """Update the plot with current trajectory."""
@@ -614,6 +648,11 @@ def run_dataset_mode(args):
     camera_name = args.camera_name
     save_mp4 = args.mp4
 
+    # Initialize kinematics offsets
+    urdf_path = args.urdf_path
+    logger.info(f"Loading kinematic transforms from {urdf_path}")
+    T_opt_cam, T_cam_grip = get_kinematic_transforms(urdf_path)
+
     # Load camera intrinsics
     camera_matrix = load_camera_matrix_from_dataset(dataset_root)
 
@@ -727,22 +766,41 @@ def run_dataset_mode(args):
                         if isinstance(pred_actions, dict) and "action" in pred_actions:
                             pred_actions = pred_actions["action"]
                         actions_np = pred_actions[0].cpu().numpy()  # (chunk_size, 10)
+                        
+                        trajectory_3d = actions_to_3d_points(actions_np, T_opt_cam, T_cam_grip)
+                        points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
+                        
+                        if args.gt:
+                            gt_actions = sample["action"]
+                            if isinstance(gt_actions, torch.Tensor):
+                                gt_actions = gt_actions.cpu().numpy()
+                            trajectory_3d_gt = actions_to_3d_points(gt_actions, T_opt_cam, T_cam_grip)
+                            points_2d_gt = project_points_to_image(trajectory_3d_gt[1:], camera_matrix)
                 else:
                     # Use GT actions from dataset
                     actions_np = sample["action"]
                     if isinstance(actions_np, torch.Tensor):
                         actions_np = actions_np.cpu().numpy()
 
-                # Convert actions to 3D trajectory and project
-                trajectory_3d = actions_to_3d_points(actions_np)
-                points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
+                    trajectory_3d = actions_to_3d_points(actions_np, T_opt_cam, T_cam_grip)
+                    points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
 
                 # Draw projection on image
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                img_bgr = draw_trajectory_on_image(img_bgr, points_2d)
+                if args.inference:
+                    img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="pred")
+                    if args.gt:
+                        img_bgr = draw_trajectory_on_image(img_bgr, points_2d_gt, cmap="gt")
+                else:
+                     img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="gt")
 
                 # Update 3D trajectory plot
-                update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label)
+                if args.inference and args.gt:
+                    update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, trajectory_3d_gt=trajectory_3d_gt)
+                elif args.inference:
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label)
+                else:
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d_gt=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, title=mode_label)
 
                 if save_mp4:
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -783,6 +841,11 @@ def run_camera_mode(args):
     """Run camera mode: live inference with physical cameras (original behavior)."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
+
+    # Initialize kinematics offsets
+    urdf_path = args.urdf_path
+    logger.info(f"Loading kinematic transforms from {urdf_path}")
+    T_opt_cam, T_cam_grip = get_kinematic_transforms(urdf_path)
 
     policy, preprocessor, postprocessor, obs_state_horizon = load_policy_and_processors(
         args.pretrained_path, args.obs_state_horizon, device
@@ -885,14 +948,9 @@ def run_camera_mode(args):
             print(f"Step {step_count}: Inference {inference_time*1000:.1f}ms | Actions shape: {pred_actions.shape}")
 
             if plotter is not None:
-                plotter.set_trajectory(pred_actions)
+                trajectory_3d = actions_to_3d_points(pred_actions, T_opt_cam, T_cam_grip)
+                plotter.set_trajectory(trajectory_3d)
                 plotter.update()
-
-                trajectory_3d = np.column_stack([
-                    plotter.trajectory_x,
-                    plotter.trajectory_y,
-                    plotter.trajectory_z
-                ])
 
                 if camera_matrix is None:
                     for cam in cameras.values():
@@ -982,6 +1040,12 @@ def main():
         help="Control loop frequency (Hz)",
     )
     parser.add_argument(
+        "--urdf_path",
+        type=str,
+        default="urdf/Simulation/SO101/so101_sroi.urdf",
+        help="Path to URDF file for calculating True Gripper offsets",
+    )
+    parser.add_argument(
         "--num_steps",
         type=int,
         default=0,
@@ -1027,6 +1091,11 @@ def main():
         "--inference",
         action="store_true",
         help="Run policy inference in dataset mode (without this, projects GT actions)",
+    )
+    parser.add_argument(
+        "--gt",
+        action="store_true",
+        help="Overlay GT trajectory on top of predicted trajectory (only works with --inference in dataset mode)",
     )
     parser.add_argument(
         "--output_dir",
