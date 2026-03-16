@@ -182,3 +182,4 @@ outputs/
 *.xml
 *.part
 /tests/temp_ik_comparison/
+\n# Editor / IDE / GitHub configs\n.github/
