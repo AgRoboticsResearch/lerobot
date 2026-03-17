@@ -180,7 +180,7 @@ def actions_to_3d_points(actions: np.ndarray, T_opt_cam: np.ndarray, T_cam_grip:
     return np.array(positions)
 
 
-def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label, trajectory_3d_gt=None):
+def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label, trajectory_3d_gt=None, gripper=None, gripper_gt=None):
     """Update a matplotlib 3D axes with trajectory data."""
     ax.clear()
     
@@ -189,6 +189,10 @@ def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label, 
                 'r--', linewidth=2, label='GT')
         ax.plot([trajectory_3d_gt[-1, 0]], [trajectory_3d_gt[-1, 1]], [trajectory_3d_gt[-1, 2]],
                 'mo', markersize=6)
+        if gripper_gt is not None:
+            pts = trajectory_3d_gt[1:][gripper_gt < 0.1]
+            if len(pts) > 0:
+                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c='m', marker='x', s=50, label='GT Grip')
                 
     if len(trajectory_3d) > 1:
         ax.plot(trajectory_3d[:, 0], trajectory_3d[:, 1], trajectory_3d[:, 2],
@@ -197,6 +201,10 @@ def update_3d_trajectory_plot(ax, trajectory_3d, frame_idx, ep_idx, mode_label, 
                 'go', markersize=8, label='Start')
         ax.plot([trajectory_3d[-1, 0]], [trajectory_3d[-1, 1]], [trajectory_3d[-1, 2]],
                 'ro', markersize=8, label='End (Pred)')
+        if gripper is not None:
+            pts = trajectory_3d[1:][gripper < 0.1]
+            if len(pts) > 0:
+                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c='k', marker='x', s=50, label='Pred Grip')
                 
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
@@ -241,13 +249,14 @@ def project_points_to_image(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
     return points_2d
 
 
-def draw_trajectory_on_image(img: np.ndarray, points_2d: np.ndarray, cmap: str = "pred") -> np.ndarray:
+def draw_trajectory_on_image(img: np.ndarray, points_2d: np.ndarray, cmap: str = "pred", gripper: np.ndarray = None) -> np.ndarray:
     """Draw trajectory on image.
 
     Args:
         img: (H, W, 3) RGB image
         points_2d: (N, 2) array of 2D pixel coordinates
         cmap: Color mapping ('pred' for default blue/green, 'gt' for orange/yellow)
+        gripper: (N,) array of gripper states (0 = closed, 1 = open)
 
     Returns:
         Image with trajectory drawn
@@ -278,6 +287,9 @@ def draw_trajectory_on_image(img: np.ndarray, points_2d: np.ndarray, cmap: str =
         if (0 <= pt1[0] < w and 0 <= pt1[1] < h and
             0 <= pt2[0] < w and 0 <= pt2[1] < h):
             cv2.line(img_draw, pt1, pt2, colors[i % len(colors)], 2)
+            if gripper is not None and gripper[i] < 0.1:
+                color = (0, 0, 255) if cmap == "gt" else (255, 0, 0)
+                cv2.drawMarker(img_draw, pt1, color, markerType=cv2.MARKER_CROSS, markerSize=1, thickness=2)
 
     # Draw start point (green) and end point (red)
     if len(points_2d) > 0:
@@ -769,6 +781,7 @@ def run_dataset_mode(args):
                         
                         trajectory_3d = actions_to_3d_points(actions_np, T_opt_cam, T_cam_grip)
                         points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
+                        gripper_np = actions_np[:, 9]
                         
                         if args.gt:
                             gt_actions = sample["action"]
@@ -776,6 +789,9 @@ def run_dataset_mode(args):
                                 gt_actions = gt_actions.cpu().numpy()
                             trajectory_3d_gt = actions_to_3d_points(gt_actions, T_opt_cam, T_cam_grip)
                             points_2d_gt = project_points_to_image(trajectory_3d_gt[1:], camera_matrix)
+                            gripper_gt_np = gt_actions[:, 9]
+                        else:
+                            gripper_gt_np = None
                 else:
                     # Use GT actions from dataset
                     actions_np = sample["action"]
@@ -784,23 +800,25 @@ def run_dataset_mode(args):
 
                     trajectory_3d = actions_to_3d_points(actions_np, T_opt_cam, T_cam_grip)
                     points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
+                    gripper_np = actions_np[:, 9]
+                    gripper_gt_np = None
 
                 # Draw projection on image
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 if args.inference:
-                    img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="pred")
+                    img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="pred", gripper=gripper_np)
                     if args.gt:
-                        img_bgr = draw_trajectory_on_image(img_bgr, points_2d_gt, cmap="gt")
+                        img_bgr = draw_trajectory_on_image(img_bgr, points_2d_gt, cmap="gt", gripper=gripper_gt_np)
                 else:
-                     img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="gt")
+                     img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="gt", gripper=gripper_np)
 
                 # Update 3D trajectory plot
                 if args.inference and args.gt:
-                    update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, trajectory_3d_gt=trajectory_3d_gt)
+                    update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, trajectory_3d_gt=trajectory_3d_gt, gripper=gripper_np, gripper_gt=gripper_gt_np)
                 elif args.inference:
-                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label)
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, gripper=gripper_np)
                 else:
-                     update_3d_trajectory_plot(ax_3d, trajectory_3d_gt=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, title=mode_label)
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, mode_label=mode_label, gripper=gripper_np)
 
                 if save_mp4:
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
