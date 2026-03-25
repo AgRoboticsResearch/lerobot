@@ -13,6 +13,7 @@
 # limitations under the License.
 
 ### Environments & Dependencies ###
+.opencode/
 tmp/
 claude_chat/
 deploy_viz_output/
