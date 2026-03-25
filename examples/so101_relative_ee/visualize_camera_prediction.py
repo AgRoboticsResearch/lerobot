@@ -805,20 +805,22 @@ def run_dataset_mode(args):
 
                 # Draw projection on image
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                gripper_to_draw = gripper_np if args.gripper else None
+                gripper_gt_to_draw = gripper_gt_np if args.gripper else None
                 if args.inference:
-                    img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="pred", gripper=gripper_np)
+                    img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="pred", gripper=gripper_to_draw)
                     if args.gt:
-                        img_bgr = draw_trajectory_on_image(img_bgr, points_2d_gt, cmap="gt", gripper=gripper_gt_np)
+                        img_bgr = draw_trajectory_on_image(img_bgr, points_2d_gt, cmap="gt", gripper=gripper_gt_to_draw)
                 else:
-                     img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="gt", gripper=gripper_np)
+                     img_bgr = draw_trajectory_on_image(img_bgr, points_2d, cmap="gt", gripper=gripper_to_draw)
 
                 # Update 3D trajectory plot
                 if args.inference and args.gt:
-                    update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, trajectory_3d_gt=trajectory_3d_gt, gripper=gripper_np, gripper_gt=gripper_gt_np)
+                    update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, trajectory_3d_gt=trajectory_3d_gt, gripper=gripper_to_draw, gripper_gt=gripper_gt_to_draw)
                 elif args.inference:
-                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, gripper=gripper_np)
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, gripper=gripper_to_draw)
                 else:
-                     update_3d_trajectory_plot(ax_3d, trajectory_3d=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, mode_label=mode_label, gripper=gripper_np)
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, mode_label=mode_label, gripper=gripper_to_draw)
 
                 if save_mp4:
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -965,6 +967,9 @@ def run_camera_mode(args):
             inference_time = time.perf_counter() - t_inference
             print(f"Step {step_count}: Inference {inference_time*1000:.1f}ms | Actions shape: {pred_actions.shape}")
 
+            # Extract gripper states (index 9 in 10D action)
+            gripper_states = pred_actions[:, 9] if args.gripper else None
+
             if plotter is not None:
                 trajectory_3d = actions_to_3d_points(pred_actions, T_opt_cam, T_cam_grip)
                 plotter.set_trajectory(trajectory_3d)
@@ -1002,7 +1007,7 @@ def run_camera_mode(args):
 
                     if trajectory_3d is not None and camera_matrix is not None:
                         points_2d = project_points_to_image(trajectory_3d[1:], camera_matrix)
-                        img_display = draw_trajectory_on_image(img_display, points_2d)
+                        img_display = draw_trajectory_on_image(img_display, points_2d, gripper=gripper_states)
 
                     cv2.imshow(f"Camera: {cam_name}", img_display)
                 cv2.waitKey(1)
@@ -1090,6 +1095,11 @@ def main():
         "--plot-traj",
         action="store_true",
         help="Show real-time 3D trajectory plot (camera mode only)",
+    )
+    parser.add_argument(
+        "--gripper",
+        action="store_true",
+        help="Visualize gripper state on trajectory",
     )
     # Dataset mode arguments
     parser.add_argument(
