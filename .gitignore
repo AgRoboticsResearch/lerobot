@@ -168,6 +168,9 @@ wandb/
 # Dev scripts
 .dev/
 
+# LIBERO training outputs
+libero_training/output/
+
 # Data folders
 data/
 outputs/
