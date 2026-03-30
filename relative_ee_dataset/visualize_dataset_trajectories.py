@@ -455,6 +455,29 @@ def main():
         output_path.mkdir(parents=True, exist_ok=True)
         print(f"\nSaving per-episode plots to: {output_path}")
 
+    # Save trajectories to CSV
+    if output_path:
+        print("\nSaving trajectory CSVs...")
+        for ep_idx in sorted(trajectories["state"].keys()):
+            ep_state = trajectories["state"][ep_idx]
+            ep_action = trajectories["action"].get(ep_idx)
+            ep_ts = trajectories["timestamp"][ep_idx]
+            n_frames = len(ep_state)
+
+            rows = []
+            for i in range(n_frames):
+                row = {"step": i, "timestamp": ep_ts[i]}
+                for j, name in enumerate(state_names):
+                    row[f"state.{name}"] = ep_state[i, j]
+                if ep_action is not None:
+                    for j, name in enumerate(action_names):
+                        row[f"action.{name}"] = ep_action[i, j]
+                rows.append(row)
+
+            csv_path = output_path / f"trajectory_ep{ep_idx:03d}.csv"
+            pd.DataFrame(rows).to_csv(csv_path, index=False)
+            print(f"  Saved {csv_path} ({n_frames} rows, columns: {list(rows[0].keys())})")
+
     # Create plots (one file per episode each)
     print("\nCreating visualizations...")
     plot_3d_trajectories(trajectories, state_names, output_path)
