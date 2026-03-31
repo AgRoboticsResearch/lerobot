@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -30,6 +31,9 @@ URDF_PATH = Path(__file__).parent / "piper_mujoco" / "piper_description.urdf"
 PIPER_ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 NUM_ARM_JOINTS = 6
 SUBSTEPS = 50  # MuJoCo steps per trajectory step (let actuators converge)
+
+# Home position (degrees) — a sensible upright pose
+HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
 
 
 # ============================================================
@@ -56,6 +60,8 @@ def parse_args():
     p.add_argument("--traj-csv", required=True)
     p.add_argument("--steps", type=int, default=None)
     p.add_argument("--model-path", default=str(MJCF_PATH))
+    p.add_argument("--viewer", action="store_true", help="Show interactive MuJoCo viewer")
+    p.add_argument("--step-time", type=float, default=0.1, help="Delay (seconds) between steps in viewer mode")
     return p.parse_args()
 
 
@@ -106,13 +112,23 @@ def create_env(model_path):
         joint_names=PIPER_ARM_JOINTS,
     )
 
-    # Get initial EE pose via FK
-    q_rad = np.array([data.qpos[i] for i in range(NUM_ARM_JOINTS)])
-    q_deg = rad2deg(q_rad)
-    T_base = kinematics.forward_kinematics(q_deg)
+    # Move to home position (direct qpos, no actuator dynamics)
+    home_rad = deg2rad(HOME_JOINTS_DEG)
+    for j in range(NUM_ARM_JOINTS):
+        data.qpos[j] = home_rad[j]
+        data.ctrl[j] = home_rad[j]
+    data.qpos[6] = 0.0
+    data.qpos[7] = 0.0
+    data.ctrl[6] = 0.0
+    data.ctrl[7] = 0.0
+    mujoco.mj_forward(model, data)
 
-    print(f"Initial joints (deg): {np.round(q_deg, 2)}")
-    print(f"Initial EE pos: {T_base[:3, 3]}")
+    q_home_rad = np.array([data.qpos[i] for i in range(NUM_ARM_JOINTS)])
+    q_home_deg = rad2deg(q_home_rad)
+    T_base = kinematics.forward_kinematics(q_home_deg)
+
+    print(f"Home joints (deg): {np.round(q_home_deg, 2)}")
+    print(f"Home EE pos: {T_base[:3, 3]}")
 
     return model, data, kinematics, T_base
 
@@ -121,8 +137,54 @@ def create_env(model_path):
 # Execution
 # ============================================================
 
+def exec_step(model, data, kinematics, step, i):
+    """Execute a single trajectory step: IK -> set qpos -> mj_forward -> print."""
+    T_target = step["T_target"]
+    gripper = step["gripper"]
+
+    # Current joints (seed for IK)
+    q_cur_rad = np.array([data.qpos[j] for j in range(NUM_ARM_JOINTS)])
+    q_cur_deg = rad2deg(q_cur_rad)
+
+    # Solve IK
+    q_target_deg = kinematics.inverse_kinematics(
+        current_joint_pos=q_cur_deg,
+        desired_ee_pose=T_target,
+        position_weight=1.0,
+        orientation_weight=0.1,
+    )
+    q_target_rad = deg2rad(q_target_deg)
+
+    # Directly set joint positions (kinematic mode — bypasses actuator dynamics)
+    for j in range(NUM_ARM_JOINTS):
+        data.qpos[j] = q_target_rad[j]
+
+    # Gripper: 1=open -> 0, 0=closed -> max
+    grip_open = gripper  # 1=open, 0=closed
+    data.qpos[6] = (1 - grip_open) * 0.04   # joint7: [0, 0.04]
+    data.qpos[7] = -(1 - grip_open) * 0.04  # joint8: [-0.04, 0]
+
+    # Also set ctrl so viewer sliders show correct targets
+    for j in range(NUM_ARM_JOINTS):
+        data.ctrl[j] = q_target_rad[j]
+    data.ctrl[6] = (1 - grip_open) * 0.04
+    data.ctrl[7] = -(1 - grip_open) * 0.04
+
+    # Update kinematics (no dynamics step)
+    mujoco.mj_forward(model, data)
+
+    # Print
+    T_actual = kinematics.forward_kinematics(q_target_deg)
+    pos_err = np.linalg.norm(T_target[:3, 3] - T_actual[:3, 3])
+    print(f"  Step {i:3d}: pos_err={pos_err:.6f}m")
+    print(f"    Sent: pos={T_target[:3, 3].tolist()} grip={gripper:.2f}")
+    print(f"    True: pos={T_actual[:3, 3].tolist()} grip={data.qpos[6]:.5f}")
+
+    return T_target, T_actual
+
+
 def run_trajectory(model, data, kinematics, traj, render=True):
-    # Try offscreen rendering, gracefully handle headless environments
+    # Offscreen renderer for video
     renderer = None
     frames = []
     if render:
@@ -135,57 +197,19 @@ def run_trajectory(model, data, kinematics, traj, render=True):
     g_sent, g_act = [], []
 
     for i, step in enumerate(traj):
-        T_target = step["T_target"]
-        gripper = step["gripper"]
-
-        # Current joints (seed for IK)
-        q_cur_rad = np.array([data.qpos[j] for j in range(NUM_ARM_JOINTS)])
-        q_cur_deg = rad2deg(q_cur_rad)
-
-        # Solve IK
-        q_target_deg = kinematics.inverse_kinematics(
-            current_joint_pos=q_cur_deg,
-            desired_ee_pose=T_target,
-            position_weight=1.0,
-            orientation_weight=0.1,
-        )
-        q_target_rad = deg2rad(q_target_deg)
-
-        # Send to MuJoCo position actuators
-        for j in range(NUM_ARM_JOINTS):
-            data.ctrl[j] = q_target_rad[j]
-
-        # Gripper: 1=open -> ctrl=0, 0=closed -> ctrl=max
-        grip_open = gripper  # 1=open, 0=closed
-        data.ctrl[6] = (1 - grip_open) * 0.04   # joint7: [0, 0.04]
-        data.ctrl[7] = -(1 - grip_open) * 0.04  # joint8: [-0.04, 0]
-
-        # Step simulation
-        for _ in range(SUBSTEPS):
-            mujoco.mj_step(model, data)
-
-        # Record actual state
-        q_actual_rad = np.array([data.qpos[j] for j in range(NUM_ARM_JOINTS)])
-        q_actual_deg = rad2deg(q_actual_rad)
-        T_actual = kinematics.forward_kinematics(q_actual_deg)
+        T_target, T_actual = exec_step(model, data, kinematics, step, i)
 
         sent_p.append(T_target[:3, 3].copy())
         sent_r.append(R.from_matrix(T_target[:3, :3]).as_rotvec())
         act_p.append(T_actual[:3, 3].copy())
         act_r.append(R.from_matrix(T_actual[:3, :3]).as_rotvec())
-        g_sent.append(gripper)
+        g_sent.append(step["gripper"])
         g_act.append(data.qpos[6] / 0.04)  # normalize to [0,1]
 
         # Render if available
         if renderer is not None:
             renderer.update_scene(data)
             frames.append(renderer.render())
-
-        # Print
-        pos_err = np.linalg.norm(T_target[:3, 3] - T_actual[:3, 3])
-        print(f"  Step {i:3d}: pos_err={pos_err:.6f}m")
-        print(f"    Sent: pos={T_target[:3, 3].tolist()} grip={gripper:.2f}")
-        print(f"    True: pos={T_actual[:3, 3].tolist()} grip={data.qpos[6]:.5f}")
 
     result = dict(
         sent_pos=np.array(sent_p), sent_rv=np.array(sent_r), g_sent=np.array(g_sent),
@@ -258,10 +282,22 @@ def main():
     model, data, kinematics, T_base = create_env(args.model_path)
     traj = load_trajectory(args.traj_csv, T_base, args.steps)
 
-    result, frames = run_trajectory(model, data, kinematics, traj)
-    if frames:
-        save_video(frames, out)
-    plot(result, out)
+    if args.viewer:
+        with mujoco.viewer.launch_passive(model, data) as viewer:
+            for i, step in enumerate(traj):
+                exec_step(model, data, kinematics, step, i)
+                viewer.sync()
+                if args.step_time > 0:
+                    time.sleep(args.step_time)
+            # Keep viewer open after trajectory finishes
+            while viewer.is_running():
+                mujoco.mj_step(model, data)
+                viewer.sync()
+    else:
+        result, frames = run_trajectory(model, data, kinematics, traj)
+        if frames:
+            save_video(frames, out)
+        plot(result, out)
 
 
 if __name__ == "__main__":
