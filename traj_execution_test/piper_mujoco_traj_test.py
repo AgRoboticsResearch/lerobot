@@ -32,6 +32,8 @@ PIPER_ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 NUM_ARM_JOINTS = 6
 SUBSTEPS = 50  # MuJoCo steps per trajectory step (let actuators converge)
 
+# Rest position (degrees) — folded safe pose, used at start/end
+REST_JOINTS_DEG = np.array([-0.59, -3.11, -3.56, -2.55, 23.30, 1.17])
 # Home position (degrees) — a sensible upright pose
 HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
 
@@ -112,7 +114,23 @@ def create_env(model_path):
         joint_names=PIPER_ARM_JOINTS,
     )
 
-    # Move to home position (direct qpos, no actuator dynamics)
+    # Start from rest position
+    rest_rad = deg2rad(REST_JOINTS_DEG)
+    for j in range(NUM_ARM_JOINTS):
+        data.qpos[j] = rest_rad[j]
+        data.ctrl[j] = rest_rad[j]
+    data.qpos[6] = 0.0
+    data.qpos[7] = 0.0
+    data.ctrl[6] = 0.0
+    data.ctrl[7] = 0.0
+    mujoco.mj_forward(model, data)
+    print(f"Rest joints (deg): {REST_JOINTS_DEG}")
+
+    return model, data, kinematics
+
+
+def move_to_home(model, data, kinematics):
+    """Move from rest to home and return T_base."""
     home_rad = deg2rad(HOME_JOINTS_DEG)
     for j in range(NUM_ARM_JOINTS):
         data.qpos[j] = home_rad[j]
@@ -130,7 +148,21 @@ def create_env(model_path):
     print(f"Home joints (deg): {np.round(q_home_deg, 2)}")
     print(f"Home EE pos: {T_base[:3, 3]}")
 
-    return model, data, kinematics, T_base
+    return T_base
+
+
+def go_to_rest(model, data):
+    """Move arm to rest position (direct qpos set)."""
+    rest_rad = deg2rad(REST_JOINTS_DEG)
+    for j in range(NUM_ARM_JOINTS):
+        data.qpos[j] = rest_rad[j]
+        data.ctrl[j] = rest_rad[j]
+    data.qpos[6] = 0.0
+    data.qpos[7] = 0.0
+    data.ctrl[6] = 0.0
+    data.ctrl[7] = 0.0
+    mujoco.mj_forward(model, data)
+    print(f"Moved to rest position: {REST_JOINTS_DEG}")
 
 
 # ============================================================
@@ -279,25 +311,44 @@ def main():
     out = Path(__file__).parent / "output"
     out.mkdir(exist_ok=True)
 
-    model, data, kinematics, T_base = create_env(args.model_path)
-    traj = load_trajectory(args.traj_csv, T_base, args.steps)
+    model, data, kinematics = create_env(args.model_path)
 
     if args.viewer:
         with mujoco.viewer.launch_passive(model, data) as viewer:
+            viewer.sync()
+
+            input("Press Enter to move to home position...")
+            T_base = move_to_home(model, data, kinematics)
+            viewer.sync()
+
+            traj = load_trajectory(args.traj_csv, T_base, args.steps)
+            input("Press Enter to start trajectory (Ctrl+C to abort)...")
+
             for i, step in enumerate(traj):
                 exec_step(model, data, kinematics, step, i)
                 viewer.sync()
                 if args.step_time > 0:
                     time.sleep(args.step_time)
-            # Keep viewer open after trajectory finishes
+
+            input("Press Enter to return to rest position...")
+            go_to_rest(model, data)
+            viewer.sync()
             while viewer.is_running():
                 mujoco.mj_step(model, data)
                 viewer.sync()
     else:
+        input("Press Enter to move to home position...")
+        T_base = move_to_home(model, data, kinematics)
+        traj = load_trajectory(args.traj_csv, T_base, args.steps)
+        input("Press Enter to start trajectory (Ctrl+C to abort)...")
+
         result, frames = run_trajectory(model, data, kinematics, traj)
         if frames:
             save_video(frames, out)
         plot(result, out)
+
+        input("Press Enter to return to rest position...")
+        go_to_rest(model, data)
 
 
 if __name__ == "__main__":

@@ -182,8 +182,6 @@ outputs/
 # Dev folders
 .cache/*
 *.stl
-*.urdf
-*.xml
 *.part
 /tests/temp_ik_comparison/
 \n# Editor / IDE / GitHub configs\n.github/

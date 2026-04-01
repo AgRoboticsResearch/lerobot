@@ -19,6 +19,8 @@ JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 
 def main():
+    print("Loading MuJoCo model...")
+    print(f"Model path: {MJCF_PATH}\n")
     model = mujoco.MjModel.from_xml_path(str(MJCF_PATH))
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
@@ -36,6 +38,8 @@ def main():
     step = 0
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        # Show RGB axes on body and geom frames
+        viewer.opt.flags[mujoco.mjtFrame.mjFRAME_BODY] = True
         while viewer.is_running():
             mujoco.mj_step(model, data)
 

@@ -56,6 +56,9 @@
                   <joint name="joint8" pos="0 0 0" axis="0 0 1" type="slide" range="-0.04 0" actuatorfrcrange="-100 100"/>
                   <geom type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="link8"/>
                 </body>
+                <body name="ee_link" pos="0 0 0.135" euler="-1.5707963 0 -1.5707963">
+                  <site name="ee_site" pos="0 0 0" size="0.01" rgba="1 0 0 1" type="sphere"/>
+                </body>
               </body>
             </body>
           </body>
