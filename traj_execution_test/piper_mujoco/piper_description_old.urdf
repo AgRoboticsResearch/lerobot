@@ -395,57 +395,6 @@
       velocity="3" />
   </joint>
   <link
-    name="gripper_base">
-    <inertial>
-      <origin
-        xyz="-0.000183807162235591 8.05033155577911E-05 0.0321436689908876"
-        rpy="0 0 0" />
-      <mass
-        value="0.45" />
-      <inertia
-        ixx="0.00092934"
-        ixy="0.00000034"
-        ixz="-0.00000738"
-        iyy="0.00071447"
-        iyz="0.00000005"
-        izz="0.00039442" />
-    </inertial>
-    <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="meshes/gripper_base.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
-      </material>
-    </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="meshes/gripper_base.STL" />
-      </geometry>
-    </collision>
-  </link> 
-  <joint
-    name="joint6_to_gripper_base"
-    type="fixed">
-    <origin
-      xyz="0 0 0"
-      rpy="0 0 0" />
-    <parent
-      link="link6" />
-    <child
-      link="gripper_base" />
-  </joint>
-  <link
     name="link7">
     <inertial>
       <origin
@@ -492,7 +441,7 @@
       xyz="0 0 0.1358"
       rpy="1.5708 0 0" />
     <parent
-      link="gripper_base" />
+      link="link6" />
     <child
       link="link7" />
     <axis
@@ -550,7 +499,7 @@
       xyz="0 0 0.1358"
       rpy="1.5708 0 -3.1416" />
     <parent
-      link="gripper_base" />
+      link="link6" />
     <child
       link="link8" />
     <axis

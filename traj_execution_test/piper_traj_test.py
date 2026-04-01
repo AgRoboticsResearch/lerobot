@@ -32,7 +32,7 @@ from lerobot.model.kinematics import RobotKinematics
 # Constants
 # ============================================================
 
-URDF_PATH = Path(__file__).parent / "piper_mujoco" / "piper_description.urdf"
+URDF_PATH = Path(__file__).parent / "piper_mujoco" / "piper_description_old.urdf"
 PIPER_ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 NUM_ARM_JOINTS = 6
 
