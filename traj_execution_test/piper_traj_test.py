@@ -40,7 +40,7 @@ NUM_ARM_JOINTS = 6
 # Rest position (degrees) — folded safe pose, used at start/end
 REST_JOINTS_DEG = np.array([0, 0, 0, -2.95, 18.63, -2.92])
 # Home position (degrees)
-HOME_JOINTS_DEG = np.array([0, 73.77, -43.43, 0, -24, 0])
+HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
 
 # Joint limits (degrees): (min, max) per joint
 JOINT_LIMITS_DEG = [
@@ -125,8 +125,6 @@ def parse_args():
                    help="Comma-separated 6 joint values in degrees (default: built-in home)")
     p.add_argument("--tcp-frame", default="ee_link",
                    help="URDF frame to use as the planning TCP (default: ee_link)")
-    p.add_argument("--action-frame", default="ee_link", choices=["ee_link", "camera_link"],
-                   help="Frame that CSV actions are in (default: ee_link). Use camera_link for SO101 datasets.")
     return p.parse_args()
 
 
@@ -233,41 +231,16 @@ def create_robot(can_name, home_deg, speed, frame_spec):
 # CSV loading
 # ============================================================
 
-def load_trajectory(csv_path, T_base, max_steps=None, action_frame="ee_link"):
-    """Load trajectory from CSV.
-
-    Args:
-        csv_path: Path to CSV file
-        T_base: Base EE pose at home position
-        max_steps: Optional limit on number of steps
-        action_frame: Frame that CSV actions are in. Options:
-            - "ee_link": Actions are in ee_link frame (default, no transform needed)
-            - "camera_link": Actions are in camera_link frame (SO101, needs 180° Y rotation)
-    """
+def load_trajectory(csv_path, T_base, max_steps=None):
     df = pd.read_csv(csv_path)
     print(f"Loaded {len(df)} steps from {csv_path}")
-
-    # Pre-compute camera_link to ee_link transform (180° around Y for SO101)
-    if action_frame == "camera_link":
-        T_cam_to_ee = np.eye(4)
-        T_cam_to_ee[:3, :3] = R.from_euler('y', np.pi, degrees=False).as_matrix()
-        T_ee_to_cam = np.linalg.inv(T_cam_to_ee)
-        print(f"Applying camera_link -> ee_link transform (180° Y rotation)")
 
     traj = []
     for _, row in df.iterrows():
         rel_pos = [row["action.ee.x"], row["action.ee.y"], row["action.ee.z"]]
         rel_rv = [row.get("action.ee.wx", 0), row.get("action.ee.wy", 0), row.get("action.ee.wz", 0)]
         gripper = row["action.ee.gripper_pos"]
-
-        T_rel = make_transform(rel_pos, rel_rv)
-
-        # Transform from action frame to ee_link frame if needed
-        if action_frame == "camera_link":
-            # T_rel_ee = T_cam_to_ee @ T_rel @ T_ee_to_cam
-            T_rel = T_cam_to_ee @ T_rel @ T_ee_to_cam
-
-        T_t = T_base @ T_rel
+        T_t = T_base @ make_transform(rel_pos, rel_rv)
         traj.append({"T_target": T_t.copy(), "gripper": gripper})
 
     if max_steps:
@@ -465,7 +438,7 @@ def main():
     piper, T_base, kinematics = create_robot(args.can_name, home_deg, args.speed, frame_spec)
 
     # Load and execute trajectory
-    traj = load_trajectory(args.traj_csv, T_base, args.steps, args.action_frame)
+    traj = load_trajectory(args.traj_csv, T_base, args.steps)
     result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, frame_spec, kinematics)
     plot(result, out, args.mode, frame_spec.tcp_frame)
 
