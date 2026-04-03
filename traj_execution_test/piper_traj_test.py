@@ -26,6 +26,7 @@ import pandas as pd
 from piper_sdk import C_PiperInterface_V2
 from scipy.spatial.transform import Rotation as R
 
+from frame_utils import SDK_NATIVE_FRAME, pose_from_native, pose_to_native, resolve_tcp_frame
 from lerobot.model.kinematics import RobotKinematics
 
 # ============================================================
@@ -122,6 +123,8 @@ def parse_args():
     p.add_argument("--speed", type=int, default=100, help="Speed rate 0-100 (default: 100)")
     p.add_argument("--home-joints", default=None,
                    help="Comma-separated 6 joint values in degrees (default: built-in home)")
+    p.add_argument("--tcp-frame", default="ee_link",
+                   help="URDF frame to use as the planning TCP (default: ee_link)")
     return p.parse_args()
 
 
@@ -145,7 +148,7 @@ def go_to_rest(piper, speed):
     time.sleep(1.0)  # wait for motion to start
     print("Joint State at rest: ", np.round(read_joints_deg(piper), 2))
 
-def create_robot(can_name, home_deg, speed):
+def create_robot(can_name, home_deg, speed, frame_spec):
     """Connect, enable, move to rest, then home, read T_base."""
     print(f"Connecting to Piper on {can_name}...")
     piper = C_PiperInterface_V2(can_name)
@@ -201,16 +204,23 @@ def create_robot(can_name, home_deg, speed):
 
     q_home = read_joints_deg(piper)
     pos_m, euler_deg = read_ee_pose(piper)
-    T_base = ee_pose_to_T(pos_m, euler_deg)
+    T_base_native = ee_pose_to_T(pos_m, euler_deg)
+    T_base = pose_from_native(T_base_native, frame_spec)
+    tcp_pos_m, tcp_euler_deg = T_to_ee_pose(T_base)
+    offset_pos_m, offset_euler_deg = T_to_ee_pose(frame_spec.T_native_to_tcp)
 
     print(f"Home joints (deg): {np.round(q_home, 2)}")
-    print(f"Home EE pos (mm):  {np.round(pos_m * 1000, 2)}")
-    print(f"Home EE rot (deg): {np.round(euler_deg, 2)}")
+    print(f"Home {frame_spec.native_frame} pos (mm):  {np.round(pos_m * 1000, 2)}")
+    print(f"Home {frame_spec.native_frame} rot (deg): {np.round(euler_deg, 2)}")
+    print(f"Home {frame_spec.tcp_frame} pos (mm):  {np.round(tcp_pos_m * 1000, 2)}")
+    print(f"Home {frame_spec.tcp_frame} rot (deg): {np.round(tcp_euler_deg, 2)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} pos (mm): {np.round(offset_pos_m * 1000, 2)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} rot (deg): {np.round(offset_euler_deg, 2)}")
 
     # Initialize Placo kinematics solver
     kinematics = RobotKinematics(
         urdf_path=str(URDF_PATH),
-        target_frame_name="link6",
+        target_frame_name=frame_spec.tcp_frame,
         joint_names=PIPER_ARM_JOINTS,
     )
 
@@ -243,14 +253,15 @@ def load_trajectory(csv_path, T_base, max_steps=None):
 # Execution
 # ============================================================
 
-def exec_step(piper, step, i, speed, mode, kinematics=None):
+def exec_step(piper, step, i, speed, mode, frame_spec, kinematics=None):
     """Send one trajectory step to the robot."""
     gripper = step["gripper"]
     T = step["T_target"]
 
     if mode == "ee":
-        # Let robot firmware handle IK
-        pos_m, euler_deg = T_to_ee_pose(T)
+        # Convert planning TCP pose into the SDK-native frame before EndPoseCtrl.
+        T_native = pose_to_native(T, frame_spec)
+        pos_m, euler_deg = T_to_ee_pose(T_native)
         piper.MotionCtrl_2(0x01, 0x00, speed, 0x00)  # MOVE P
         piper.EndPoseCtrl(
             round(pos_m[0] * 1e6),      # m → 0.001mm
@@ -280,10 +291,11 @@ def exec_step(piper, step, i, speed, mode, kinematics=None):
     piper.GripperCtrl(abs(round(grip_m * 1e6)), 1000, 0x01, 0)
 
 
-def read_actual(piper, step):
-    """Read actual EE pose from robot for logging."""
+def read_actual(piper, step, frame_spec):
+    """Read actual SDK pose from robot and convert it into the planning TCP frame."""
     pos_m, euler_deg = read_ee_pose(piper)
-    T_actual = ee_pose_to_T(pos_m, euler_deg)
+    T_actual_native = ee_pose_to_T(pos_m, euler_deg)
+    T_actual = pose_from_native(T_actual_native, frame_spec)
     T_target = step["T_target"]
     pos_err = np.linalg.norm(T_target[:3, 3] - T_actual[:3, 3])
     return T_target, T_actual, pos_err
@@ -293,15 +305,24 @@ def read_actual(piper, step):
 # Main loop
 # ============================================================
 
-def run_trajectory(piper, traj, step_time, speed, mode, kinematics=None):
+def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=None):
     # Pre-flight safety check
     print(f"\n{'='*60}")
-    print(f"Trajectory: {len(traj)} steps, mode={mode}, dt={step_time}s, speed={speed}%")
+    print(
+        f"Trajectory: {len(traj)} steps, mode={mode}, tcp_frame={frame_spec.tcp_frame}, "
+        f"sdk_frame={frame_spec.native_frame}, dt={step_time}s, speed={speed}%"
+    )
 
     first_pos, first_euler = T_to_ee_pose(traj[0]["T_target"])
     last_pos, last_euler = T_to_ee_pose(traj[-1]["T_target"])
-    print(f"First target: pos={np.round(first_pos*1000, 1)}mm  rot={np.round(first_euler, 1)}°")
-    print(f"Last target:  pos={np.round(last_pos*1000, 1)}mm  rot={np.round(last_euler, 1)}°")
+    print(
+        f"First target ({frame_spec.tcp_frame}): pos={np.round(first_pos*1000, 1)}mm  "
+        f"rot={np.round(first_euler, 1)}°"
+    )
+    print(
+        f"Last target ({frame_spec.tcp_frame}):  pos={np.round(last_pos*1000, 1)}mm  "
+        f"rot={np.round(last_euler, 1)}°"
+    )
     print(f"{'='*60}")
 
     input("Press Enter to start trajectory (Ctrl+C to abort)...")
@@ -313,18 +334,21 @@ def run_trajectory(piper, traj, step_time, speed, mode, kinematics=None):
 
     try:
         for i, step in enumerate(traj):
-            exec_step(piper, step, i, speed, mode, kinematics)
+            exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
             time.sleep(step_time)
 
-            # Read actual state (always EE)
-            T_sent, T_actual, pos_err = read_actual(piper, step)
+            # Read actual state in the selected TCP frame.
+            T_sent, T_actual, pos_err = read_actual(piper, step, frame_spec)
             sent_p.append(T_sent[:3, 3].copy())
             act_p.append(T_actual[:3, 3].copy())
             sent_r.append(R.from_matrix(T_sent[:3, :3]).as_rotvec())
             act_r.append(R.from_matrix(T_actual[:3, :3]).as_rotvec())
             print(f"  Step {i:3d}: pos_err={pos_err*1000:.2f}mm")
-            print(f"    Sent: pos={np.round(T_sent[:3,3]*1000,2).tolist()}mm grip={step['gripper']:.2f}")
-            print(f"    True: pos={np.round(T_actual[:3,3]*1000,2).tolist()}mm")
+            print(
+                f"    Sent ({frame_spec.tcp_frame}): pos={np.round(T_sent[:3,3]*1000,2).tolist()}mm "
+                f"grip={step['gripper']:.2f}"
+            )
+            print(f"    True ({frame_spec.tcp_frame}): pos={np.round(T_actual[:3,3]*1000,2).tolist()}mm")
             errors.append(pos_err * 1000)
 
             # Read gripper
@@ -354,7 +378,7 @@ def run_trajectory(piper, traj, step_time, speed, mode, kinematics=None):
 # Plot
 # ============================================================
 
-def plot(result, out_dir, mode):
+def plot(result, out_dir, mode, tcp_frame):
     sp, ap = result["sent_pos"], result["act_pos"]
     sr, ar = result["sent_rv"], result["act_rv"]
     gs, ga = result["g_sent"], result["g_act"]
@@ -375,7 +399,7 @@ def plot(result, out_dir, mode):
     ax.set_xlim(mid[0] - half, mid[0] + half)
     ax.set_ylim(mid[1] - half, mid[1] + half)
     ax.set_zlim(mid[2] - half, mid[2] + half)
-    ax.set_title(f"3D EE Trajectory [Piper Real, {mode} mode]"); ax.legend()
+    ax.set_title(f"3D {tcp_frame} Trajectory [Piper Real, {mode} mode]"); ax.legend()
     plt.tight_layout(); fig.savefig(str(out_dir / "traj_3d.png")); plt.close()
 
     # 2D plots
@@ -388,7 +412,7 @@ def plot(result, out_dir, mode):
         a.plot(steps, v, "r-s", label="Actual", ms=3)
         a.set_ylabel(lb); a.legend()
     axes[-1].set_xlabel("Step")
-    axes[0].set_title(f"EE State [Piper Real, {mode} mode]")
+    axes[0].set_title(f"{tcp_frame} State [Piper Real, {mode} mode]")
     plt.tight_layout(); fig.savefig(str(out_dir / "traj_2d_states.png")); plt.close()
     print(f"Saved plots to {out_dir}")
 
@@ -401,6 +425,7 @@ def main():
     args = parse_args()
     out = Path(__file__).parent / "output"
     out.mkdir(exist_ok=True)
+    frame_spec = resolve_tcp_frame(URDF_PATH, args.tcp_frame, native_frame=SDK_NATIVE_FRAME)
 
     # Parse home joints
     if args.home_joints:
@@ -410,12 +435,12 @@ def main():
         home_deg = HOME_JOINTS_DEG
 
     # Connect to robot
-    piper, T_base, kinematics = create_robot(args.can_name, home_deg, args.speed)
+    piper, T_base, kinematics = create_robot(args.can_name, home_deg, args.speed, frame_spec)
 
     # Load and execute trajectory
     traj = load_trajectory(args.traj_csv, T_base, args.steps)
-    result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, kinematics)
-    plot(result, out, args.mode)
+    result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, frame_spec, kinematics)
+    plot(result, out, args.mode, frame_spec.tcp_frame)
 
     # Go to rest, then disable
     go_to_rest(piper, args.speed)

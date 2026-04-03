@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
+from frame_utils import SDK_NATIVE_FRAME, pose_from_native, resolve_tcp_frame
 from lerobot.model.kinematics import RobotKinematics
 
 # ============================================================
@@ -35,7 +36,8 @@ SUBSTEPS = 50  # MuJoCo steps per trajectory step (let actuators converge)
 # Rest position (degrees) — folded safe pose, used at start/end
 REST_JOINTS_DEG = np.array([-0.59, -3.11, -3.56, -2.55, 23.30, 1.17])
 # Home position (degrees) — a sensible upright pose
-HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
+# HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
+HOME_JOINTS_DEG = np.array([0, 73.77, -43.43, 0, -24, 0])
 
 
 # ============================================================
@@ -64,6 +66,7 @@ def parse_args():
     p.add_argument("--model-path", default=str(MJCF_PATH))
     p.add_argument("--viewer", action="store_true", help="Show interactive MuJoCo viewer")
     p.add_argument("--step-time", type=float, default=0.1, help="Delay (seconds) between steps in viewer mode")
+    p.add_argument("--tcp-frame", default="ee_link", help="URDF frame to use as the planning TCP")
     return p.parse_args()
 
 
@@ -102,15 +105,23 @@ def load_trajectory(csv_path, T_base, max_steps=None):
 # MuJoCo + Placo environment
 # ============================================================
 
-def create_env(model_path):
+def create_env(model_path, tcp_frame):
     model = mujoco.MjModel.from_xml_path(model_path)
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
 
-    # Initialize kinematics solver
+    # Get visualization site indices
+    target_site_id = model.site("traj_target").id if "traj_target" in [model.site(i).name for i in range(model.nsite)] else -1
+
+    # Initialize kinematics solvers for the requested TCP frame and the SDK-native frame.
     kinematics = RobotKinematics(
         urdf_path=str(URDF_PATH),
-        target_frame_name="link6",
+        target_frame_name=tcp_frame,
+        joint_names=PIPER_ARM_JOINTS,
+    )
+    native_kinematics = RobotKinematics(
+        urdf_path=str(URDF_PATH),
+        target_frame_name=SDK_NATIVE_FRAME,
         joint_names=PIPER_ARM_JOINTS,
     )
 
@@ -126,10 +137,10 @@ def create_env(model_path):
     mujoco.mj_forward(model, data)
     print(f"Rest joints (deg): {REST_JOINTS_DEG}")
 
-    return model, data, kinematics
+    return model, data, kinematics, native_kinematics, target_site_id
 
 
-def move_to_home(model, data, kinematics):
+def move_to_home(model, data, kinematics, native_kinematics, frame_spec):
     """Move from rest to home and return T_base."""
     home_rad = deg2rad(HOME_JOINTS_DEG)
     for j in range(NUM_ARM_JOINTS):
@@ -143,10 +154,18 @@ def move_to_home(model, data, kinematics):
 
     q_home_rad = np.array([data.qpos[i] for i in range(NUM_ARM_JOINTS)])
     q_home_deg = rad2deg(q_home_rad)
-    T_base = kinematics.forward_kinematics(q_home_deg)
+    T_base_native = native_kinematics.forward_kinematics(q_home_deg)
+    T_base = pose_from_native(T_base_native, frame_spec)
+    native_pos = T_base_native[:3, 3]
+    tcp_pos = T_base[:3, 3]
+    offset_pos = frame_spec.T_native_to_tcp[:3, 3]
+    offset_euler = R.from_matrix(frame_spec.T_native_to_tcp[:3, :3]).as_euler("xyz", degrees=True)
 
     print(f"Home joints (deg): {np.round(q_home_deg, 2)}")
-    print(f"Home EE pos: {T_base[:3, 3]}")
+    print(f"Home {frame_spec.native_frame} pos: {np.round(native_pos, 6)}")
+    print(f"Home {frame_spec.tcp_frame} pos: {np.round(tcp_pos, 6)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} pos (m): {np.round(offset_pos, 6)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} rot (deg): {np.round(offset_euler, 3)}")
 
     return T_base
 
@@ -169,8 +188,8 @@ def go_to_rest(model, data):
 # Execution
 # ============================================================
 
-def exec_step(model, data, kinematics, step, i):
-    """Execute a single trajectory step: IK -> set qpos -> mj_forward -> print."""
+def exec_step(model, data, kinematics, step, i, target_site_id=-1):
+    """Execute a single trajectory step: IK -> set qpos -> mj_forward -> print + visualize."""
     T_target = step["T_target"]
     gripper = step["gripper"]
 
@@ -205,8 +224,14 @@ def exec_step(model, data, kinematics, step, i):
     # Update kinematics (no dynamics step)
     mujoco.mj_forward(model, data)
 
-    # Print
+    # Get actual EE pose
     T_actual = kinematics.forward_kinematics(q_target_deg)
+
+    # Update visualization sites (if available)
+    if target_site_id >= 0:
+        data.site_xpos[target_site_id] = T_target[:3, 3]
+
+    # Print
     pos_err = np.linalg.norm(T_target[:3, 3] - T_actual[:3, 3])
     print(f"  Step {i:3d}: pos_err={pos_err:.6f}m")
     print(f"    Sent: pos={T_target[:3, 3].tolist()} grip={gripper:.2f}")
@@ -215,7 +240,7 @@ def exec_step(model, data, kinematics, step, i):
     return T_target, T_actual
 
 
-def run_trajectory(model, data, kinematics, traj, render=True):
+def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1):
     # Offscreen renderer for video
     renderer = None
     frames = []
@@ -229,7 +254,7 @@ def run_trajectory(model, data, kinematics, traj, render=True):
     g_sent, g_act = [], []
 
     for i, step in enumerate(traj):
-        T_target, T_actual = exec_step(model, data, kinematics, step, i)
+        T_target, T_actual = exec_step(model, data, kinematics, step, i, target_site_id)
 
         sent_p.append(T_target[:3, 3].copy())
         sent_r.append(R.from_matrix(T_target[:3, :3]).as_rotvec())
@@ -261,7 +286,7 @@ def save_video(frames, out_dir, fps=20):
     print(f"Saved {len(frames)} frames -> {p}")
 
 
-def plot(result, out_dir):
+def plot(result, out_dir, tcp_frame):
     sp, ap = result["sent_pos"], result["act_pos"]
     sr, ar = result["sent_rv"], result["act_rv"]
     gs, ga = result["g_sent"], result["g_act"]
@@ -282,7 +307,7 @@ def plot(result, out_dir):
     ax.set_xlim(mid[0] - half, mid[0] + half)
     ax.set_ylim(mid[1] - half, mid[1] + half)
     ax.set_zlim(mid[2] - half, mid[2] + half)
-    ax.set_title("3D EE Trajectory [Piper MuJoCo]"); ax.legend()
+    ax.set_title(f"3D {tcp_frame} Trajectory [Piper MuJoCo]"); ax.legend()
     plt.tight_layout(); fig.savefig(str(out_dir / "traj_3d.png")); plt.close()
 
     # 2D
@@ -297,7 +322,7 @@ def plot(result, out_dir):
         if a.get_ylim()[1] - a.get_ylim()[0] < 0.1:
             mid_a = (a.get_ylim()[0] + a.get_ylim()[1]) / 2
             a.set_ylim(mid_a - 0.05, mid_a + 0.05)
-    axes[-1].set_xlabel("Step"); axes[0].set_title("EE State [Piper MuJoCo]")
+    axes[-1].set_xlabel("Step"); axes[0].set_title(f"{tcp_frame} State [Piper MuJoCo]")
     plt.tight_layout(); fig.savefig(str(out_dir / "traj_2d_states.png")); plt.close()
     print(f"Saved plots to {out_dir}")
 
@@ -310,22 +335,25 @@ def main():
     args = parse_args()
     out = Path(__file__).parent / "output"
     out.mkdir(exist_ok=True)
+    frame_spec = resolve_tcp_frame(URDF_PATH, args.tcp_frame, native_frame=SDK_NATIVE_FRAME)
 
-    model, data, kinematics = create_env(args.model_path)
+    model, data, kinematics, native_kinematics, target_site_id = create_env(args.model_path, args.tcp_frame)
 
     if args.viewer:
         with mujoco.viewer.launch_passive(model, data) as viewer:
+            # Show RGB axes on body frames
+            viewer.opt.flags[mujoco.mjtFrame.mjFRAME_BODY] = True
             viewer.sync()
 
             input("Press Enter to move to home position...")
-            T_base = move_to_home(model, data, kinematics)
+            T_base = move_to_home(model, data, kinematics, native_kinematics, frame_spec)
             viewer.sync()
 
             traj = load_trajectory(args.traj_csv, T_base, args.steps)
             input("Press Enter to start trajectory (Ctrl+C to abort)...")
 
             for i, step in enumerate(traj):
-                exec_step(model, data, kinematics, step, i)
+                _, _ = exec_step(model, data, kinematics, step, i, target_site_id)
                 viewer.sync()
                 if args.step_time > 0:
                     time.sleep(args.step_time)
@@ -338,14 +366,14 @@ def main():
                 viewer.sync()
     else:
         input("Press Enter to move to home position...")
-        T_base = move_to_home(model, data, kinematics)
+        T_base = move_to_home(model, data, kinematics, native_kinematics, frame_spec)
         traj = load_trajectory(args.traj_csv, T_base, args.steps)
         input("Press Enter to start trajectory (Ctrl+C to abort)...")
 
-        result, frames = run_trajectory(model, data, kinematics, traj)
+        result, frames = run_trajectory(model, data, kinematics, traj, render=True, target_site_id=target_site_id)
         if frames:
             save_video(frames, out)
-        plot(result, out)
+        plot(result, out, frame_spec.tcp_frame)
 
         input("Press Enter to return to rest position...")
         go_to_rest(model, data)

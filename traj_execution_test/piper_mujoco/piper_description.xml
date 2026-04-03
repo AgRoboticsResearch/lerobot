@@ -65,6 +65,8 @@
         </body>
       </body>
     </body>
+    <!-- Trajectory visualization sites (world frame) -->
+    <site name="traj_target" pos="0 0 0" size="0.01" rgba="0 1 0 0.9" type="sphere"/>
   </worldbody>
 
   <actuator>
