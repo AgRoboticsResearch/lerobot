@@ -265,7 +265,8 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
     frames = []
     if render:
         try:
-            renderer = mujoco.Renderer(model, height=480, width=640)
+            # Larger resolution for better view
+            renderer = mujoco.Renderer(model, height=720, width=960)
         except Exception as e:
             print(f"Warning: could not create renderer ({e}), skipping video")
 
@@ -284,7 +285,7 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
 
         # Render if available
         if renderer is not None:
-            renderer.update_scene(data, camera='video_camera')
+            renderer.update_scene(data)
             frames.append(renderer.render())
 
     result = dict(
