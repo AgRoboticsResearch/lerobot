@@ -566,27 +566,41 @@
       velocity="1" />
   </joint> -->
 
-  <!-- Virtual End-Effector Link -->
-  <link name="ee_link">
-    <!-- Visual marker for ee_link (so you can see it in RViz/PyBullet just like the <site>) -->
+  <!-- Virtual camera Link -->
+  <link name="camera_link">
+    <!-- Visual marker for camera_link (so you can see it in RViz/PyBullet just like the <site>) -->
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <sphere radius="0.01"/>
+        <box size="0.01 0.05 0.02"/> <!-- Example: A small box for the camera -->
       </geometry>
-      <material name="ee_red">
+      <material name="red">
         <color rgba="1 0 0 1"/>
       </material>
     </visual>
   </link>
 
-  <joint name="ee_joint" type="fixed">
-    <!-- Positioned 0.3m outward along link6's Z axis. 
-         Euler angles: rpy mapping from MuJoCo euler "1.5707963 -1.5707963 0" 
-         (MuJoCo maps xyz euler usually roughly mapped to rpy based on convention,
-         but in URDF roll-pitch-yaw is rpy="1.5707963 -1.5707963 0") -->
-    <origin xyz="0 0 0.13" rpy="1.5707963 -1.5707963 0" />
+  <link name="camera_dummy_link">
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0.25 0" />
+    <parent link="camera_dummy_link" />
+    <child link="camera_link" />
+  </joint>
+
+  <joint name="camera_dummy_joint" type="fixed">
+    <origin xyz="0 0.07 0.03" rpy="-1.5707963 -1.5707963 0" />
     <parent link="link6" />
+    <child link="camera_dummy_link" />
+  </joint>
+
+  <link name="ee_link"></link>
+  
+  <joint name="ee_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="camera_link" />
     <child link="ee_link" />
   </joint>
+  
 </robot>
