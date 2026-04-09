@@ -266,6 +266,11 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
     if render:
         try:
             renderer = mujoco.Renderer(model, height=480, width=640)
+            # Zoom out to see the full robot
+            renderer.camera.azimuth = 135
+            renderer.camera.elevation = -25
+            renderer.camera.distance = 3.8
+            renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
         except Exception as e:
             print(f"Warning: could not create renderer ({e}), skipping video")
 
@@ -285,6 +290,10 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
         # Render if available
         if renderer is not None:
             renderer.update_scene(data)
+            renderer.camera.azimuth = 135
+            renderer.camera.elevation = -25
+            renderer.camera.distance = 3.8
+            renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
             frames.append(renderer.render())
 
     result = dict(
