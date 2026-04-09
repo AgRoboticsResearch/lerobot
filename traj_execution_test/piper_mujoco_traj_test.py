@@ -266,11 +266,6 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
     if render:
         try:
             renderer = mujoco.Renderer(model, height=480, width=640)
-            # Zoom out to see the full robot
-            renderer.camera.azimuth = 135
-            renderer.camera.elevation = -25
-            renderer.camera.distance = 3.8
-            renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
         except Exception as e:
             print(f"Warning: could not create renderer ({e}), skipping video")
 
@@ -290,10 +285,12 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
         # Render if available
         if renderer is not None:
             renderer.update_scene(data)
-            renderer.camera.azimuth = 135
-            renderer.camera.elevation = -25
-            renderer.camera.distance = 3.8
-            renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
+            # Set camera if available (not all mujoco versions support .camera)
+            if hasattr(renderer, 'camera'):
+                renderer.camera.azimuth = 135
+                renderer.camera.elevation = -25
+                renderer.camera.distance = 3.8
+                renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
             frames.append(renderer.render())
 
     result = dict(
@@ -471,17 +468,15 @@ def main():
                 mujoco.mj_step(model, data)
                 viewer.sync()
     else:
-        input("Press Enter to move to home position...")
+        # Headless mode: no input prompts
         T_base = move_to_home(model, data, kinematics, native_kinematics, frame_spec)
         traj = load_trajectory(args.traj_csv, T_base, args.steps)
-        input("Press Enter to start trajectory (Ctrl+C to abort)...")
 
         result, frames = run_trajectory(model, data, kinematics, traj, render=True, target_site_id=target_site_id)
         if frames:
             save_video(frames, out)
         plot(result, out, frame_spec.tcp_frame)
 
-        input("Press Enter to return to rest position...")
         go_to_rest(model, data)
 
 
