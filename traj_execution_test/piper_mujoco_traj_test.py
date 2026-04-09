@@ -229,16 +229,16 @@ def exec_step(model, data, kinematics, step, i, target_site_id=-1):
     for j in range(NUM_ARM_JOINTS):
         data.qpos[j] = q_target_rad[j]
 
-    # Gripper: 1=open -> 0, 0=closed -> max
+    # Gripper: 1=open -> max spread, 0=closed -> fingers together
     grip_open = gripper  # 1=open, 0=closed
-    data.qpos[6] = (1 - grip_open) * 0.04   # joint7: [0, 0.04]
-    data.qpos[7] = -(1 - grip_open) * 0.04  # joint8: [-0.04, 0]
+    data.qpos[6] = grip_open * 0.04       # joint7: [0, 0.04]
+    data.qpos[7] = -grip_open * 0.04      # joint8: [-0.04, 0]
 
     # Also set ctrl so viewer sliders show correct targets
     for j in range(NUM_ARM_JOINTS):
         data.ctrl[j] = q_target_rad[j]
-    data.ctrl[6] = (1 - grip_open) * 0.04
-    data.ctrl[7] = -(1 - grip_open) * 0.04
+    data.ctrl[6] = grip_open * 0.04
+    data.ctrl[7] = -grip_open * 0.04
 
     # Update kinematics (no dynamics step)
     mujoco.mj_forward(model, data)
