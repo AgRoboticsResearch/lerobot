@@ -67,6 +67,9 @@
     </body>
     <!-- Trajectory visualization sites (world frame) -->
     <site name="traj_target" pos="0 0 0" size="0.01" rgba="0 1 0 0.9" type="sphere"/>
+
+    <!-- Camera for video rendering - wide angle view to see full robot -->
+    <camera name="video_camera" pos="0.6 -0.8 0.6" xyaxes="0.8 0.4 0 0.4 -0.8 0" mode="fixed"/>
   </worldbody>
 
   <actuator>

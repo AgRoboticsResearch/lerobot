@@ -284,13 +284,7 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
 
         # Render if available
         if renderer is not None:
-            renderer.update_scene(data)
-            # Set camera if available (not all mujoco versions support .camera)
-            if hasattr(renderer, 'camera'):
-                renderer.camera.azimuth = 135
-                renderer.camera.elevation = -25
-                renderer.camera.distance = 3.8
-                renderer.camera.lookat[:] = [0.2, 0.0, 0.2]
+            renderer.update_scene(data, camera='video_camera')
             frames.append(renderer.render())
 
     result = dict(
