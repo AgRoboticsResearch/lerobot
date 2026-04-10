@@ -355,24 +355,30 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
 
     try:
         for i, step in enumerate(traj):
-            cmd_q = exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
-            time.sleep(step_time)
-
-            # Read actual joints
-            q_actual = read_joints_deg(piper)
-            obs_joints_list.append(q_actual.copy())
-
-            # Commanded joints: from exec_step (joint mode) or Placo IK (ee mode)
-            if cmd_q is not None:
-                cmd_joints_list.append(cmd_q.copy())
-            elif kinematics is not None:
+            # For ee mode: compute IK from CURRENT joints (pre-motion) as "commanded" reference
+            if mode == "ee" and kinematics is not None:
+                q_before = read_joints_deg(piper)
                 q_ik = kinematics.inverse_kinematics(
-                    current_joint_pos=q_actual,
+                    current_joint_pos=q_before,
                     desired_ee_pose=step["T_target"],
                     position_weight=1.0,
                     orientation_weight=0.1,
                 )
                 cmd_joints_list.append(q_ik.copy())
+            elif mode == "joint":
+                # Will be filled in from exec_step return value
+                pass
+
+            cmd_q = exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
+            time.sleep(step_time)
+
+            # Read actual joints after motion
+            q_actual = read_joints_deg(piper)
+            obs_joints_list.append(q_actual.copy())
+
+            # For joint mode, get commanded joints from exec_step return
+            if mode == "joint" and cmd_q is not None:
+                cmd_joints_list.append(cmd_q.copy())
 
             # Read actual state in the selected TCP frame.
             T_sent, T_actual, pos_err = read_actual(piper, step, frame_spec)
