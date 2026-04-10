@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """Execute a trajectory loaded from CSV on a real Piper robot via SDK.
 
-Supports two modes:
-  EE mode (default):    CSV EE poses → SE(3) compose → EndPoseCtrl (robot IK)
-  Joint mode (--mode joint): CSV joint angles → JointCtrl directly
+Supports three modes:
+  1. EE mode (default): CSV EE poses → SE(3) compose → EndPoseCtrl (robot IK)
+  2. Joint mode (--mode joint): CSV joint angles → Placo IK → JointCtrl
+  3. Plot only (--plot-tcp-traj): no robot, just Placo FK to compute
+     TCP positions from CSV, then plots XY/XZ/YZ + 3D + xyz vs steps.
 
 Usage:
     # EE mode (default)
@@ -12,6 +14,12 @@ Usage:
 
     # Joint mode
     python piper_traj_test.py --traj-csv joints.csv --mode joint
+
+    # Plot TCP trajectory without robot
+    python piper_traj_test.py --traj-csv traj.csv --plot-tcp-traj
+
+    # Change TCP frame (default: ee_link)
+    python piper_traj_test.py --traj-csv traj.csv --tcp-frame camera_link
 """
 
 import argparse
@@ -23,7 +31,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from piper_sdk import C_PiperInterface_V2
 from scipy.spatial.transform import Rotation as R
 
 from frame_utils import SDK_NATIVE_FRAME, pose_from_native, pose_to_native, resolve_tcp_frame
@@ -125,6 +132,8 @@ def parse_args():
                    help="Comma-separated 6 joint values in degrees (default: built-in home)")
     p.add_argument("--tcp-frame", default="ee_link",
                    help="URDF frame to use as the planning TCP (default: ee_link)")
+    p.add_argument("--plot-tcp-traj", action="store_true",
+                   help="Plot TCP trajectory without connecting to robot")
     return p.parse_args()
 
 
@@ -150,6 +159,8 @@ def go_to_rest(piper, speed):
 
 def create_robot(can_name, home_deg, speed, frame_spec):
     """Connect, enable, move to rest, then home, read T_base."""
+    from piper_sdk import C_PiperInterface_V2
+
     print(f"Connecting to Piper on {can_name}...")
     piper = C_PiperInterface_V2(can_name)
     piper.ConnectPort()
@@ -378,6 +389,60 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
 # Plot
 # ============================================================
 
+def plot_tcp_trajectory(positions: np.ndarray, output_path: Path, title: str = "TCP Trajectory"):
+    """Plot TCP trajectory in same style as visualize_orb_traj.py (XY/XZ/YZ + 3D + xyz vs steps)."""
+    fig = plt.figure(figsize=(16, 12))
+
+    projections = [
+        (0, 1, 'X', 'Y'),  # XY
+        (0, 2, 'X', 'Z'),  # XZ
+        (1, 2, 'Y', 'Z'),  # YZ
+    ]
+
+    for idx, (x_idx, y_idx, xlabel, ylabel) in enumerate(projections):
+        ax = fig.add_subplot(3, 3, idx + 1)
+        ax.plot(positions[:, x_idx], positions[:, y_idx], 'b-', linewidth=1.5, alpha=0.7)
+        ax.scatter([positions[0, x_idx]], [positions[0, y_idx]], c='green', s=80, marker='o', label='Start', zorder=10)
+        ax.scatter([positions[-1, x_idx]], [positions[-1, y_idx]], c='red', s=80, marker='x', label='End', zorder=10)
+        ax.set_xlabel(f'{xlabel} (m)'); ax.set_ylabel(f'{ylabel} (m)')
+        ax.set_title(f'{xlabel}-{ylabel} Projection'); ax.legend(); ax.grid(True, alpha=0.3); ax.axis('equal')
+
+    ax3d = fig.add_subplot(3, 3, (4, 6), projection='3d')
+    ax3d.plot(positions[:, 0], positions[:, 1], positions[:, 2], 'b-', linewidth=2, alpha=0.6, label='Trajectory')
+    ax3d.scatter([positions[0, 0]], [positions[0, 1]], [positions[0, 2]], c='green', s=80, marker='o', label='Start', zorder=10)
+    ax3d.scatter([positions[-1, 0]], [positions[-1, 1]], [positions[-1, 2]], c='red', s=80, marker='x', label='End', zorder=10)
+    ax3d.set_xlabel('X (m)'); ax3d.set_ylabel('Y (m)'); ax3d.set_zlabel('Z (m)')
+    ax3d.set_title('3D Trajectory'); ax3d.legend(); ax3d.grid(True, alpha=0.3)
+
+    max_range = max(
+        positions[:, 0].max() - positions[:, 0].min(),
+        positions[:, 1].max() - positions[:, 1].min(),
+        positions[:, 2].max() - positions[:, 2].min(),
+        0.1,
+    )
+    xc = (positions[:, 0].max() + positions[:, 0].min()) / 2
+    yc = (positions[:, 1].max() + positions[:, 1].min()) / 2
+    zc = (positions[:, 2].max() + positions[:, 2].min()) / 2
+    ax3d.set_xlim(xc - max_range/2, xc + max_range/2)
+    ax3d.set_ylim(yc - max_range/2, yc + max_range/2)
+    ax3d.set_zlim(zc - max_range/2, zc + max_range/2)
+    ax3d.view_init(elev=20, azim=45)
+
+    ax_steps = fig.add_subplot(3, 3, (7, 9))
+    steps = np.arange(len(positions))
+    ax_steps.plot(steps, positions[:, 0], 'r-', linewidth=1.5, label='X')
+    ax_steps.plot(steps, positions[:, 1], 'g-', linewidth=1.5, label='Y')
+    ax_steps.plot(steps, positions[:, 2], 'b-', linewidth=1.5, label='Z')
+    ax_steps.set_xlabel('Step'); ax_steps.set_ylabel('Position (m)')
+    ax_steps.set_title('X, Y, Z vs Step'); ax_steps.legend(); ax_steps.grid(True, alpha=0.3)
+
+    plt.suptitle(title, fontsize=14)
+    plt.tight_layout()
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight")
+    print(f"Saved TCP trajectory plot to {output_path}")
+    plt.close()
+
+
 def plot(result, out_dir, mode, tcp_frame):
     sp, ap = result["sent_pos"], result["act_pos"]
     sr, ar = result["sent_rv"], result["act_rv"]
@@ -434,7 +499,30 @@ def main():
     else:
         home_deg = HOME_JOINTS_DEG
 
-    # Connect to robot
+    # --- Plot-only mode: no robot, just FK + plot ---
+    if args.plot_tcp_traj:
+        native_kinematics = RobotKinematics(
+            urdf_path=str(URDF_PATH),
+            target_frame_name=SDK_NATIVE_FRAME,
+            joint_names=PIPER_ARM_JOINTS,
+        )
+        T_base_native = native_kinematics.forward_kinematics(home_deg)
+        T_base = pose_from_native(T_base_native, frame_spec)
+        print(f"Home {frame_spec.tcp_frame} pos: {np.round(T_base[:3, 3], 6)}")
+
+        traj = load_trajectory(args.traj_csv, T_base, args.steps)
+        positions = np.array([s["T_target"][:3, 3] for s in traj])
+
+        print(f"TCP trajectory: {len(positions)} points")
+        print(f"  X range: [{positions[:, 0].min():.4f}, {positions[:, 0].max():.4f}] m")
+        print(f"  Y range: [{positions[:, 1].min():.4f}, {positions[:, 1].max():.4f}] m")
+        print(f"  Z range: [{positions[:, 2].min():.4f}, {positions[:, 2].max():.4f}] m")
+
+        csv_name = Path(args.traj_csv).stem
+        plot_tcp_trajectory(positions, out / f"{csv_name}_tcp.png", title=f"TCP Trajectory ({frame_spec.tcp_frame})")
+        return
+
+    # --- Normal mode: connect to real robot ---
     piper, T_base, kinematics = create_robot(args.can_name, home_deg, args.speed, frame_spec)
 
     # Load and execute trajectory
