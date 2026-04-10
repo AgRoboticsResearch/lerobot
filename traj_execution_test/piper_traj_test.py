@@ -214,26 +214,32 @@ def create_robot(can_name, home_deg, speed, frame_spec):
         print(f"WARNING: home convergence timeout, max error={err:.2f}°")
 
     q_home = read_joints_deg(piper)
-    pos_m, euler_deg = read_ee_pose(piper)
-    T_base_native = ee_pose_to_T(pos_m, euler_deg)
-    T_base = pose_from_native(T_base_native, frame_spec)
-    tcp_pos_m, tcp_euler_deg = T_to_ee_pose(T_base)
-    offset_pos_m, offset_euler_deg = T_to_ee_pose(frame_spec.T_native_to_tcp)
-
     print(f"Home joints (deg): {np.round(q_home, 2)}")
-    print(f"Home {frame_spec.native_frame} pos (mm):  {np.round(pos_m * 1000, 2)}")
-    print(f"Home {frame_spec.native_frame} rot (deg): {np.round(euler_deg, 2)}")
-    print(f"Home {frame_spec.tcp_frame} pos (mm):  {np.round(tcp_pos_m * 1000, 2)}")
-    print(f"Home {frame_spec.tcp_frame} rot (deg): {np.round(tcp_euler_deg, 2)}")
-    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} pos (mm): {np.round(offset_pos_m * 1000, 2)}")
-    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} rot (deg): {np.round(offset_euler_deg, 2)}")
 
-    # Initialize Placo kinematics solver
+    # Initialize Placo kinematics solvers
+    native_kinematics = RobotKinematics(
+        urdf_path=str(URDF_PATH),
+        target_frame_name=SDK_NATIVE_FRAME,
+        joint_names=PIPER_ARM_JOINTS,
+    )
     kinematics = RobotKinematics(
         urdf_path=str(URDF_PATH),
         target_frame_name=frame_spec.tcp_frame,
         joint_names=PIPER_ARM_JOINTS,
     )
+
+    # Use FK from read joints to get T_base (same approach as MuJoCo)
+    T_base_native = native_kinematics.forward_kinematics(q_home)
+    T_base = pose_from_native(T_base_native, frame_spec)
+    native_pos = T_base_native[:3, 3]
+    tcp_pos = T_base[:3, 3]
+    offset_pos = frame_spec.T_native_to_tcp[:3, 3]
+    offset_euler = R.from_matrix(frame_spec.T_native_to_tcp[:3, :3]).as_euler("xyz", degrees=True)
+
+    print(f"Home {frame_spec.native_frame} pos: {np.round(native_pos, 6)}")
+    print(f"Home {frame_spec.tcp_frame} pos: {np.round(tcp_pos, 6)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} pos (m): {np.round(offset_pos, 6)}")
+    print(f"Offset {frame_spec.native_frame} -> {frame_spec.tcp_frame} rot (deg): {np.round(offset_euler, 3)}")
 
     return piper, T_base, kinematics
 
