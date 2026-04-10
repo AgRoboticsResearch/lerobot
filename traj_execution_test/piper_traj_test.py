@@ -40,14 +40,14 @@ from lerobot.model.kinematics import RobotKinematics
 # Constants
 # ============================================================
 
-URDF_PATH = Path(__file__).parent / "piper_mujoco" / "piper_description_old.urdf"
+URDF_PATH = Path(__file__).parent / "piper_mujoco" / "piper_description.urdf"
 PIPER_ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 NUM_ARM_JOINTS = 6
 
 # Rest position (degrees) — folded safe pose, used at start/end
 REST_JOINTS_DEG = np.array([0, 0, 0, -2.95, 18.63, -2.92])
 # Home position (degrees)
-HOME_JOINTS_DEG = np.array([-1.40, 30.24, -58.64, -1.05, 32.45, 0.00])
+HOME_JOINTS_DEG = np.array([0, 73.77, -43.43, 0, -24, 0])
 
 # Joint limits (degrees): (min, max) per joint
 JOINT_LIMITS_DEG = [
@@ -265,9 +265,10 @@ def load_trajectory(csv_path, T_base, max_steps=None):
 # ============================================================
 
 def exec_step(piper, step, i, speed, mode, frame_spec, kinematics=None):
-    """Send one trajectory step to the robot."""
+    """Send one trajectory step to the robot. Returns commanded joints (None for ee mode)."""
     gripper = step["gripper"]
     T = step["T_target"]
+    cmd_joints = None
 
     if mode == "ee":
         # Convert planning TCP pose into the SDK-native frame before EndPoseCtrl.
@@ -296,10 +297,12 @@ def exec_step(piper, step, i, speed, mode, frame_spec, kinematics=None):
 
         piper.MotionCtrl_2(0x01, 0x01, speed, 0x00)  # MOVE J
         piper.JointCtrl(*[round(d * 1000) for d in q_clamped])
+        cmd_joints = q_clamped
 
     # Gripper: proportional [0,1] → [0, GRIPPER_MAX_M]
     grip_m = gripper * GRIPPER_MAX_M
     piper.GripperCtrl(abs(round(grip_m * 1e6)), 1000, 0x01, 0)
+    return cmd_joints
 
 
 def read_actual(piper, step, frame_spec):
@@ -341,12 +344,29 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
     sent_p, act_p = [], []
     sent_r, act_r = [], []
     g_sent, g_act = [], []
+    cmd_joints_list, obs_joints_list = [], []
     errors = []
 
     try:
         for i, step in enumerate(traj):
-            exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
+            cmd_q = exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
             time.sleep(step_time)
+
+            # Read actual joints
+            q_actual = read_joints_deg(piper)
+            obs_joints_list.append(q_actual.copy())
+
+            # Commanded joints: from exec_step (joint mode) or Placo IK (ee mode)
+            if cmd_q is not None:
+                cmd_joints_list.append(cmd_q.copy())
+            elif kinematics is not None:
+                q_ik = kinematics.inverse_kinematics(
+                    current_joint_pos=q_actual,
+                    desired_ee_pose=step["T_target"],
+                    position_weight=1.0,
+                    orientation_weight=0.1,
+                )
+                cmd_joints_list.append(q_ik.copy())
 
             # Read actual state in the selected TCP frame.
             T_sent, T_actual, pos_err = read_actual(piper, step, frame_spec)
@@ -381,6 +401,7 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
         sent_pos=np.array(sent_p), act_pos=np.array(act_p),
         sent_rv=np.array(sent_r), act_rv=np.array(act_r),
         g_sent=np.array(g_sent), g_act=np.array(g_act),
+        cmd_joints=np.array(cmd_joints_list), obs_joints=np.array(obs_joints_list),
     )
     return result
 
@@ -465,7 +486,7 @@ def plot(result, out_dir, mode, tcp_frame):
     ax.set_ylim(mid[1] - half, mid[1] + half)
     ax.set_zlim(mid[2] - half, mid[2] + half)
     ax.set_title(f"3D {tcp_frame} Trajectory [Piper Real, {mode} mode]"); ax.legend()
-    plt.tight_layout(); fig.savefig(str(out_dir / "traj_3d.png")); plt.close()
+    plt.tight_layout(); fig.savefig(str(out_dir / "real_piper_traj_3d.png")); plt.close()
 
     # 2D plots
     labels = ["X(m)", "Y(m)", "Z(m)", "Roll", "Pitch", "Yaw", "Grip"]
@@ -478,8 +499,28 @@ def plot(result, out_dir, mode, tcp_frame):
         a.set_ylabel(lb); a.legend()
     axes[-1].set_xlabel("Step")
     axes[0].set_title(f"{tcp_frame} State [Piper Real, {mode} mode]")
-    plt.tight_layout(); fig.savefig(str(out_dir / "traj_2d_states.png")); plt.close()
+    plt.tight_layout(); fig.savefig(str(out_dir / "real_piper_traj_2d_states.png")); plt.close()
     print(f"Saved plots to {out_dir}")
+
+
+def plot_joints(result, out_dir, filename):
+    cmd = result["cmd_joints"]
+    obs = result["obs_joints"]
+    steps = np.arange(len(cmd))
+    fig, axes = plt.subplots(NUM_ARM_JOINTS, 1, figsize=(12, 12), sharex=True)
+    for j in range(NUM_ARM_JOINTS):
+        ax = axes[j]
+        ax.plot(steps, cmd[:, j], "b-o", label="Command", ms=3)
+        ax.plot(steps, obs[:, j], "r-s", label="Observed", ms=3)
+        ax.set_ylabel(f"J{j+1} (°)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Step")
+    axes[0].set_title("Joint Commands vs Observations")
+    plt.tight_layout()
+    fig.savefig(str(out_dir / filename), dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved joints plot to {out_dir / filename}")
 
 
 # ============================================================
@@ -519,7 +560,7 @@ def main():
         print(f"  Z range: [{positions[:, 2].min():.4f}, {positions[:, 2].max():.4f}] m")
 
         csv_name = Path(args.traj_csv).stem
-        plot_tcp_trajectory(positions, out / f"{csv_name}_tcp.png", title=f"TCP Trajectory ({frame_spec.tcp_frame})")
+        plot_tcp_trajectory(positions, out / f"real_piper_{csv_name}_tcp.png", title=f"TCP Trajectory ({frame_spec.tcp_frame})")
         return
 
     # --- Normal mode: connect to real robot ---
@@ -529,6 +570,7 @@ def main():
     traj = load_trajectory(args.traj_csv, T_base, args.steps)
     result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, frame_spec, kinematics)
     plot(result, out, args.mode, frame_spec.tcp_frame)
+    plot_joints(result, out, "real_piper_joints.jpg")
 
     # Go to rest, then disable
     go_to_rest(piper, args.speed)

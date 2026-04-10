@@ -256,7 +256,7 @@ def exec_step(model, data, kinematics, step, i, target_site_id=-1):
     print(f"    Sent: pos={T_target[:3, 3].tolist()} grip={gripper:.2f}")
     print(f"    True: pos={T_actual[:3, 3].tolist()} grip={data.qpos[6]:.5f}")
 
-    return T_target, T_actual
+    return T_target, T_actual, q_target_deg
 
 
 def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1):
@@ -272,9 +272,14 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
 
     sent_p, sent_r, act_p, act_r = [], [], [], []
     g_sent, g_act = [], []
+    cmd_joints, obs_joints = [], []
 
     for i, step in enumerate(traj):
-        T_target, T_actual = exec_step(model, data, kinematics, step, i, target_site_id)
+        T_target, T_actual, q_cmd_deg = exec_step(model, data, kinematics, step, i, target_site_id)
+
+        cmd_joints.append(q_cmd_deg.copy())
+        q_obs_rad = np.array([data.qpos[j] for j in range(NUM_ARM_JOINTS)])
+        obs_joints.append(rad2deg(q_obs_rad).copy())
 
         sent_p.append(T_target[:3, 3].copy())
         sent_r.append(R.from_matrix(T_target[:3, :3]).as_rotvec())
@@ -291,6 +296,7 @@ def run_trajectory(model, data, kinematics, traj, render=True, target_site_id=-1
     result = dict(
         sent_pos=np.array(sent_p), sent_rv=np.array(sent_r), g_sent=np.array(g_sent),
         act_pos=np.array(act_p), act_rv=np.array(act_r), g_act=np.array(g_act),
+        cmd_joints=np.array(cmd_joints), obs_joints=np.array(obs_joints),
     )
     return result, frames
 
@@ -382,7 +388,7 @@ def plot(result, out_dir, tcp_frame):
     ax.set_ylim(mid[1] - half, mid[1] + half)
     ax.set_zlim(mid[2] - half, mid[2] + half)
     ax.set_title(f"3D {tcp_frame} Trajectory [Piper MuJoCo]"); ax.legend()
-    plt.tight_layout(); fig.savefig(str(out_dir / "traj_3d.png")); plt.close()
+    plt.tight_layout(); fig.savefig(str(out_dir / "mujoco_piper_traj_3d.png")); plt.close()
 
     # 2D
     labels = ["X(m)", "Y(m)", "Z(m)", "Roll", "Pitch", "Yaw", "Grip"]
@@ -397,8 +403,28 @@ def plot(result, out_dir, tcp_frame):
             mid_a = (a.get_ylim()[0] + a.get_ylim()[1]) / 2
             a.set_ylim(mid_a - 0.05, mid_a + 0.05)
     axes[-1].set_xlabel("Step"); axes[0].set_title(f"{tcp_frame} State [Piper MuJoCo]")
-    plt.tight_layout(); fig.savefig(str(out_dir / "traj_2d_states.png")); plt.close()
+    plt.tight_layout(); fig.savefig(str(out_dir / "mujoco_piper_traj_2d_states.png")); plt.close()
     print(f"Saved plots to {out_dir}")
+
+
+def plot_joints(result, out_dir, filename):
+    cmd = result["cmd_joints"]
+    obs = result["obs_joints"]
+    steps = np.arange(len(cmd))
+    fig, axes = plt.subplots(NUM_ARM_JOINTS, 1, figsize=(12, 12), sharex=True)
+    for j in range(NUM_ARM_JOINTS):
+        ax = axes[j]
+        ax.plot(steps, cmd[:, j], "b-o", label="Command", ms=3)
+        ax.plot(steps, obs[:, j], "r-s", label="Observed", ms=3)
+        ax.set_ylabel(f"J{j+1} (°)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Step")
+    axes[0].set_title("Joint Commands vs Observations")
+    plt.tight_layout()
+    fig.savefig(str(out_dir / filename), dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved joints plot to {out_dir / filename}")
 
 
 # ============================================================
@@ -431,7 +457,7 @@ def main():
         print(f"  Z range: [{positions[:, 2].min():.4f}, {positions[:, 2].max():.4f}] m")
 
         csv_name = Path(args.traj_csv).stem
-        plot_tcp_trajectory(positions, out / f"{csv_name}_tcp.png", title=f"TCP Trajectory ({frame_spec.tcp_frame})")
+        plot_tcp_trajectory(positions, out / f"mujoco_piper_{csv_name}_tcp.png", title=f"TCP Trajectory ({frame_spec.tcp_frame})")
         return
 
     # --- Normal mode: MuJoCo simulation ---
@@ -450,11 +476,37 @@ def main():
             traj = load_trajectory(args.traj_csv, T_base, args.steps)
             input("Press Enter to start trajectory (Ctrl+C to abort)...")
 
+            # Collect trajectory data for plotting
+            sent_p, sent_r, act_p, act_r = [], [], [], []
+            g_sent, g_act = [], []
+            cmd_joints, obs_joints = [], []
+
             for i, step in enumerate(traj):
-                _, _ = exec_step(model, data, kinematics, step, i, target_site_id)
+                T_target, T_actual, q_cmd_deg = exec_step(model, data, kinematics, step, i, target_site_id)
+
+                cmd_joints.append(q_cmd_deg.copy())
+                q_obs_rad = np.array([data.qpos[j] for j in range(NUM_ARM_JOINTS)])
+                obs_joints.append(rad2deg(q_obs_rad).copy())
+
+                sent_p.append(T_target[:3, 3].copy())
+                sent_r.append(R.from_matrix(T_target[:3, :3]).as_rotvec())
+                act_p.append(T_actual[:3, 3].copy())
+                act_r.append(R.from_matrix(T_actual[:3, :3]).as_rotvec())
+                g_sent.append(step["gripper"])
+                g_act.append(data.qpos[6] / 0.04)
+
                 viewer.sync()
                 if args.step_time > 0:
                     time.sleep(args.step_time)
+
+            # Generate plots
+            result = dict(
+                sent_pos=np.array(sent_p), sent_rv=np.array(sent_r), g_sent=np.array(g_sent),
+                act_pos=np.array(act_p), act_rv=np.array(act_r), g_act=np.array(g_act),
+                cmd_joints=np.array(cmd_joints), obs_joints=np.array(obs_joints),
+            )
+            plot(result, out, frame_spec.tcp_frame)
+            plot_joints(result, out, "mujoco_piper_joints.jpg")
 
             input("Press Enter to return to rest position...")
             go_to_rest(model, data)
@@ -471,6 +523,7 @@ def main():
         if frames:
             save_video(frames, out)
         plot(result, out, frame_spec.tcp_frame)
+        plot_joints(result, out, "mujoco_piper_joints.jpg")
 
         go_to_rest(model, data)
 
