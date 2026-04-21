@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 """Execute a trajectory loaded from CSV on a real Piper robot via SDK.
 
-Supports three modes:
-  1. EE mode (default): CSV EE poses → SE(3) compose → EndPoseCtrl (robot IK)
-  2. Joint mode (--mode joint): CSV joint angles → Placo IK → JointCtrl
-  3. Plot only (--plot-tcp-traj): no robot, just Placo FK to compute
+Loads a relative EE trajectory from CSV, composes with the initial EE pose
+via SE(3), solves IK using Placo, and drives joints via JointCtrl.
+
+Two modes:
+  1. Execute (default): run trajectory on real robot, save plots + CSV.
+  2. Plot only (--plot-tcp-traj): no robot, just Placo FK to compute
      TCP positions from CSV, then plots XY/XZ/YZ + 3D + xyz vs steps.
 
 Usage:
-    # EE mode (default)
+    # Execute trajectory on real robot
     python piper_traj_test.py --traj-csv test_x_axis.csv
     python piper_traj_test.py --traj-csv test_x_axis.csv --steps 10 --step-time 0.1
-
-    # Joint mode
-    python piper_traj_test.py --traj-csv joints.csv --mode joint
 
     # Plot TCP trajectory without robot
     python piper_traj_test.py --traj-csv traj.csv --plot-tcp-traj
@@ -33,7 +32,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
-from frame_utils import SDK_NATIVE_FRAME, pose_from_native, pose_to_native, resolve_tcp_frame
+from frame_utils import SDK_NATIVE_FRAME, pose_from_native, resolve_tcp_frame
 from lerobot.model.kinematics import RobotKinematics
 
 # ============================================================
@@ -55,8 +54,8 @@ JOINT_LIMITS_DEG = [
     (-100, 100), (-70, 70), (-120, 120),
 ]
 
-# Gripper: max opening 50mm
-GRIPPER_MAX_M = 0.07  # 70mm
+# Gripper: max opening 70mm
+GRIPPER_MAX_M = 0.07
 
 
 # ============================================================
@@ -83,27 +82,6 @@ def read_joints_deg(piper):
     ])
 
 
-def read_ee_pose(piper):
-    """Read current EE pose from robot → (pos_m, euler_deg)."""
-    pose = piper.GetArmEndPoseMsgs().end_pose
-    pos_m = np.array([pose.X_axis, pose.Y_axis, pose.Z_axis]) / 1e6  # 0.001mm → m
-    euler_deg = np.array([pose.RX_axis, pose.RY_axis, pose.RZ_axis]) / 1000.0  # 0.001° → °
-    return pos_m, euler_deg
-
-
-def ee_pose_to_T(pos_m, euler_deg):
-    """Convert (pos_meters, euler_deg XYZ convention) → 4x4 matrix."""
-    rotvec = R.from_euler("XYZ", euler_deg, degrees=True).as_rotvec()
-    return make_transform(pos_m, rotvec)
-
-
-def T_to_ee_pose(T):
-    """Convert 4x4 matrix → (pos_m, euler_deg XYZ convention)."""
-    pos_m = T[:3, 3]
-    euler_deg = R.from_matrix(T[:3, :3]).as_euler("XYZ", degrees=True)
-    return pos_m, euler_deg
-
-
 def clamp_joints(q_deg):
     """Clamp joint angles to limits, return (clamped, was_clamped)."""
     clamped = q_deg.copy()
@@ -120,10 +98,8 @@ def clamp_joints(q_deg):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Execute trajectory on real Piper robot")
+    p = argparse.ArgumentParser(description="Execute trajectory on real Piper robot (joint mode)")
     p.add_argument("--traj-csv", required=True, help="Path to trajectory CSV")
-    p.add_argument("--mode", choices=["ee", "joint"], default="joint",
-                   help="Control mode: ee=EndPoseCtrl, joint=JointCtrl (default: ee)")
     p.add_argument("--steps", type=int, default=None, help="Limit number of steps")
     p.add_argument("--step-time", type=float, default=0.02, help="Delay between steps (seconds)")
     p.add_argument("--can-name", default="can0", help="CAN interface name")
@@ -147,15 +123,16 @@ def go_to_rest(piper, speed):
     rest_mdeg = [round(d * 1000) for d in REST_JOINTS_DEG]
     piper.MotionCtrl_2(0x01, 0x01, speed, 0x00)
     piper.JointCtrl(*rest_mdeg)
-    for i in range(100):
+    for _ in range(100):
         q = read_joints_deg(piper)
         err = np.max(np.abs(q - REST_JOINTS_DEG))
         if err < 1.0:
-            print(f"Reached rest position with max joint error {err:.2f}°")
+            print(f"Reached rest position with max joint error {err:.2f} deg")
             break
         time.sleep(0.01)
-    time.sleep(1.0)  # wait for motion to start
+    time.sleep(1.0)
     print("Joint State at rest: ", np.round(read_joints_deg(piper), 2))
+
 
 def create_robot(can_name, home_deg, speed, frame_spec):
     """Connect, enable, move to rest, then home, read T_base."""
@@ -211,7 +188,7 @@ def create_robot(can_name, home_deg, speed, frame_spec):
             break
         time.sleep(0.05)
     else:
-        print(f"WARNING: home convergence timeout, max error={err:.2f}°")
+        print(f"WARNING: home convergence timeout, max error={err:.2f} deg")
 
     q_home = read_joints_deg(piper)
     print(f"Home joints (deg): {np.round(q_home, 2)}")
@@ -228,7 +205,7 @@ def create_robot(can_name, home_deg, speed, frame_spec):
         joint_names=PIPER_ARM_JOINTS,
     )
 
-    # Use FK from read joints to get T_base (same approach as MuJoCo)
+    # Use FK from read joints to get T_base
     T_base_native = native_kinematics.forward_kinematics(q_home)
     T_base = pose_from_native(T_base_native, frame_spec)
     native_pos = T_base_native[:3, 3]
@@ -270,52 +247,36 @@ def load_trajectory(csv_path, T_base, max_steps=None):
 # Execution
 # ============================================================
 
-def exec_step(piper, step, i, speed, mode, frame_spec, kinematics=None):
-    """Send one trajectory step to the robot. Returns commanded joints (None for ee mode)."""
+def exec_step(piper, step, speed, kinematics):
+    """Send one trajectory step: IK -> JointCtrl + GripperCtrl. Returns commanded joints."""
     gripper = step["gripper"]
     T = step["T_target"]
-    cmd_joints = None
 
-    if mode == "ee":
-        # Convert planning TCP pose into the SDK-native frame before EndPoseCtrl.
-        T_native = pose_to_native(T, frame_spec)
-        pos_m, euler_deg = T_to_ee_pose(T_native)
-        piper.MotionCtrl_2(0x01, 0x00, speed, 0x00)  # MOVE P
-        piper.EndPoseCtrl(
-            round(pos_m[0] * 1e6),      # m → 0.001mm
-            round(pos_m[1] * 1e6),
-            round(pos_m[2] * 1e6),
-            round(euler_deg[0] * 1000),  # deg → 0.001°
-            round(euler_deg[1] * 1000),
-            round(euler_deg[2] * 1000),
-        )
-    else:  # joint mode: Placo IK → JointCtrl
-        q_cur_deg = read_joints_deg(piper)
-        q_target_deg = kinematics.inverse_kinematics(
-            current_joint_pos=q_cur_deg,
-            desired_ee_pose=T,
-            position_weight=1.0,
-            orientation_weight=0.1,
-        )
-        q_clamped, was_clamped = clamp_joints(q_target_deg)
-        if was_clamped:
-            print(f"  WARNING: joints clamped {np.round(q_target_deg, 2)} → {np.round(q_clamped, 2)}")
+    # Placo IK -> JointCtrl
+    q_cur_deg = read_joints_deg(piper)
+    q_target_deg = kinematics.inverse_kinematics(
+        current_joint_pos=q_cur_deg,
+        desired_ee_pose=T,
+        position_weight=1.0,
+        orientation_weight=0.1,
+    )
+    q_clamped, was_clamped = clamp_joints(q_target_deg)
+    if was_clamped:
+        print(f"  WARNING: joints clamped {np.round(q_target_deg, 2)} -> {np.round(q_clamped, 2)}")
 
-        piper.MotionCtrl_2(0x01, 0x01, speed, 0x00)  # MOVE J
-        piper.JointCtrl(*[round(d * 1000) for d in q_clamped])
-        cmd_joints = q_clamped
+    piper.MotionCtrl_2(0x01, 0x01, speed, 0x00)  # MOVE J
+    piper.JointCtrl(*[round(d * 1000) for d in q_clamped])
 
-    # Gripper: proportional [0,1] → [0, GRIPPER_MAX_M]
+    # Gripper: proportional [0,1] -> [0, GRIPPER_MAX_M]
     grip_m = gripper * GRIPPER_MAX_M
     piper.GripperCtrl(abs(round(grip_m * 1e6)), 1000, 0x01)
-    return cmd_joints
+
+    return q_clamped
 
 
-def read_actual(piper, step, frame_spec):
-    """Read actual SDK pose from robot and convert it into the planning TCP frame."""
-    pos_m, euler_deg = read_ee_pose(piper)
-    T_actual_native = ee_pose_to_T(pos_m, euler_deg)
-    T_actual = pose_from_native(T_actual_native, frame_spec)
+def read_actual(step, q_actual_deg, kinematics):
+    """Compute actual EE pose via FK from observed joints."""
+    T_actual = kinematics.forward_kinematics(q_actual_deg)
     T_target = step["T_target"]
     pos_err = np.linalg.norm(T_target[:3, 3] - T_actual[:3, 3])
     return T_target, T_actual, pos_err
@@ -325,24 +286,17 @@ def read_actual(piper, step, frame_spec):
 # Main loop
 # ============================================================
 
-def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=None):
-    # Pre-flight safety check
+def run_trajectory(piper, traj, step_time, speed, frame_spec, kinematics):
     print(f"\n{'='*60}")
     print(
-        f"Trajectory: {len(traj)} steps, mode={mode}, tcp_frame={frame_spec.tcp_frame}, "
+        f"Trajectory: {len(traj)} steps, tcp_frame={frame_spec.tcp_frame}, "
         f"sdk_frame={frame_spec.native_frame}, dt={step_time}s, speed={speed}%"
     )
 
-    first_pos, first_euler = T_to_ee_pose(traj[0]["T_target"])
-    last_pos, last_euler = T_to_ee_pose(traj[-1]["T_target"])
-    print(
-        f"First target ({frame_spec.tcp_frame}): pos={np.round(first_pos*1000, 1)}mm  "
-        f"rot={np.round(first_euler, 1)}°"
-    )
-    print(
-        f"Last target ({frame_spec.tcp_frame}):  pos={np.round(last_pos*1000, 1)}mm  "
-        f"rot={np.round(last_euler, 1)}°"
-    )
+    first_pos = traj[0]["T_target"][:3, 3]
+    last_pos = traj[-1]["T_target"][:3, 3]
+    print(f"First target ({frame_spec.tcp_frame}): pos={np.round(first_pos*1000, 1)}mm")
+    print(f"Last target ({frame_spec.tcp_frame}):  pos={np.round(last_pos*1000, 1)}mm")
     print(f"{'='*60}")
 
     input("Press Enter to start trajectory (Ctrl+C to abort)...")
@@ -355,33 +309,16 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
 
     try:
         for i, step in enumerate(traj):
-            # For ee mode: compute IK from CURRENT joints (pre-motion) as "commanded" reference
-            if mode == "ee" and kinematics is not None:
-                q_before = read_joints_deg(piper)
-                q_ik = kinematics.inverse_kinematics(
-                    current_joint_pos=q_before,
-                    desired_ee_pose=step["T_target"],
-                    position_weight=1.0,
-                    orientation_weight=0.1,
-                )
-                cmd_joints_list.append(q_ik.copy())
-            elif mode == "joint":
-                # Will be filled in from exec_step return value
-                pass
-
-            cmd_q = exec_step(piper, step, i, speed, mode, frame_spec, kinematics)
+            cmd_q = exec_step(piper, step, speed, kinematics)
+            cmd_joints_list.append(cmd_q.copy())
             time.sleep(step_time)
 
             # Read actual joints after motion
             q_actual = read_joints_deg(piper)
             obs_joints_list.append(q_actual.copy())
 
-            # For joint mode, get commanded joints from exec_step return
-            if mode == "joint" and cmd_q is not None:
-                cmd_joints_list.append(cmd_q.copy())
-
-            # Read actual state in the selected TCP frame.
-            T_sent, T_actual, pos_err = read_actual(piper, step, frame_spec)
+            # Compute actual EE pose via FK from observed joints
+            T_sent, T_actual, pos_err = read_actual(step, q_actual, kinematics)
             sent_p.append(T_sent[:3, 3].copy())
             act_p.append(T_actual[:3, 3].copy())
             sent_r.append(R.from_matrix(T_sent[:3, :3]).as_rotvec())
@@ -396,26 +333,24 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
 
             # Read gripper
             gmsg = piper.GetArmGripperMsgs()
-            grip_actual_m = gmsg.gripper_state.grippers_angle / 1e6  # 0.001mm → m
+            grip_actual_m = gmsg.gripper_state.grippers_angle / 1e6
             g_sent.append(step["gripper"])
-            g_act.append(grip_actual_m / GRIPPER_MAX_M)  # normalize to [0,1]
+            g_act.append(grip_actual_m / GRIPPER_MAX_M)
 
     except KeyboardInterrupt:
         print("\nTrajectory interrupted by user!")
 
-    # Summary
     if errors:
         print(f"\nTrajectory done. {len(errors)}/{len(traj)} steps executed.")
         print(f"  Mean error: {np.mean(errors):.3f}mm")
         print(f"  Max  error: {np.max(errors):.3f}mm")
 
-    result = dict(
+    return dict(
         sent_pos=np.array(sent_p), act_pos=np.array(act_p),
         sent_rv=np.array(sent_r), act_rv=np.array(act_r),
         g_sent=np.array(g_sent), g_act=np.array(g_act),
         cmd_joints=np.array(cmd_joints_list), obs_joints=np.array(obs_joints_list),
     )
-    return result
 
 
 # ============================================================
@@ -423,7 +358,7 @@ def run_trajectory(piper, traj, step_time, speed, mode, frame_spec, kinematics=N
 # ============================================================
 
 def plot_tcp_trajectory(positions: np.ndarray, output_path: Path, title: str = "TCP Trajectory"):
-    """Plot TCP trajectory in same style as visualize_orb_traj.py (XY/XZ/YZ + 3D + xyz vs steps)."""
+    """Plot TCP trajectory (XY/XZ/YZ + 3D + xyz vs steps)."""
     fig = plt.figure(figsize=(16, 12))
 
     projections = [
@@ -476,7 +411,7 @@ def plot_tcp_trajectory(positions: np.ndarray, output_path: Path, title: str = "
     plt.close()
 
 
-def plot(result, out_dir, mode, tcp_frame):
+def plot(result, out_dir, tcp_frame):
     sp, ap = result["sent_pos"], result["act_pos"]
     sr, ar = result["sent_rv"], result["act_rv"]
     gs, ga = result["g_sent"], result["g_act"]
@@ -497,7 +432,7 @@ def plot(result, out_dir, mode, tcp_frame):
     ax.set_xlim(mid[0] - half, mid[0] + half)
     ax.set_ylim(mid[1] - half, mid[1] + half)
     ax.set_zlim(mid[2] - half, mid[2] + half)
-    ax.set_title(f"3D {tcp_frame} Trajectory [Piper Real, {mode} mode]"); ax.legend()
+    ax.set_title(f"3D {tcp_frame} Trajectory [Piper Real]"); ax.legend()
     plt.tight_layout(); fig.savefig(str(out_dir / "real_piper_traj_3d.png")); plt.close()
 
     # 2D plots
@@ -509,8 +444,13 @@ def plot(result, out_dir, mode, tcp_frame):
         a.plot(steps, s, "b-o", label="Sent", ms=3)
         a.plot(steps, v, "r-s", label="Actual", ms=3)
         a.set_ylabel(lb); a.legend()
+        # Ensure y-axis range is at least 0.1
+        y_lo, y_hi = a.get_ylim()
+        if y_hi - y_lo < 0.1:
+            y_mid = (y_hi + y_lo) / 2
+            a.set_ylim(y_mid - 0.05, y_mid + 0.05)
     axes[-1].set_xlabel("Step")
-    axes[0].set_title(f"{tcp_frame} State [Piper Real, {mode} mode]")
+    axes[0].set_title(f"{tcp_frame} State [Piper Real]")
     plt.tight_layout(); fig.savefig(str(out_dir / "real_piper_traj_2d_states.png")); plt.close()
     print(f"Saved plots to {out_dir}")
 
@@ -524,7 +464,7 @@ def plot_joints(result, out_dir, filename):
         ax = axes[j]
         ax.plot(steps, cmd[:, j], "b-o", label="Command", ms=3)
         ax.plot(steps, obs[:, j], "r-s", label="Observed", ms=3)
-        ax.set_ylabel(f"J{j+1} (°)")
+        ax.set_ylabel(f"J{j+1} (deg)")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -534,8 +474,7 @@ def plot_joints(result, out_dir, filename):
         y_range = y_max - y_min
         if y_range < 5.0:
             y_center = (y_max + y_min) / 2
-            y_half_range = 2.5  # Half of 5 degrees
-            ax.set_ylim(y_center - y_half_range, y_center + y_half_range)
+            ax.set_ylim(y_center - 2.5, y_center + 2.5)
 
     axes[-1].set_xlabel("Step")
     axes[0].set_title("Joint Commands vs Observations")
@@ -553,40 +492,28 @@ def save_result_to_csv(result, out_dir, filename):
     cmd = result["cmd_joints"]
     obs = result["obs_joints"]
 
-    # Convert rotvec to RPY for readability
     sent_rpy = R.from_rotvec(sr.reshape(-1, 3)).as_euler("xyz", degrees=True)
     act_rpy = R.from_rotvec(ar.reshape(-1, 3)).as_euler("xyz", degrees=True)
 
-    n_steps = len(sp)
-    data = []
-    for i in range(n_steps):
-        row = {
+    rows = []
+    for i in range(len(sp)):
+        rows.append({
             "step": i,
-            # Joint commands (degrees)
             "cmd_j1": cmd[i, 0], "cmd_j2": cmd[i, 1], "cmd_j3": cmd[i, 2],
             "cmd_j4": cmd[i, 3], "cmd_j5": cmd[i, 4], "cmd_j6": cmd[i, 5],
-            # Joint observations (degrees)
             "obs_j1": obs[i, 0], "obs_j2": obs[i, 1], "obs_j3": obs[i, 2],
             "obs_j4": obs[i, 3], "obs_j5": obs[i, 4], "obs_j6": obs[i, 5],
-            # EE sent position (m)
             "sent_x": sp[i, 0], "sent_y": sp[i, 1], "sent_z": sp[i, 2],
-            # EE actual position (m)
             "act_x": ap[i, 0], "act_y": ap[i, 1], "act_z": ap[i, 2],
-            # EE sent RPY (degrees)
             "sent_roll": sent_rpy[i, 0], "sent_pitch": sent_rpy[i, 1], "sent_yaw": sent_rpy[i, 2],
-            # EE actual RPY (degrees)
             "act_roll": act_rpy[i, 0], "act_pitch": act_rpy[i, 1], "act_yaw": act_rpy[i, 2],
-            # Gripper
             "cmd_gripper": gs[i],
             "act_gripper": ga[i],
-            # Position error (mm)
             "pos_err_mm": np.linalg.norm(sp[i] - ap[i]) * 1000,
-        }
-        data.append(row)
+        })
 
-    df = pd.DataFrame(data)
     csv_path = out_dir / filename
-    df.to_csv(csv_path, index=False)
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
     print(f"Saved execution data to {csv_path}")
     return csv_path
 
@@ -634,17 +561,14 @@ def main():
     # --- Normal mode: connect to real robot ---
     piper, T_base, kinematics = create_robot(args.can_name, home_deg, args.speed, frame_spec)
 
-    # Load and execute trajectory
     traj = load_trajectory(args.traj_csv, T_base, args.steps)
-    result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, frame_spec, kinematics)
-    plot(result, out, args.mode, frame_spec.tcp_frame)
+    result = run_trajectory(piper, traj, args.step_time, args.speed, frame_spec, kinematics)
+    plot(result, out, frame_spec.tcp_frame)
     plot_joints(result, out, "real_piper_joints.jpg")
 
-    # Save execution data to CSV for analysis
     csv_name = Path(args.traj_csv).stem
     save_result_to_csv(result, out, f"real_piper_{csv_name}_result.csv")
 
-    # Go to rest, then disable
     go_to_rest(piper, args.speed)
     print("Disabling robot...")
     piper.DisablePiper()

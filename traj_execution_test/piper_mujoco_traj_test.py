@@ -427,6 +427,52 @@ def plot_joints(result, out_dir, filename):
     print(f"Saved joints plot to {out_dir / filename}")
 
 
+def save_result_to_csv(result, out_dir, filename):
+    """Save trajectory execution result to CSV for analysis."""
+    sp, ap = result["sent_pos"], result["act_pos"]
+    sr, ar = result["sent_rv"], result["act_rv"]
+    gs, ga = result["g_sent"], result["g_act"]
+    cmd = result["cmd_joints"]
+    obs = result["obs_joints"]
+
+    # Convert rotvec to RPY for readability
+    sent_rpy = R.from_rotvec(sr.reshape(-1, 3)).as_euler("xyz", degrees=True)
+    act_rpy = R.from_rotvec(ar.reshape(-1, 3)).as_euler("xyz", degrees=True)
+
+    n_steps = len(sp)
+    data = []
+    for i in range(n_steps):
+        row = {
+            "step": i,
+            # Joint commands (degrees)
+            "cmd_j1": cmd[i, 0], "cmd_j2": cmd[i, 1], "cmd_j3": cmd[i, 2],
+            "cmd_j4": cmd[i, 3], "cmd_j5": cmd[i, 4], "cmd_j6": cmd[i, 5],
+            # Joint observations (degrees)
+            "obs_j1": obs[i, 0], "obs_j2": obs[i, 1], "obs_j3": obs[i, 2],
+            "obs_j4": obs[i, 3], "obs_j5": obs[i, 4], "obs_j6": obs[i, 5],
+            # EE sent position (m)
+            "sent_x": sp[i, 0], "sent_y": sp[i, 1], "sent_z": sp[i, 2],
+            # EE actual position (m)
+            "act_x": ap[i, 0], "act_y": ap[i, 1], "act_z": ap[i, 2],
+            # EE sent RPY (degrees)
+            "sent_roll": sent_rpy[i, 0], "sent_pitch": sent_rpy[i, 1], "sent_yaw": sent_rpy[i, 2],
+            # EE actual RPY (degrees)
+            "act_roll": act_rpy[i, 0], "act_pitch": act_rpy[i, 1], "act_yaw": act_rpy[i, 2],
+            # Gripper
+            "cmd_gripper": gs[i],
+            "act_gripper": ga[i],
+            # Position error (mm)
+            "pos_err_mm": np.linalg.norm(sp[i] - ap[i]) * 1000,
+        }
+        data.append(row)
+
+    df = pd.DataFrame(data)
+    csv_path = out_dir / filename
+    df.to_csv(csv_path, index=False)
+    print(f"Saved execution data to {csv_path}")
+    return csv_path
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -508,6 +554,9 @@ def main():
             plot(result, out, frame_spec.tcp_frame)
             plot_joints(result, out, "mujoco_piper_joints.jpg")
 
+            csv_name = Path(args.traj_csv).stem
+            save_result_to_csv(result, out, f"mujoco_piper_{csv_name}_result.csv")
+
             input("Press Enter to return to rest position...")
             go_to_rest(model, data)
             viewer.sync()
@@ -524,6 +573,9 @@ def main():
             save_video(frames, out)
         plot(result, out, frame_spec.tcp_frame)
         plot_joints(result, out, "mujoco_piper_joints.jpg")
+
+        csv_name = Path(args.traj_csv).stem
+        save_result_to_csv(result, out, f"mujoco_piper_{csv_name}_result.csv")
 
         go_to_rest(model, data)
 
