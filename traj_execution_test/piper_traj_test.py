@@ -56,7 +56,7 @@ JOINT_LIMITS_DEG = [
 ]
 
 # Gripper: max opening 50mm
-GRIPPER_MAX_M = 0.05
+GRIPPER_MAX_M = 0.07  # 70mm
 
 
 # ============================================================
@@ -122,10 +122,10 @@ def clamp_joints(q_deg):
 def parse_args():
     p = argparse.ArgumentParser(description="Execute trajectory on real Piper robot")
     p.add_argument("--traj-csv", required=True, help="Path to trajectory CSV")
-    p.add_argument("--mode", choices=["ee", "joint"], default="ee",
+    p.add_argument("--mode", choices=["ee", "joint"], default="joint",
                    help="Control mode: ee=EndPoseCtrl, joint=JointCtrl (default: ee)")
     p.add_argument("--steps", type=int, default=None, help="Limit number of steps")
-    p.add_argument("--step-time", type=float, default=0.1, help="Delay between steps (seconds)")
+    p.add_argument("--step-time", type=float, default=0.02, help="Delay between steps (seconds)")
     p.add_argument("--can-name", default="can0", help="CAN interface name")
     p.add_argument("--speed", type=int, default=100, help="Speed rate 0-100 (default: 100)")
     p.add_argument("--home-joints", default=None,
@@ -186,8 +186,8 @@ def create_robot(can_name, home_deg, speed, frame_spec):
     signal.signal(signal.SIGINT, on_sigint)
 
     # Enable gripper
-    piper.GripperCtrl(0, 1000, 0x02, 0)  # reset
-    piper.GripperCtrl(0, 1000, 0x01, 0)  # enable
+    piper.GripperCtrl(0, 1000, 0x02)  # reset
+    piper.GripperCtrl(0, 1000, 0x01)  # enable
     time.sleep(0.1)
 
     # Go to rest first
@@ -307,7 +307,7 @@ def exec_step(piper, step, i, speed, mode, frame_spec, kinematics=None):
 
     # Gripper: proportional [0,1] → [0, GRIPPER_MAX_M]
     grip_m = gripper * GRIPPER_MAX_M
-    piper.GripperCtrl(abs(round(grip_m * 1e6)), 1000, 0x01, 0)
+    piper.GripperCtrl(abs(round(grip_m * 1e6)), 1000, 0x01)
     return cmd_joints
 
 
@@ -527,12 +527,68 @@ def plot_joints(result, out_dir, filename):
         ax.set_ylabel(f"J{j+1} (°)")
         ax.legend()
         ax.grid(True, alpha=0.3)
+
+        # Ensure y-axis range is at least 5 degrees
+        y_min = min(cmd[:, j].min(), obs[:, j].min())
+        y_max = max(cmd[:, j].max(), obs[:, j].max())
+        y_range = y_max - y_min
+        if y_range < 5.0:
+            y_center = (y_max + y_min) / 2
+            y_half_range = 2.5  # Half of 5 degrees
+            ax.set_ylim(y_center - y_half_range, y_center + y_half_range)
+
     axes[-1].set_xlabel("Step")
     axes[0].set_title("Joint Commands vs Observations")
     plt.tight_layout()
     fig.savefig(str(out_dir / filename), dpi=150, bbox_inches="tight")
     plt.close()
     print(f"Saved joints plot to {out_dir / filename}")
+
+
+def save_result_to_csv(result, out_dir, filename):
+    """Save trajectory execution result to CSV for analysis."""
+    sp, ap = result["sent_pos"], result["act_pos"]
+    sr, ar = result["sent_rv"], result["act_rv"]
+    gs, ga = result["g_sent"], result["g_act"]
+    cmd = result["cmd_joints"]
+    obs = result["obs_joints"]
+
+    # Convert rotvec to RPY for readability
+    sent_rpy = R.from_rotvec(sr.reshape(-1, 3)).as_euler("xyz", degrees=True)
+    act_rpy = R.from_rotvec(ar.reshape(-1, 3)).as_euler("xyz", degrees=True)
+
+    n_steps = len(sp)
+    data = []
+    for i in range(n_steps):
+        row = {
+            "step": i,
+            # Joint commands (degrees)
+            "cmd_j1": cmd[i, 0], "cmd_j2": cmd[i, 1], "cmd_j3": cmd[i, 2],
+            "cmd_j4": cmd[i, 3], "cmd_j5": cmd[i, 4], "cmd_j6": cmd[i, 5],
+            # Joint observations (degrees)
+            "obs_j1": obs[i, 0], "obs_j2": obs[i, 1], "obs_j3": obs[i, 2],
+            "obs_j4": obs[i, 3], "obs_j5": obs[i, 4], "obs_j6": obs[i, 5],
+            # EE sent position (m)
+            "sent_x": sp[i, 0], "sent_y": sp[i, 1], "sent_z": sp[i, 2],
+            # EE actual position (m)
+            "act_x": ap[i, 0], "act_y": ap[i, 1], "act_z": ap[i, 2],
+            # EE sent RPY (degrees)
+            "sent_roll": sent_rpy[i, 0], "sent_pitch": sent_rpy[i, 1], "sent_yaw": sent_rpy[i, 2],
+            # EE actual RPY (degrees)
+            "act_roll": act_rpy[i, 0], "act_pitch": act_rpy[i, 1], "act_yaw": act_rpy[i, 2],
+            # Gripper
+            "cmd_gripper": gs[i],
+            "act_gripper": ga[i],
+            # Position error (mm)
+            "pos_err_mm": np.linalg.norm(sp[i] - ap[i]) * 1000,
+        }
+        data.append(row)
+
+    df = pd.DataFrame(data)
+    csv_path = out_dir / filename
+    df.to_csv(csv_path, index=False)
+    print(f"Saved execution data to {csv_path}")
+    return csv_path
 
 
 # ============================================================
@@ -583,6 +639,10 @@ def main():
     result = run_trajectory(piper, traj, args.step_time, args.speed, args.mode, frame_spec, kinematics)
     plot(result, out, args.mode, frame_spec.tcp_frame)
     plot_joints(result, out, "real_piper_joints.jpg")
+
+    # Save execution data to CSV for analysis
+    csv_name = Path(args.traj_csv).stem
+    save_result_to_csv(result, out, f"real_piper_{csv_name}_result.csv")
 
     # Go to rest, then disable
     go_to_rest(piper, args.speed)
