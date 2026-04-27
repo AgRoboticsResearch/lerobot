@@ -339,10 +339,10 @@ def main():
         help="Enable rerun visualization for actions and observations (joint poses)",
     )
     parser.add_argument(
-        "--use_commanded_for_chunk_base",
+        "--chunk_base_ideal",
         action="store_true",
-        help="Use last commanded action (sent joints) instead of sensor readings for chunk_base_pose. "
-             "Helps with noisy sensors but may accumulate drift.",
+        help="Use last sent target EE pose as chunk base instead of actual sensor readings. "
+             "First chunk still uses actual. Prevents tracking error accumulation.",
     )
 
     args = parser.parse_args()
@@ -555,8 +555,8 @@ def main():
     chunk_start_joints = current_joints.copy()
     chunk_actions_for_viz = []  # Store all actions for visualization
 
-    # Track last commanded joints for --use_commanded_for_chunk_base option
-    last_commanded_joints = current_joints.copy()
+    # Track last sent target EE pose for --chunk_base_ideal
+    last_sent_pose = None
 
     try:
         while args.num_steps == 0 or step_count < args.num_steps:
@@ -614,19 +614,19 @@ def main():
             # Predict new chunk when queue is empty (like visualize_dataset_predictions.py)
             # ====================================================================
             if len(action_queue) == 0:
-                # Determine chunk_base_pose based on toggle setting
-                if args.use_commanded_for_chunk_base:
-                    # Use last commanded joints (what we sent to robot)
-                    current_ee_T = kinematics.forward_kinematics(last_commanded_joints)
-                    logger.info(f"Using last COMMANDED joints for chunk_base_pose")
+                # Determine chunk_base_pose
+                if args.chunk_base_ideal and last_sent_pose is not None:
+                    # Use last sent target EE pose (what the "policy" predicted last)
+                    chunk_base_pose = last_sent_pose.copy()
+                    chunk_start_joints = read_robot_state(robot, MOTOR_NAMES)[1].copy()
+                    logger.info(f"Using last SENT target for chunk_base_pose")
                 else:
-                    # Get FRESH observation for accurate chunk_base_pose (default)
+                    # Get FRESH observation for accurate chunk_base_pose (default / first chunk)
                     obs_dict, current_joints = read_robot_state(robot, MOTOR_NAMES)
                     current_ee_T = kinematics.forward_kinematics(current_joints)
+                    chunk_base_pose = current_ee_T.copy()
+                    chunk_start_joints = current_joints.copy()
                     logger.info(f"Using actual SENSOR readings for chunk_base_pose")
-                # THIS IS WHERE CHUNK BASE POSE IS SET
-                chunk_base_pose = current_ee_T.copy()
-                chunk_start_joints = last_commanded_joints.copy() if args.use_commanded_for_chunk_base else current_joints.copy()
                 chunk_actions_for_viz = []
 
                 logger.info(f"Predicting new chunk at step {step_count}, base pos: {chunk_base_pose[:3,3]}")
@@ -738,12 +738,15 @@ def main():
             # -------------------------------------------------------------------
             # Convert to joint actions via pipeline
             # -------------------------------------------------------------------
+            # Read FRESH robot state right before IK to avoid staleness
+            ik_obs_dict, ik_current_joints = read_robot_state(robot, MOTOR_NAMES)
+
             # Prepare action dict for pipeline
             action_dict: RobotAction = {"rel_pose": rel_action_10d}
 
-            # Prepare observation dict for pipeline
+            # Prepare observation dict for pipeline using fresh readings
             robot_obs: RobotObservation = {
-                f"{name}.pos": obs_dict[f"{name}.pos"] for name in MOTOR_NAMES
+                f"{name}.pos": ik_obs_dict[f"{name}.pos"] for name in MOTOR_NAMES
             }
 
             # Create transition with complementary data (chunk_base_pose)
@@ -763,16 +766,16 @@ def main():
             # -------------------------------------------------------------------
             robot.send_action(joints_action)
 
-            # Update last_commanded_joints with what we sent
-            last_commanded_joints = np.array([joints_action[f"{name}.pos"] for name in MOTOR_NAMES])
+            # Track last sent target EE pose for --chunk_base_ideal
+            last_sent_pose = target_ee_pose.copy()
 
             # Log to rerun if display_data is enabled
             if args.display_data:
                 # Prepare action dict for rerun (use joint positions)
                 action_for_rerun = {f"{name}.pos": joints_action.get(f"{name}.pos", 0.0) for name in MOTOR_NAMES}
-                # Prepare observation dict for rerun
-                obs_for_rerun = {f"{name}.pos": obs_dict.get(f"{name}.pos", 0.0) for name in MOTOR_NAMES}
-                obs_for_rerun["gripper.pos"] = obs_dict.get("gripper.pos", 0.0)
+                # Prepare observation dict for rerun using fresh readings
+                obs_for_rerun = {f"{name}.pos": ik_obs_dict.get(f"{name}.pos", 0.0) for name in MOTOR_NAMES}
+                obs_for_rerun["gripper.pos"] = ik_obs_dict.get("gripper.pos", 0.0)
                 log_rerun_data(observation=obs_for_rerun, action=action_for_rerun)
 
             # Update sim_robot to reflect actual robot position (not commanded position)
@@ -799,7 +802,7 @@ def main():
 
             if step_count % 100 == 0:
                 # Log both target (where we want to go) and actual (where we are)
-                actual_ee_T = kinematics.forward_kinematics(current_joints)
+                actual_ee_T = kinematics.forward_kinematics(ik_current_joints)
                 actual_pos = actual_ee_T[:3, 3]
                 target_pos = target_ee_pose[:3, 3]
                 logger.info(f"Step {step_count}: EE actual {actual_pos[0]:.3f}, {actual_pos[1]:.3f}, {actual_pos[2]:.3f} | target {target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}")

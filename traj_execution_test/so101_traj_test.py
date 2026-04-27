@@ -75,6 +75,7 @@ def parse_args():
     p.add_argument("--tcp-frame", default="camera_link", help="URDF frame to use as the planning TCP")
     p.add_argument("--home-joints", default=None, help="Comma-separated home joint positions in degrees")
     p.add_argument("--plot-tcp-traj", action="store_true", help="Plot TCP trajectory without launching robot")
+    p.add_argument("--save_result_to_csv", action="store_true", help="Save execution result CSV")
     return p.parse_args()
 
 
@@ -287,7 +288,8 @@ def main():
     plot_joints(result, out, f"{PREFIX}_joints.jpg", JOINT_LABELS)
 
     csv_name = Path(args.traj_csv).stem
-    save_result_to_csv(result, out, f"{PREFIX}_{csv_name}_result.csv")
+    if args.save_result_to_csv:
+        save_result_to_csv(result, out, f"{PREFIX}_{csv_name}_result.csv")
 
     go_to_rest(robot, motor_names)
     print("Disconnecting robot...")
