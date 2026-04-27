@@ -221,7 +221,9 @@ class RelativeEEDataset(LeRobotDataset):
     def __init__(self, *args, obs_state_horizon: int = 2,
                  obs_down_sample_steps: int = 1,
                  gripper_lower_deg: float = 0.0,
-                 gripper_upper_deg: float = 100.0, **kwargs):
+                 gripper_upper_deg: float = 100.0,
+                 use_joint_obs: bool = False,
+                 **kwargs):
         """
         Initialize the dataset wrapper and update metadata for the new shapes.
 
@@ -245,6 +247,7 @@ class RelativeEEDataset(LeRobotDataset):
         self.obs_down_sample_steps = obs_down_sample_steps
         self.gripper_lower_deg = gripper_lower_deg
         self.gripper_upper_deg = gripper_upper_deg
+        self.use_joint_obs = use_joint_obs
 
         # Extract custom kwargs before passing to parent
         compute_stats = kwargs.pop('compute_stats', True)
@@ -263,26 +266,27 @@ class RelativeEEDataset(LeRobotDataset):
         # The actual data returned by __getitem__ has temporal dimension, which is then
         # flattened by TemporalFlattenProcessor during preprocessing.
 
-        # Update state metadata to 10D (from 7D) - keep 1D shape
-        if hasattr(self, 'meta') and hasattr(self.meta, 'info') and 'observation.state' in self.meta.info.get('features', {}):
-            self.meta.info['features']['observation.state']['shape'] = [10]
-            self.meta.info['features']['observation.state']['names'] = [
-                'delta.x', 'delta.y', 'delta.z',
-                'rot6d.0', 'rot6d.1', 'rot6d.2', 'rot6d.3', 'rot6d.4', 'rot6d.5',
-                'gripper'
-            ]
+        # Update state and action metadata based on mode
+        if hasattr(self, 'meta') and hasattr(self.meta, 'info'):
+            if not self.use_joint_obs:
+                # EE mode: observation.state becomes 10D relative EE
+                if 'observation.state' in self.meta.info.get('features', {}):
+                    self.meta.info['features']['observation.state']['shape'] = [10]
+                    self.meta.info['features']['observation.state']['names'] = [
+                        'delta.x', 'delta.y', 'delta.z',
+                        'rot6d.0', 'rot6d.1', 'rot6d.2', 'rot6d.3', 'rot6d.4', 'rot6d.5',
+                        'gripper'
+                    ]
+            # use_joint_obs=True: keep observation.state as [6] joints (unchanged)
 
-        # Update action shape in metadata
-        # IMPORTANT: Keep as [10,] (1D) even though actual data will be (action_horizon, 10) when using delta_timestamps
-        # This matches the original dataset behavior where metadata is [7,] but data is (100, 7) with action_delta_indices
-        # The policy uses shape[0] to determine the input dimension, so it MUST be 10, not action_horizon
-        if hasattr(self, 'meta') and hasattr(self.meta, 'info') and 'action' in self.meta.info.get('features', {}):
-            self.meta.info['features']['action']['shape'] = [10]
-            self.meta.info['features']['action']['names'] = [
-                'delta.x', 'delta.y', 'delta.z',
-                'rot6d.0', 'rot6d.1', 'rot6d.2', 'rot6d.3', 'rot6d.4', 'rot6d.5',
-                'gripper'
-            ]
+            # Action always becomes 10D relative EE
+            if 'action' in self.meta.info.get('features', {}):
+                self.meta.info['features']['action']['shape'] = [10]
+                self.meta.info['features']['action']['names'] = [
+                    'delta.x', 'delta.y', 'delta.z',
+                    'rot6d.0', 'rot6d.1', 'rot6d.2', 'rot6d.3', 'rot6d.4', 'rot6d.5',
+                    'gripper'
+                ]
 
         # Store gripper bounds in metadata (following LeRobot's stats pattern)
         # These are used during deployment to denormalize gripper values correctly
@@ -306,13 +310,15 @@ class RelativeEEDataset(LeRobotDataset):
                     print(f"  Processing {num_stat_samples}/{num_frames} training frames...")
                 stats = self._compute_normalization_stats(num_stat_samples)
 
-                # Update observation state stats
-                if 'observation.state' in self.meta.stats:
-                    self.meta.stats['observation.state'] = stats['observation.state']
+                # Update observation state stats (skip if use_joint_obs - keep source joint stats)
+                if not self.use_joint_obs and 'observation.state' in stats:
+                    if 'observation.state' in self.meta.stats:
+                        self.meta.stats['observation.state'] = stats['observation.state']
 
                 # Update action stats
-                if 'action' in self.meta.stats:
-                    self.meta.stats['action'] = stats['action']
+                if 'action' in stats:
+                    if 'action' in self.meta.stats:
+                        self.meta.stats['action'] = stats['action']
 
                 print("Stats computed successfully!")
             elif compute_stats and worker_info is not None:
@@ -388,18 +394,17 @@ class RelativeEEDataset(LeRobotDataset):
                 print(f"  Progress: {i + 1}/{num_samples} ({progress:.1f}%)")
                 next_print = min(i + print_interval, num_samples)
             # Collect historical observation states (UMI-style with downsampling)
+            # Use action.ee for EE data when available, otherwise observation.state
+            has_action_ee = 'action.ee' in self.hf_dataset.features
+            ee_key = 'action.ee' if has_action_ee else 'observation.state'
             obs_states = []
             for t_offset in range(self.obs_state_horizon):
-                # UMI-style: skip frames based on obs_down_sample_steps
-                # e.g., with horizon=2, down_sample=3: [t-3, t]
-                # e.g., with horizon=2, down_sample=1: [t-1, t]
                 hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
                 if hist_idx >= 0:
-                    state_data = self.hf_dataset[hist_idx]['observation.state']
+                    state_data = self.hf_dataset[hist_idx][ee_key]
                     obs_states.append(torch.tensor(state_data, dtype=torch.float32))
                 else:
-                    # Pad with zeros if before episode start
-                    state_data = self.hf_dataset[0]['observation.state']
+                    state_data = self.hf_dataset[0][ee_key]
                     obs_states.append(torch.zeros_like(torch.tensor(state_data, dtype=torch.float32)))
 
             if len(obs_states) < self.obs_state_horizon:
@@ -418,26 +423,22 @@ class RelativeEEDataset(LeRobotDataset):
             ep_end = ep["dataset_to_index"]
 
             # Get actions across horizon - pad with last frame if needed
-            # Respect episode boundaries like parent class does
+            # Use action.ee for EE data when available, otherwise action
             actions_for_idx = []
             is_pad_for_idx = []
             last_valid_action = None
             for delta_idx in action_delta_indices:
                 target_idx = idx + delta_idx
-                # Check if target is within the same episode
                 if target_idx >= ep_start and target_idx < ep_end:
-                    target_action = self.hf_dataset[target_idx]['action']
+                    target_action = self.hf_dataset[target_idx][ee_key]
                     action_tensor = torch.tensor(target_action, dtype=torch.float32)
                     actions_for_idx.append(action_tensor)
                     last_valid_action = action_tensor
                     is_pad_for_idx.append(False)
                 else:
-                    # Pad with last valid action (clamp to episode end)
-                    # Same behavior as parent class's _get_query_indices
                     if last_valid_action is None:
-                        # Should not happen if delta_indices includes 0
                         last_valid_action = torch.tensor(
-                            self.hf_dataset[min(ep_end - 1, len(self.hf_dataset) - 1)]['action'],
+                            self.hf_dataset[min(ep_end - 1, len(self.hf_dataset) - 1)][ee_key],
                             dtype=torch.float32
                         )
                     actions_for_idx.append(last_valid_action)
@@ -554,9 +555,11 @@ class RelativeEEDataset(LeRobotDataset):
             }
 
         stats = {
-            'observation.state': compute_stats(all_obs),
-            'action': compute_stats(valid_actions),  # Use only non-padded frames for accurate stats
+            'observation.state': compute_stats(all_obs) if not self.use_joint_obs else None,
+            'action': compute_stats(valid_actions),
         }
+        # Remove None entries
+        stats = {k: v for k, v in stats.items() if v is not None}
 
         return stats
 
@@ -576,157 +579,129 @@ class RelativeEEDataset(LeRobotDataset):
 
         Returns:
             Dictionary containing:
-            - observation.state: Relative observations of shape (obs_state_horizon, 10)
-              Current timestep (last index) is identity [0,0,0, 1,0,0,0,1,0, gripper]
-              Historical timesteps show where the EE was relative to current (velocity)
+            - observation.state:
+              - use_joint_obs=True: 6D joints (unchanged from dataset)
+              - use_joint_obs=False: identity (10D relative EE, current = identity)
             - observation.images.*: Image history of shape (obs_state_horizon, C, H, W)
-              Each timestep contains the image at that point in history
             - action: Relative actions of shape (action_horizon, 10)
-              action_horizon is determined by delta_timestamps['action'] (e.g., 100 for ACT)
-              Each action is a future timestep relative to current
             - action_is_pad: Boolean tensor indicating padded timesteps
             - All other original keys (timestamps, etc.) unchanged
         """
         # Get original item with temporal batching (includes action_is_pad from parent)
         item = LeRobotDataset.__getitem__(self, idx)
 
-        # Get current state (most recent observation)
-        current_state = item['observation.state']
-
-        # Collect historical observation states (UMI-style with downsampling)
-        obs_states = []
-        for t_offset in range(self.obs_state_horizon):
-            # UMI-style: skip frames based on obs_down_sample_steps
-            # e.g., with horizon=2, down_sample=3: [t-3, t]
-            # e.g., with horizon=2, down_sample=1: [t-1, t]
-            hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
-            if hist_idx >= 0:
-                hist_item = LeRobotDataset.__getitem__(self, hist_idx)
-                obs_states.append(hist_item['observation.state'])
-            else:
-                # Pad with current state if before episode start
-                obs_states.append(current_state.clone())
-
-        # Stack observation states: (obs_state_horizon, 7)
-        obs_states = torch.stack(obs_states, dim=0)
-
         # Collect and stack image history (UMI-style)
-        # Following UMI's approach where image history is provided for temporal observations
         if hasattr(self.meta, 'camera_keys'):
             for cam_key in self.meta.camera_keys:
                 if cam_key in item:
-                    current_img = item[cam_key]  # Shape: (C, H, W)
+                    current_img = item[cam_key]
                     imgs_to_stack = []
-
-                    # Collect historical images (oldest to newest, UMI-style with downsampling)
                     for t_offset in range(self.obs_state_horizon):
-                        # UMI-style: skip frames based on obs_down_sample_steps
                         hist_idx = idx - (self.obs_state_horizon - 1 - t_offset) * self.obs_down_sample_steps
                         if hist_idx >= 0:
                             hist_item = LeRobotDataset.__getitem__(self, hist_idx)
                             imgs_to_stack.append(hist_item[cam_key])
                         else:
-                            # Pad with current image if before episode start
                             imgs_to_stack.append(current_img)
-
-                    # Stack: (obs_state_horizon, C, H, W)
                     item[cam_key] = torch.stack(imgs_to_stack, dim=0)
-
-                    # Squeeze temporal dimension when obs_state_horizon=1 for compatibility with standard ACT
                     if self.obs_state_horizon == 1:
-                        item[cam_key] = item[cam_key].squeeze(0)  # (1, C, H, W) -> (C, H, W)
+                        item[cam_key] = item[cam_key].squeeze(0)
 
-        # Get actions across horizon
-        actions = item['action']
-        if actions.ndim == 1:
-            actions = actions.unsqueeze(0)
+        if self.use_joint_obs:
+            # Joint observation mode: pass observation.state (6D joints) through unchanged
+            # Only transform actions to relative EE using action.ee field
+            joint_state = item['observation.state']  # (6,) joints
 
-        action_horizon = actions.shape[0]
+            # Get EE actions from action.ee field
+            ee_actions = item.get('action.ee', item['action'])
+            if ee_actions.ndim == 1:
+                ee_actions = ee_actions.unsqueeze(0)
+            action_horizon = ee_actions.shape[0]
 
-        # Get action_is_pad if provided by parent class
-        # Note: action_is_pad is already in the item from LeRobotDataset
-        # and will be preserved automatically when we return the item
+            # Get current EE from action.ee at current frame for T_current
+            # action.ee[idx] = EE at idx+1 (next frame), so use raw data at idx for closest EE
+            current_ee_raw = self.hf_dataset[idx].get('action.ee')
+            if current_ee_raw is not None:
+                current_ee = torch.tensor(current_ee_raw, dtype=torch.float32)
+            else:
+                current_ee = ee_actions[0]
 
-        # Current pose (most recent observation)
-        current_pose_6d = torch.cat([
-            current_state[:3],   # position
-            current_state[3:6]   # rotation (axis-angle)
-        ]).numpy()  # (6,)
-
-        T_current = pose_to_mat(current_pose_6d)  # (4, 4)
-
-        # Transform ALL historical observations to relative (current as reference)
-        # This provides velocity information: where the EE was relative to where it is now
-        # Following UMI's approach where all timesteps are processed
-        relative_obs_list = []
-        for t in range(self.obs_state_horizon):
-            hist_state = obs_states[t]  # Already collected above
-
-            hist_pose_6d = torch.cat([
-                hist_state[:3],   # position
-                hist_state[3:6]   # rotation (axis-angle)
+            current_pose_6d = torch.cat([
+                current_ee[:3],
+                current_ee[3:6]
             ]).numpy()
+            T_current = pose_to_mat(current_pose_6d)
 
-            T_hist = pose_to_mat(hist_pose_6d)
+            # Compute relative actions
+            relative_actions_list = []
+            for t in range(action_horizon):
+                future_ee = ee_actions[t]
+                future_pose_6d = torch.cat([future_ee[:3], future_ee[3:6]]).numpy()
+                T_future = pose_to_mat(future_pose_6d)
+                T_rel = convert_pose_mat_rep(T_future, T_current, pose_rep='relative')
+                pose_9d = mat_to_pose10d(T_rel)
+                relative_actions_list.append(np.concatenate([
+                    pose_9d,
+                    [future_ee[6].item()]
+                ]))
 
-            # Compute relative: T_rel = T_curr^{-1} @ T_hist
-            T_rel = convert_pose_mat_rep(T_hist, T_current, pose_rep='relative')
+            relative_actions = torch.tensor(
+                np.stack(relative_actions_list, axis=0),
+                dtype=joint_state.dtype,
+            )
 
-            pose_9d = mat_to_pose10d(T_rel)
-            relative_obs_list.append(np.concatenate([
-                pose_9d,
-                [hist_state[6].item()]  # gripper
-            ]))
+            item['observation.state'] = joint_state
+            item['action'] = relative_actions
+        else:
+            # EE observation mode: use identity for observation, relative EE for actions
+            # Read EE from action.ee field if available, otherwise from observation.state
+            has_action_ee = 'action.ee' in (self.hf_dataset.features if hasattr(self.hf_dataset, 'features') else {})
 
-        # Stack: (obs_state_horizon, 10) - keep temporal dimension unless obs_state_horizon=1
-        relative_obs = torch.tensor(
-            np.stack(relative_obs_list, axis=0),
-            dtype=current_state.dtype,
-            device=current_state.device
-        )  # shape: (obs_state_horizon, 10)
+            if has_action_ee:
+                current_ee = torch.tensor(self.hf_dataset[idx]['action.ee'], dtype=torch.float32)
+                ee_actions = item.get('action.ee', item['action'])
+            else:
+                current_ee = item['observation.state']
+                ee_actions = item['action']
 
-        # Squeeze temporal dimension when obs_state_horizon=1 for compatibility with standard ACT
-        if self.obs_state_horizon == 1:
-            relative_obs = relative_obs.squeeze(0)  # (1, 10) -> (10,)
+            if ee_actions.ndim == 1:
+                ee_actions = ee_actions.unsqueeze(0)
+            action_horizon = ee_actions.shape[0]
 
-        # Transform actions to relative (future -> current)
-        # Handle multiple action timesteps (chunk_size)
-        actions_pos = actions[:, :3].numpy()
-        actions_rot = actions[:, 3:6].numpy()
-        actions_gripper = actions[:, 6:7]
+            # Current EE as T_current
+            current_pose_6d = torch.cat([
+                current_ee[:3],
+                current_ee[3:6]
+            ]).numpy()
+            T_current = pose_to_mat(current_pose_6d)
 
-        # Get action horizon from the data
-        action_horizon = actions.shape[0]
+            # Observation: identity (current frame = reference)
+            identity_obs = np.array([0, 0, 0, 1, 0, 0, 0, 1, 0, current_ee[6].item()], dtype=np.float32)
+            relative_obs = torch.tensor(identity_obs, dtype=torch.float32)
 
-        relative_actions_list = []
-        for t in range(action_horizon):
-            future_pose_6d = np.concatenate([actions_pos[t], actions_rot[t]])
-            T_future = pose_to_mat(future_pose_6d)
+            # Compute relative actions
+            relative_actions_list = []
+            for t in range(action_horizon):
+                future_ee = ee_actions[t]
+                future_pose_6d = torch.cat([future_ee[:3], future_ee[3:6]]).numpy()
+                T_future = pose_to_mat(future_pose_6d)
+                T_rel = convert_pose_mat_rep(T_future, T_current, pose_rep='relative')
+                pose_9d = mat_to_pose10d(T_rel)
+                relative_actions_list.append(np.concatenate([
+                    pose_9d,
+                    [future_ee[6].item()]
+                ]))
 
-            # Compute relative transform: T_rel = T_curr^{-1} @ T_future
-            T_rel = convert_pose_mat_rep(T_future, T_current, pose_rep='relative')
+            relative_actions = torch.tensor(
+                np.stack(relative_actions_list, axis=0),
+                dtype=torch.float32,
+            )
 
-            pose_9d = mat_to_pose10d(T_rel)
-            pose_with_gripper = np.concatenate([
-                pose_9d,
-                [actions_gripper[t].item()]
-            ])  # (10,)
+            item['observation.state'] = relative_obs
+            item['action'] = relative_actions
 
-            relative_actions_list.append(pose_with_gripper)
-
-        # Stack into tensor: (action_horizon, 10)
-        # When action_delta_indices=[0,1,...,99], action_horizon=100 for chunk_size
-        relative_actions = torch.tensor(
-            np.stack(relative_actions_list, axis=0),
-            dtype=actions.dtype,
-            device=actions.device
-        )  # shape: (action_horizon, 10)
-
-        # Update item with transformed data
-        item['observation.state'] = relative_obs
-        item['action'] = relative_actions
-
-        # Note: action_is_pad is already in the item from parent class
-        # It indicates which timesteps were padded (clamped to episode boundary)
+        # Rename action.ee_is_pad -> action_is_pad for policy compatibility
+        if 'action.ee_is_pad' in item:
+            item['action_is_pad'] = item.pop('action.ee_is_pad')
 
         return item

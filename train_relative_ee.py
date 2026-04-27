@@ -101,6 +101,16 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
     # Resolve delta timestamps from policy config
     delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
 
+    # Detect new dataset format (has action.ee field)
+    has_action_ee = 'action.ee' in ds_meta.info.get('features', {})
+    use_joint_obs = getattr(cfg.policy, 'use_joint_obs', False)
+
+    if has_action_ee:
+        # Remap delta_timestamps from 'action' to 'action.ee' for EE action data
+        if 'action' in delta_timestamps:
+            delta_timestamps['action.ee'] = delta_timestamps.pop('action')
+        logging.info(f"  Detected action.ee field - using EE data from action.ee")
+
     # Create RelativeEEDataset with wrist-relative SE(3) transformation
     dataset = RelativeEEDataset(
         cfg.dataset.repo_id,
@@ -109,14 +119,20 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
         delta_timestamps=delta_timestamps,
         revision=cfg.dataset.revision,
         video_backend=cfg.dataset.video_backend,
-        obs_state_horizon=obs_state_horizon,  # UMI-style: historical observations
-        obs_down_sample_steps=obs_down_sample_steps,  # UMI-style: skip frames
-        num_stat_samples=num_stat_samples,  # Control stats computation speed
+        obs_state_horizon=obs_state_horizon,
+        obs_down_sample_steps=obs_down_sample_steps,
+        num_stat_samples=num_stat_samples,
+        use_joint_obs=use_joint_obs,
     )
 
     logging.info(f"Created RelativeEEDataset (UMI-style)")
     logging.info(f"  obs_state_horizon: {obs_state_horizon}")
     logging.info(f"  obs_down_sample_steps: {obs_down_sample_steps}")
+    logging.info(f"  use_joint_obs: {use_joint_obs}")
+    if use_joint_obs:
+        logging.info(f"  Observation mode: JOINT (6D joints as input)")
+    else:
+        logging.info(f"  Observation mode: EE identity (10D)")
     if obs_down_sample_steps == 1:
         logging.info(f"  Observation frames: consecutive [t-1, t] - ~{1000/ds_meta.fps:.0f}ms delta at {ds_meta.fps}Hz")
     else:
