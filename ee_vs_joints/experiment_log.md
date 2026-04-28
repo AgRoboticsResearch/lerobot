@@ -128,6 +128,16 @@ python train_relative_ee.py \
 | 2 | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | `false` |
 | 3 | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | `true` |
 
+## Checkpoints
+
+| Mode | Output directory | Checkpoint interval |
+|------|-----------------|---------------------|
+| 1 | `outputs/train/joint_obs_joint_action_v2/checkpoints/` | Every 50K steps |
+| 2 | `outputs/train/ee_obs_ee_action_v2/checkpoints/` | Every 50K steps |
+| 3 | `outputs/train/joint_obs_ee_action_v2/checkpoints/` | Every 50K steps |
+
+Working directory: `/mnt/data0/code/lerobot` (not `/home/zfei/code/lerobot/outputs/train/ee_vs_joint/`)
+
 ## Common Parameters
 
 - Policy: ACT
