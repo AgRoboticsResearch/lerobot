@@ -62,7 +62,7 @@ lerobot-train \
 
 - **Observation**: 6D joints
 - **Action**: 6D joints
-- **tmux window**: `joint_joint`
+- **Status**: Completed 500K steps, loss ~0.04
 
 ### Mode 2: EE Identity Obs + Relative EE Action
 
@@ -73,11 +73,11 @@ python train_relative_ee.py \
   --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
   --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
-  --output_dir=outputs/train/ee_obs_ee_action \
-  --job_name=act_ee_obs_ee_action \
+  --output_dir=outputs/train/ee_obs_ee_action_v2 \
+  --job_name=act_ee_obs_ee_action_v2 \
   --policy.device=cuda \
   --wandb.enable=true \
-  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
   --save_freq=50000 \
   --steps=500000 \
   --policy.chunk_size=30 \
@@ -90,7 +90,7 @@ python train_relative_ee.py \
 
 - **Observation**: 10D identity `[0,0,0, 1,0,0,0,1,0, gripper]` (current = reference frame)
 - **Action**: 10D relative EE `[delta.xyz(3), rot6d(6), gripper(1)]` — `T_rel = T_current⁻¹ @ T_future`
-- **tmux window**: `ee_ee`
+- **Status**: Training started (v2, clean format)
 
 ### Mode 3: Joint Obs + Relative EE Action (hybrid)
 
@@ -101,11 +101,11 @@ python train_relative_ee.py \
   --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
   --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
-  --output_dir=outputs/train/joint_obs_ee_action \
-  --job_name=act_joint_obs_ee_action \
+  --output_dir=outputs/train/joint_obs_ee_action_v2 \
+  --job_name=act_joint_obs_ee_action_v2 \
   --policy.device=cuda \
   --wandb.enable=true \
-  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
   --save_freq=50000 \
   --steps=500000 \
   --policy.chunk_size=30 \
@@ -118,7 +118,7 @@ python train_relative_ee.py \
 
 - **Observation**: 6D joints
 - **Action**: 10D relative EE
-- **tmux window**: `joint_ee`
+- **Status**: Training started (v2, clean format)
 
 ## Summary Table
 
