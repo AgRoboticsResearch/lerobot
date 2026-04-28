@@ -695,6 +695,7 @@ def run_dataset_mode(args):
         obs_state_horizon=obs_state_horizon,
         delta_timestamps=delta_timestamps,
         compute_stats=False,
+        use_joint_obs=args.use_joint_obs,
     )
 
     logger.info(f"Dataset loaded: {len(dataset)} frames, {len(dataset.meta.episodes)} episodes")
@@ -820,7 +821,7 @@ def run_dataset_mode(args):
                 elif args.inference:
                      update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, gripper=gripper_to_draw)
                 else:
-                     update_3d_trajectory_plot(ax_3d, trajectory_3d=trajectory_3d, frame_offset=frame_offset, ep_idx=ep_idx, mode_label=mode_label, gripper=gripper_to_draw)
+                     update_3d_trajectory_plot(ax_3d, trajectory_3d, frame_offset, ep_idx, mode_label, gripper=gripper_to_draw)
 
                 if save_mp4:
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -1134,13 +1135,18 @@ def main():
     parser.add_argument(
         "--camera_name",
         type=str,
-        default="camera",
-        help="Camera observation name in dataset (default: camera)",
+        default="wrist",
+        help="Camera observation name in dataset (default: wrist)",
     )
     parser.add_argument(
         "--mp4",
         action="store_true",
         help="Save results as MP4 files instead of displaying (dataset mode)",
+    )
+    parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations (for models trained with use_joint_obs=True)",
     )
 
     args = parser.parse_args()
