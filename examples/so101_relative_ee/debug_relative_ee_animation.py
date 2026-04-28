@@ -517,13 +517,10 @@ def compute_episode_axis_limits(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
-        current_ee_pose = pose_to_mat(abs_pose_6d)
+        # Read EE pose directly from observation.ee column (new dataset format)
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        ee_pose_6d = ee_data[:6]  # position (3) + rotation axis-angle (3)
+        current_ee_pose = pose_to_mat(ee_pose_6d)
         all_ee_positions.append(current_ee_pose[:3, 3].copy())
 
     all_ee = np.array(all_ee_positions)
@@ -573,9 +570,8 @@ def compute_full_episode_gt_trajectory(
         start_idx += dataset.meta.episodes[i]["length"]
 
     # Get the first frame's EE pose to compute the offset
-    first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-    first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-    first_pose_6d = first_abs_state[:6]
+    first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+    first_pose_6d = first_ee_data[:6]
     first_ee_pose = pose_to_mat(first_pose_6d)
 
     # Fixed offset from world frame to reset_pose_ee frame
@@ -587,13 +583,10 @@ def compute_full_episode_gt_trajectory(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
-        current_ee_pose = pose_to_mat(abs_pose_6d)
+        # Read EE pose directly from observation.ee column (new dataset format)
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        ee_pose_6d = ee_data[:6]  # position (3) + rotation axis-angle (3)
+        current_ee_pose = pose_to_mat(ee_pose_6d)
         current_ee_position = current_ee_pose[:3, 3].copy()
 
         # Transform to reset_pose_ee frame using the fixed offset
@@ -1170,6 +1163,11 @@ def main():
         action="store_true",
         help="Enable debug visualizations (traj_XXXX.jpg and debug_XXXX.jpg)",
     )
+    parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations (for models trained with use_joint_obs=True)",
+    )
 
     args = parser.parse_args()
 
@@ -1208,61 +1206,72 @@ def main():
     policy.eval()
     policy.config.device = str(device)
 
-    # Wrap with TemporalACTWrapper
+    # Check if temporal wrapper should be used
     policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    disable_temporal_wrapper = getattr(policy.config, 'disable_temporal_wrapper', False)
     obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
 
-    original_model = policy.model
-    policy.model = TemporalACTWrapper(original_model, policy.config)
-    policy.model = policy.model.to(device)
-    logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
-
-    # Load wrapper parameters if temporal_wrapper.pt exists
-    wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
-    if not wrapper_path.exists():
-        wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
-        if not wrapper_path.exists():
-            wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
-    if wrapper_path.exists():
-        wrapper_state_dict = torch.load(wrapper_path, map_location=device)
-        model_state = policy.model.state_dict()
-        filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
-        if filtered_state:
-            policy.model.load_state_dict(filtered_state, strict=False)
-            policy.model = policy.model.to(device)
-            logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
-        else:
-            logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+    if disable_temporal_wrapper or obs_state_horizon == 1:
+        logger.info(f"TemporalACTWrapper DISABLED (obs_state_horizon={obs_state_horizon})")
     else:
-        logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, policy.config)
+        policy.model = policy.model.to(device)
+        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+        wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+            if not wrapper_path.exists():
+                wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
+        if wrapper_path.exists():
+            wrapper_state_dict = torch.load(wrapper_path, map_location=device)
+            model_state = policy.model.state_dict()
+            filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+            if filtered_state:
+                policy.model.load_state_dict(filtered_state, strict=False)
+                policy.model = policy.model.to(device)
+                logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+            else:
+                logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+        else:
+            logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
 
     logger.info(f"Using obs_state_horizon={obs_state_horizon}")
 
-    # Load temporal processors
+    # Load processors
     logger.info("Loading processors from pretrained model...")
-    temp_preprocessor, _ = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-        postprocessor_overrides={},
-    )
+    if disable_temporal_wrapper or obs_state_horizon == 1:
+        # Standard ACT processors
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
+    else:
+        # Temporal processors
+        temp_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
 
-    # Extract stats from loaded preprocessor
-    dataset_stats = None
-    for step in temp_preprocessor.steps:
-        if hasattr(step, 'stats') and step.stats is not None:
-            dataset_stats = step.stats
-            break
+        dataset_stats = None
+        for step in temp_preprocessor.steps:
+            if hasattr(step, 'stats') and step.stats is not None:
+                dataset_stats = step.stats
+                break
 
-    if dataset_stats is None:
-        raise ValueError("Could not extract normalization stats from pretrained model!")
+        if dataset_stats is None:
+            raise ValueError("Could not extract normalization stats from pretrained model!")
 
-    # Create temporal processors with the loaded stats
-    preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
-        config=policy.config,
-        dataset_stats=dataset_stats,
-        obs_state_horizon=obs_state_horizon,
-    )
+        preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
+            config=policy.config,
+            dataset_stats=dataset_stats,
+            obs_state_horizon=obs_state_horizon,
+        )
 
     chunk_size = policy.config.chunk_size
 
@@ -1289,6 +1298,7 @@ def main():
         obs_state_horizon=obs_state_horizon,
         delta_timestamps=delta_timestamps,
         compute_stats=False,
+        use_joint_obs=args.use_joint_obs,
     )
 
     logger.info(f"Dataset loaded successfully!")
@@ -1368,9 +1378,8 @@ def main():
             logger.info(f"  Full GT trajectory shape: {full_episode_gt_trajectory.shape}")
 
             # Get the first frame's EE pose to compute the fixed offset
-            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-            first_pose_6d = first_abs_state[:6]
+            first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+            first_pose_6d = first_ee_data[:6]
             first_ee_pose = pose_to_mat(first_pose_6d)
 
             # Fixed offset from world frame to reset_pose_ee frame
@@ -1426,15 +1435,10 @@ def main():
                 logger.warning(f"No observation image found for frame {frame_idx}")
                 continue
 
-            # Get ABSOLUTE EE position from parent LeRobotDataset (not the relative one)
-            # The RelativeEEDataset.__getitem__ returns relative poses, but the parent stores absolute
-            abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx)
-            abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
-
-            # Convert absolute state to 4x4 matrix
-            # The state is [x, y, z, rx, ry, rz, gripper] in axis-angle format
-            abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
-            current_ee_pose = pose_to_mat(abs_pose_6d)
+            # Get ABSOLUTE EE position from observation.ee column (new dataset format)
+            ee_data = np.array(dataset.hf_dataset[frame_idx]['observation.ee'], dtype=np.float64)
+            ee_pose_6d = ee_data[:6]  # position (3) + rotation axis-angle (3)
+            current_ee_pose = pose_to_mat(ee_pose_6d)
             current_ee_position = current_ee_pose[:3, 3].copy()
 
             # Transform to reset_pose_ee frame if IK is enabled
@@ -1455,7 +1459,10 @@ def main():
             with torch.no_grad():
                 processed_batch = preprocessor(batch)
                 pred_actions = policy.predict_action_chunk(processed_batch)
-                pred_actions = postprocessor({"action": pred_actions})
+                if disable_temporal_wrapper or obs_state_horizon == 1:
+                    pred_actions = postprocessor(pred_actions)
+                else:
+                    pred_actions = postprocessor({"action": pred_actions})
 
             if isinstance(pred_actions, dict) and "action" in pred_actions:
                 pred_actions = pred_actions["action"]
