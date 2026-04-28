@@ -1,23 +1,20 @@
 #!/usr/bin/env python
 """
-Convert a LeRobot dataset from joint-space to end-effector space.
+Convert a LeRobot joint-space dataset to EE-space for relative EE training.
 
 This script reads a LeRobot dataset with joint positions (6 DOF),
 computes end-effector poses using forward kinematics, and writes
 a new dataset that:
-- stores the current end-effector observation in `observation.state`
-  as 7D absolute EE pose + normalized gripper
-- preserves the original joint observation in `observation.joint_state`
-- preserves all `observation.images.*` camera streams from the source dataset
-- writes EE actions as the next-step 7D absolute EE pose + normalized gripper
+- keeps `observation.state` as 6D joints (unchanged)
+- adds `observation.ee` as 7D EE pose at the current frame (for T_current)
+- replaces `action` with 7D EE pose at the next frame (for T_future)
+- copies all `observation.images.*` camera streams from the source
+
+The output dataset is intended for use with RelativeEEDataset only.
+Mode 1 (lerobot-train) should use the original source dataset.
 
 Usage:
     python convert_joint_to_ee_dataset.py <source> <target> [--urdf URDF_PATH]
-
-Arguments:
-    source      Path to the source dataset (joint-space)
-    target      Path to the output dataset (EE + joint observations)
-    --urdf      Path to the URDF file (default: SO101/so101_new_calib.urdf)
 """
 
 import argparse
@@ -472,14 +469,18 @@ def main():
             ee_state = joint_state_to_ee_state(joint_state, kinematics)
             ee_states.append(ee_state)
 
-        # Keep observation.state and action as original joints, add action.ee as 7D EE pose
+        # observation.state: joints unchanged
+        # observation.ee: EE at current frame (for T_current in relative EE computation)
+        # action: EE at next frame (for T_future in relative EE computation)
         converted_rows = []
         num_frames = len(episode_data)
         for i, (_, row) in enumerate(episode_data.iterrows()):
             joint_state = np.array(row['observation.state']).astype(np.float32)
-            original_action = np.array(row['action']).astype(np.float32)
 
-            # action.ee stores the next-frame EE pose (7D), or current for last frame
+            # observation.ee: EE at current frame
+            obs_ee = ee_states[i].astype(np.float32)
+
+            # action: EE at next frame, or current for last frame
             if i < num_frames - 1:
                 action_ee = ee_states[i + 1].astype(np.float32)
             else:
@@ -487,8 +488,8 @@ def main():
 
             converted_rows.append({
                 'observation.state': joint_state,
-                'action': original_action,
-                'action.ee': action_ee,
+                'observation.ee': obs_ee,
+                'action': action_ee,
                 'timestamp': row['timestamp'],
                 'frame_index': row['frame_index'],
                 'episode_index': row['episode_index'],
@@ -512,12 +513,12 @@ def main():
 
     # Build PyArrow arrays with correct types
     obs_state_list = combined_data['observation.state'].tolist()
+    obs_ee_list = combined_data['observation.ee'].tolist()
     action_list = combined_data['action'].tolist()
-    action_ee_list = combined_data['action.ee'].tolist()
 
     obs_state_array = pa.array(obs_state_list, type=pa.list_(pa.float32()))
+    obs_ee_array = pa.array(obs_ee_list, type=pa.list_(pa.float32()))
     action_array = pa.array(action_list, type=pa.list_(pa.float32()))
-    action_ee_array = pa.array(action_ee_list, type=pa.list_(pa.float32()))
     timestamp_array = pa.array(combined_data['timestamp'], type=pa.float32())
     frame_index_array = pa.array(combined_data['frame_index'], type=pa.int64())
     episode_index_array = pa.array(combined_data['episode_index'], type=pa.int64())
@@ -526,8 +527,8 @@ def main():
 
     schema = pa.schema([
         ('observation.state', pa.list_(pa.float32())),
+        ('observation.ee', pa.list_(pa.float32())),
         ('action', pa.list_(pa.float32())),
-        ('action.ee', pa.list_(pa.float32())),
         ('timestamp', pa.float32()),
         ('frame_index', pa.int64()),
         ('episode_index', pa.int64()),
@@ -537,8 +538,8 @@ def main():
 
     table = pa.Table.from_arrays([
         obs_state_array,
+        obs_ee_array,
         action_array,
-        action_ee_array,
         timestamp_array,
         frame_index_array,
         episode_index_array,
@@ -589,13 +590,15 @@ def main():
     new_info["total_frames"] = len(combined_data)
     new_info["robot_type"] = "so101"  # Update robot type
 
-    # Keep observation.state and action as original joints, add action.ee as 7D EE pose
-    # observation.state and action features stay unchanged from source
-    new_info["features"]["action.ee"] = {
+    # observation.state stays as [6] joints (unchanged from source)
+    # action becomes [7] EE at next frame, observation.ee is [7] EE at current frame
+    ee_feature = {
         "dtype": "float32",
-        "names": ["ee.x", "ee.y", "ee.z", "ee.wx", "ee.wy", "ee.wz", "ee.gripper_pos"],
-        "shape": [7]
+        "names": ["x", "y", "z", "wx", "wy", "wz", "gripper"],
+        "shape": [7],
     }
+    new_info["features"]["action"] = ee_feature.copy()
+    new_info["features"]["observation.ee"] = ee_feature.copy()
 
     # Keep camera features exactly as source
     for camera_key in camera_keys:
@@ -619,9 +622,11 @@ def main():
     else:
         stats = {}
 
-    # Add stats for new action.ee field
-    actions_ee = np.stack(combined_data['action.ee'].values)
-    stats["action.ee"] = compute_stats_for_feature(actions_ee)
+    # Add stats for new fields
+    obs_ee_data = np.stack(combined_data['observation.ee'].values)
+    stats["observation.ee"] = compute_stats_for_feature(obs_ee_data)
+    action_data = np.stack(combined_data['action'].values)
+    stats["action"] = compute_stats_for_feature(action_data)
 
     stats_output_path = target_path / "meta" / "stats.json"
     with open(stats_output_path, "w") as f:

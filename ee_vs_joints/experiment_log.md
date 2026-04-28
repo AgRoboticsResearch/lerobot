@@ -23,18 +23,19 @@ The experiment also tests whether **joint observations** with **EE actions** (hy
   - `action`: 6D joints
   - `observation.images.wrist`: wrist camera
 
-- **Converted**: `/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_with_jointsobs`
+- **Converted (v2)**: `/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2`
   - Same 54 episodes, 29517 frames, 30 fps
-  - `observation.state`: 6D joints (unchanged)
-  - `action`: 6D joints (unchanged)
-  - `action.ee`: 7D EE pose (next-frame, computed via FK) — `[x, y, z, wx, wy, wz, gripper_pos]`
+  - `observation.state`: 6D joints (unchanged from source)
+  - `observation.ee`: 7D EE pose at current frame — `[x, y, z, wx, wy, wz, gripper]`
+  - `action`: 7D EE pose at next frame — `[x, y, z, wx, wy, wz, gripper]`
   - `observation.images.wrist`: copied directly from source
+  - No `action.ee` column
 
 ### Conversion command
 ```bash
 python relative_ee_dataset/convert_joint_to_ee_dataset.py \
   /mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged \
-  /mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_with_jointsobs
+  /mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2
 ```
 
 ## Three Training Modes
@@ -45,8 +46,8 @@ Standard `lerobot-train`. Observation and action are both in joint space.
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_with_jointsobs \
-  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_with_jointsobs \
+  --dataset.repo_id=red_strawberry_picking_260119_merged \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged \
   --policy.type=act \
   --output_dir=outputs/train/joint_obs_joint_action \
   --job_name=act_joint_obs_joint_action \
@@ -65,12 +66,12 @@ lerobot-train \
 
 ### Mode 2: EE Identity Obs + Relative EE Action
 
-`train_relative_ee.py` with `use_joint_obs=false`. Observation is a 10D identity (current pose = reference frame). Actions are 10D relative SE(3) transforms computed from `action.ee`.
+`train_relative_ee.py` with `use_joint_obs=false`. Observation is a 10D identity (current pose = reference frame). Actions are 10D relative SE(3) transforms computed from `observation.ee` (T_current) and `action` (T_future).
 
 ```bash
 python train_relative_ee.py \
-  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_with_jointsobs \
-  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_with_jointsobs \
+  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
   --output_dir=outputs/train/ee_obs_ee_action \
   --job_name=act_ee_obs_ee_action \
@@ -97,8 +98,8 @@ python train_relative_ee.py \
 
 ```bash
 python train_relative_ee.py \
-  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_with_jointsobs \
-  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_with_jointsobs \
+  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
   --output_dir=outputs/train/joint_obs_ee_action \
   --job_name=act_joint_obs_ee_action \
@@ -121,11 +122,11 @@ python train_relative_ee.py \
 
 ## Summary Table
 
-| Mode | Script | Observation | Action | `use_joint_obs` |
-|------|--------|-------------|--------|-----------------|
-| 1 | `lerobot-train` | 6D joints | 6D joints | n/a |
-| 2 | `train_relative_ee.py` | 10D identity | 10D relative EE | `false` |
-| 3 | `train_relative_ee.py` | 6D joints | 10D relative EE | `true` |
+| Mode | Script | Dataset | Observation | Action | `use_joint_obs` |
+|------|--------|---------|-------------|--------|-----------------|
+| 1 | `lerobot-train` | source | 6D joints | 6D joints | n/a |
+| 2 | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | `false` |
+| 3 | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | `true` |
 
 ## Common Parameters
 
@@ -151,9 +152,9 @@ All 30 actions in a chunk are relative to the **same** base pose (chunk start), 
 
 ## Files Modified
 
-- `relative_ee_dataset/convert_joint_to_ee_dataset.py` — conversion script (preserves source obs/action, adds `action.ee`)
-- `src/lerobot/datasets/relative_ee_dataset.py` — added `use_joint_obs` toggle, reads EE from `action.ee`
-- `train_relative_ee.py` — detects `action.ee` format, remaps delta_timestamps, passes `use_joint_obs`
+- `relative_ee_dataset/convert_joint_to_ee_dataset.py` — conversion script (outputs EE-only format: `observation.ee` + `action` as 7D EE)
+- `src/lerobot/datasets/relative_ee_dataset.py` — reads `observation.ee` for T_current, `action` for T_future, no `action.ee` logic
+- `train_relative_ee.py` — uses `action` directly via delta_timestamps, no format detection/remapping
 - `src/lerobot/policies/act/configuration_act.py` — added `use_joint_obs` config field
 
 ## Monitoring

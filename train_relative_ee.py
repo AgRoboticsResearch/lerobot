@@ -101,15 +101,7 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
     # Resolve delta timestamps from policy config
     delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
 
-    # Detect new dataset format (has action.ee field)
-    has_action_ee = 'action.ee' in ds_meta.info.get('features', {})
     use_joint_obs = getattr(cfg.policy, 'use_joint_obs', False)
-
-    if has_action_ee:
-        # Remap delta_timestamps from 'action' to 'action.ee' for EE action data
-        if 'action' in delta_timestamps:
-            delta_timestamps['action.ee'] = delta_timestamps.pop('action')
-        logging.info(f"  Detected action.ee field - using EE data from action.ee")
 
     # Create RelativeEEDataset with wrist-relative SE(3) transformation
     dataset = RelativeEEDataset(
