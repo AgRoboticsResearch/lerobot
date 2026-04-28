@@ -109,8 +109,8 @@ def get_original_trajectory_chunk(
     the relative actions.
 
     When using delta_timestamps, the base dataset's 'action' key already
-    contains the chunked future poses (shape: action_horizon x 7).
-    These are NOT actions but the future observation states.
+    contains the chunked future EE poses (shape: action_horizon x 7).
+    These are the next frames' observation.ee values.
 
     Args:
         base_dataset: Original LeRobotDataset (not wrapped)
@@ -132,40 +132,34 @@ def get_original_trajectory_chunk(
     # Get episode info
     current_episode_index = base_dataset.hf_dataset[idx]['episode_index']
 
-    # Current state from observation
-    current_state = current_item['observation.state'].cpu().numpy()
-    current_position = current_state[:3]
-    current_axis_angle = current_state[3:6]
-    current_gripper = current_state[6]
+    # Current EE pose from observation.ee column (new dataset format)
+    current_ee = np.array(base_dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+    current_position = current_ee[:3]
+    current_axis_angle = current_ee[3:6]
+    current_gripper = current_ee[6]
 
     # Convert current rotation to matrix
     current_rotmat = axis_angle_to_rotmat(current_axis_angle)
 
     # Get future poses from the 'action' key
-    # When using delta_timestamps, action contains future observation states
+    # When using delta_timestamps, action contains future EE poses
     actions = current_item['action']  # (action_horizon, 7) or (7,)
     if actions.ndim == 1:
         actions = actions.unsqueeze(0)
     actions = actions.cpu().numpy()
 
-    # DEBUG: Check if action[0] matches current observation (it should for delta=0)
-    # With delta_timestamps[0]=0, action[0] should be same as observation.state
-    action_0_matches_obs = np.allclose(actions[0], current_state, atol=1e-5)
-    if not action_0_matches_obs:
-        # In this dataset, action is the NEXT frame's observation, not current!
-        # Let's check if action[0] matches observation at idx+1
-        if idx + 1 < len(base_dataset):
-            next_item = base_dataset[idx + 1]
-            next_state = next_item['observation.state'].cpu().numpy()
-            action_0_matches_next = np.allclose(actions[0], next_state, atol=1e-5)
+    # DEBUG: Check if action[0] matches next frame's observation.ee
+    # In the new format, action = observation.ee at next frame
+    if idx + 1 < len(base_dataset):
+        next_ee = np.array(base_dataset.hf_dataset[idx + 1]['observation.ee'], dtype=np.float64)
+        action_0_matches_next = np.allclose(actions[0], next_ee, atol=1e-5)
+        if not action_0_matches_next:
             import sys
-            print(f"\n⚠️  Dataset structure: action[i] = observation at frame i+1")
-            print(f"  observation.state at idx:   {current_state[:3]}")
-            print(f"  action[0] at idx:            {actions[0][:3]}")
-            print(f"  observation.state at idx+1: {next_state[:3]}")
-            print(f"  action[0] == next_state: {action_0_matches_next}")
-            print(f"  Distance current->action[0]: {np.linalg.norm(actions[0][:3] - current_state[:3])*1000:.2f} mm")
-            print(f"  Distance current->next_obs:  {np.linalg.norm(next_state[:3] - current_state[:3])*1000:.2f} mm")
+            print(f"\n⚠️  action[0] does not match observation.ee at idx+1")
+            print(f"  observation.ee at idx:   {current_ee[:3]}")
+            print(f"  action[0] at idx:         {actions[0][:3]}")
+            print(f"  observation.ee at idx+1: {next_ee[:3]}")
+            print(f"  action[0] == next_ee: {action_0_matches_next}")
             sys.stdout.flush()
 
     # Check for episode boundary crossings in the action horizon

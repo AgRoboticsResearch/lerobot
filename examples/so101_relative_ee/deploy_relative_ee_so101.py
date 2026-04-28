@@ -21,18 +21,29 @@ end-effector actions (position + 6D rotation + gripper). It uses RobotProcessorP
 with custom processors to convert to joint positions for the SO101 robot.
 
 Usage:
+    # Mode 2 (EE identity obs + relative EE action):
     python deploy_relative_ee_so101.py \
-        --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
+        --pretrained_path outputs/train/ee_obs_ee_action_v2/checkpoints/.../pretrained_model \
         --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyUSB0
 
-The observation format for this policy is:
-    - observation.state: (obs_state_horizon, 10) - relative poses (identity at current timestep)
-    - action: (action_horizon, 10) - relative future poses
+    # Mode 3 (joint obs + relative EE action):
+    python deploy_relative_ee_so101.py \
+        --pretrained_path outputs/train/joint_obs_ee_action_v2/checkpoints/.../pretrained_model \
+        --urdf_path /path/to/so101.urdf \
+        --robot_port /dev/ttyUSB0 \
+        --use_joint_obs
+
+Observation format:
+    - Mode 2 (--use_joint_obs not set): observation.state is (1, 10) EE identity
+    - Mode 3 (--use_joint_obs): observation.state is (1, 6) joint positions
+
+Action format (both modes):
+    - action: (chunk_size, 10) relative EE poses
 
 Action chaining (UMI-style):
     - Each chunk is predicted from the CURRENT actual EE pose
-    - Within a chunk, actions are chained cumulatively
+    - Within a chunk, actions are relative to chunk base (NOT chained)
     - When chunk exhausted, predict NEW chunk from actual robot pose
 """
 
@@ -339,6 +350,11 @@ def main():
         help="Enable rerun visualization for actions and observations (joint poses)",
     )
     parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations instead of 10D EE identity (for models trained with use_joint_obs=True)",
+    )
+    parser.add_argument(
         "--chunk_base_ideal",
         action="store_true",
         help="Use last sent target EE pose as chunk base instead of actual sensor readings. "
@@ -571,23 +587,23 @@ def main():
             # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
-            # Create relative observation (UMI-style: identity at current)
-            # IMPORTANT: Always use CURRENT robot pose for observation, not chunk_base_pose
             current_ee_T = kinematics.forward_kinematics(current_joints)
-            obs_state, history_buffer = create_relative_observation(
-                current_ee_T=current_ee_T,
-                gripper_pos=current_gripper,
-                obs_state_horizon=policy.config.n_obs_steps,
-                history_buffer=history_buffer,
-            )
 
-            # Prepare batch for policy
-            # obs_state shape: (n_obs_steps, 10) -> squeeze to (10,) -> add batch dim: (1, 10)
-            # The model expects (batch, state_dim) not (batch, n_obs_steps, state_dim)
-            if obs_state.shape[0] == 1:
-                state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)  # (1, 10)
+            if args.use_joint_obs:
+                # Mode 3: 6D joint observations
+                state_tensor = torch.from_numpy(current_joints.astype(np.float32)).unsqueeze(0).to(device)  # (1, 6)
             else:
-                state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)  # (1, 10)
+                # Mode 2: 10D EE identity observations
+                obs_state, history_buffer = create_relative_observation(
+                    current_ee_T=current_ee_T,
+                    gripper_pos=current_gripper,
+                    obs_state_horizon=policy.config.n_obs_steps,
+                    history_buffer=history_buffer,
+                )
+                if obs_state.shape[0] == 1:
+                    state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)  # (1, 10)
+                else:
+                    state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)  # (1, 10)
 
             batch = {
                 "observation.state": state_tensor,

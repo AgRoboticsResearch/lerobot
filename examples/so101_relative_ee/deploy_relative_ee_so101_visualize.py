@@ -383,6 +383,11 @@ def main():
         default=None,
         help='Camera configuration in YAML format, e.g. \'{ wrist: {type: intelrealsense, serial_number_or_name: "031522070877", width: 640, height: 480, fps: 30} }\'',
     )
+    parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations instead of 10D EE identity (for models trained with use_joint_obs=True)",
+    )
 
     args = parser.parse_args()
 
@@ -443,7 +448,7 @@ def main():
         tuple[RobotAction, RobotObservation], RobotAction
     ](
         steps=[
-            Relative10DAccumulatedToAbsoluteEE(gripper_scale=100.0),
+            Relative10DAccumulatedToAbsoluteEE(),
             EEBoundsAndSafety(
                 end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
                 max_ee_step_m=args.max_ee_step_m,
@@ -512,18 +517,22 @@ def main():
 
     # Create relative observation (identity at current)
     history_buffer = None
-    obs_state, history_buffer = create_relative_observation(
-        current_ee_T=chunk_base_pose,
-        gripper_pos=current_gripper,
-        obs_state_horizon=policy.config.n_obs_steps,
-        history_buffer=history_buffer,
-    )
 
-    # Prepare batch for policy
-    if obs_state.shape[0] == 1:
-        state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)  # (1, 10)
+    if args.use_joint_obs:
+        # Mode 3: 6D joint observations
+        state_tensor = torch.from_numpy(current_joints.astype(np.float32)).unsqueeze(0).to(device)  # (1, 6)
     else:
-        state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)  # (1, 10)
+        # Mode 2: 10D EE identity observations
+        obs_state, history_buffer = create_relative_observation(
+            current_ee_T=chunk_base_pose,
+            gripper_pos=current_gripper,
+            obs_state_horizon=policy.config.n_obs_steps,
+            history_buffer=history_buffer,
+        )
+        if obs_state.shape[0] == 1:
+            state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)  # (1, 10)
+        else:
+            state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)  # (1, 10)
 
     batch = {
         "observation.state": state_tensor,

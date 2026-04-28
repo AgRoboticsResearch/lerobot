@@ -62,7 +62,6 @@ from lerobot.datasets.relative_ee_dataset import (
     RelativeEEDataset,
     pose_to_mat,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.utils import init_logging
 from lerobot.processor import (
@@ -261,9 +260,10 @@ def create_observation_batch_with_sim_state(
     Create observation batch for policy inference using simulation joint state.
 
     For RelativeEE with temporal observations:
-    - observation.state shape: (T, 10) where T=obs_state_horizon
+    - observation.state shape: (T, 10) where T=obs_state_horizon (Mode 2: EE identity)
+      or (T, 6) for joint observations (Mode 3)
       - State is computed from SIMULATION joints (closed-loop)
-    - observation.images.camera shape: (T, C, H, W)
+    - observation.images.* shape: (T, C, H, W)
       - Images come from dataset
 
     Args:
@@ -550,13 +550,9 @@ def compute_episode_axis_limits(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE position from parent LeRobotDataset
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()  # (7,) - absolute pose
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]  # position (3) + rotation axis-angle (3)
-        current_ee_pose = pose_to_mat(abs_pose_6d)
+        # Get ABSOLUTE EE position from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        current_ee_pose = pose_to_mat(ee_data[:6])
         all_ee_positions.append(current_ee_pose[:3, 3].copy())
 
     all_ee = np.array(all_ee_positions)
@@ -761,6 +757,11 @@ def main():
         action="store_true",
         help="Keep script running after processing to view visualization (press Ctrl+C to exit)",
     )
+    parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations (for models trained with use_joint_obs=True)",
+    )
 
     args = parser.parse_args()
 
@@ -795,59 +796,73 @@ def main():
 
     # Wrap with TemporalACTWrapper
     policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    disable_temporal_wrapper = getattr(policy.config, 'disable_temporal_wrapper', False)
     obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
 
-    original_model = policy.model
-    policy.model = TemporalACTWrapper(original_model, policy.config)
-    policy.model = policy.model.to(device)
-    logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
-
-    # Load wrapper parameters if temporal_wrapper.pt exists
-    wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
-    if not wrapper_path.exists():
-        wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
-        if not wrapper_path.exists():
-            wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
-    if wrapper_path.exists():
-        wrapper_state_dict = torch.load(wrapper_path, map_location=device)
-        model_state = policy.model.state_dict()
-        filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
-        if filtered_state:
-            policy.model.load_state_dict(filtered_state, strict=False)
-            policy.model = policy.model.to(device)
-            logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
-        else:
-            logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+    if disable_temporal_wrapper or obs_state_horizon == 1:
+        logger.info(f"TemporalACTWrapper DISABLED (obs_state_horizon={obs_state_horizon})")
     else:
-        logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
+        original_model = policy.model
+        policy.model = TemporalACTWrapper(original_model, policy.config)
+        policy.model = policy.model.to(device)
+        logger.info(f"Wrapped ACT model with TemporalACTWrapper (obs_state_horizon={obs_state_horizon})")
+
+        # Load wrapper parameters if temporal_wrapper.pt exists
+        wrapper_path = Path(args.pretrained_path).parent / "temporal_wrapper.pt"
+        if not wrapper_path.exists():
+            wrapper_path = Path(args.pretrained_path) / "temporal_wrapper.pt"
+            if not wrapper_path.exists():
+                wrapper_path = Path(args.pretrained_path).parent.parent / "temporal_wrapper.pt"
+        if wrapper_path.exists():
+            wrapper_state_dict = torch.load(wrapper_path, map_location=device)
+            model_state = policy.model.state_dict()
+            filtered_state = {k: v for k, v in wrapper_state_dict.items() if k in model_state}
+            if filtered_state:
+                policy.model.load_state_dict(filtered_state, strict=False)
+                policy.model = policy.model.to(device)
+                logger.info(f"Loaded TemporalACTWrapper parameters from {wrapper_path}")
+            else:
+                logger.warning(f"No matching parameters in temporal_wrapper.pt, using initialized params")
+        else:
+            logger.warning(f"No temporal_wrapper.pt found at {wrapper_path}, using initialized params")
 
     logger.info(f"Using obs_state_horizon={obs_state_horizon}")
 
-    # Load temporal processors
+    # Load processors
     logger.info("Loading processors from pretrained model...")
-    temp_preprocessor, _ = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-        postprocessor_overrides={},
-    )
+    if disable_temporal_wrapper or obs_state_horizon == 1:
+        # Standard ACT processors
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
+    else:
+        # Temporal processors
+        temp_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+            postprocessor_overrides={},
+        )
 
-    # Extract stats from loaded preprocessor
-    dataset_stats = None
-    for step in temp_preprocessor.steps:
-        if hasattr(step, 'stats') and step.stats is not None:
-            dataset_stats = step.stats
-            break
+        # Extract stats from loaded preprocessor
+        dataset_stats = None
+        for step in temp_preprocessor.steps:
+            if hasattr(step, 'stats') and step.stats is not None:
+                dataset_stats = step.stats
+                break
 
-    if dataset_stats is None:
-        raise ValueError("Could not extract normalization stats from pretrained model!")
+        if dataset_stats is None:
+            raise ValueError("Could not extract normalization stats from pretrained model!")
 
-    # Create temporal processors with the loaded stats
-    preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
-        config=policy.config,
-        dataset_stats=dataset_stats,
-        obs_state_horizon=obs_state_horizon,
-    )
+        # Create temporal processors with the loaded stats
+        preprocessor, postprocessor = make_act_pre_post_processors_with_temporal(
+            config=policy.config,
+            dataset_stats=dataset_stats,
+            obs_state_horizon=obs_state_horizon,
+        )
 
     chunk_size = policy.config.chunk_size
 
@@ -873,6 +888,7 @@ def main():
         obs_state_horizon=obs_state_horizon,
         delta_timestamps=delta_timestamps,
         compute_stats=False,
+        use_joint_obs=args.use_joint_obs,
     )
 
     logger.info(f"Dataset loaded successfully!")
@@ -995,11 +1011,9 @@ def main():
         chunk_base_pose = kinematics.forward_kinematics(sim_joints)
         sim_start_ee = chunk_base_pose[:3, 3].copy()
 
-        # Get dataset start frame EE position
-        abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-        abs_pose_6d = abs_state[:6]
-        dataset_start_ee_pose = pose_to_mat(abs_pose_6d)
+        # Get dataset start frame EE position from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+        dataset_start_ee_pose = pose_to_mat(ee_data[:6])
         dataset_start_ee = dataset_start_ee_pose[:3, 3].copy()
 
         # Compute alignment transform: dataset -> simulation
@@ -1032,11 +1046,9 @@ def main():
                 frame_idx += 1
                 continue
 
-            # Get ground truth EE position from dataset (for reference)
-            abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx)
-            abs_state = abs_sample['observation.state'].cpu().numpy()
-            abs_pose_6d = abs_state[:6]
-            dataset_ee_pose = pose_to_mat(abs_pose_6d)
+            # Get ground truth EE position from observation.ee column (for reference)
+            ee_data = np.array(dataset.hf_dataset[frame_idx]['observation.ee'], dtype=np.float64)
+            dataset_ee_pose = pose_to_mat(ee_data[:6])
             dataset_ee_position = dataset_ee_pose[:3, 3].copy()
 
             # Apply alignment offset to map dataset frame to simulation frame
@@ -1063,7 +1075,10 @@ def main():
             with torch.no_grad():
                 processed_batch = preprocessor(batch)
                 pred_actions = policy.predict_action_chunk(processed_batch)
-                pred_actions = postprocessor({"action": pred_actions})
+                if disable_temporal_wrapper or obs_state_horizon == 1:
+                    pred_actions = postprocessor(pred_actions)
+                else:
+                    pred_actions = postprocessor({"action": pred_actions})
 
             if isinstance(pred_actions, dict) and "action" in pred_actions:
                 pred_actions = pred_actions["action"]

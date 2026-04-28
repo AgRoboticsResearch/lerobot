@@ -48,7 +48,6 @@ from lerobot.datasets.relative_ee_dataset import (
     pose_to_mat,
     pose10d_to_mat,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.utils import init_logging
 
@@ -82,11 +81,9 @@ def compute_gt_trajectory_in_first_frame(
     for i in range(episode_idx):
         start_idx += dataset.meta.episodes[i]["length"]
 
-    # Get the first frame's EE pose (in baselink frame)
-    first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-    first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-    first_pose_6d = first_abs_state[:6]
-    first_ee_pose = pose_to_mat(first_pose_6d)
+    # Get the first frame's EE pose from observation.ee column
+    first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+    first_ee_pose = pose_to_mat(first_ee_data[:6])
 
     all_ee_positions = []
 
@@ -94,13 +91,9 @@ def compute_gt_trajectory_in_first_frame(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE pose from parent LeRobotDataset (in baselink frame)
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]
-        T_gt_in_baselink = pose_to_mat(abs_pose_6d)
+        # Get ABSOLUTE EE pose from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        T_gt_in_baselink = pose_to_mat(ee_data[:6])
 
         # Compute SE(3) transform in first GT frame
         T_gt_in_first_frame = np.linalg.inv(first_ee_pose) @ T_gt_in_baselink
@@ -143,11 +136,9 @@ def compute_full_episode_gt_trajectory(
     for i in range(episode_idx):
         start_idx += dataset.meta.episodes[i]["length"]
 
-    # Get the first frame's EE pose (in baselink frame)
-    first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-    first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-    first_pose_6d = first_abs_state[:6]
-    first_ee_pose = pose_to_mat(first_pose_6d)
+    # Get the first frame's EE pose from observation.ee column
+    first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+    first_ee_pose = pose_to_mat(first_ee_data[:6])
 
     all_ee_positions = []
 
@@ -155,13 +146,9 @@ def compute_full_episode_gt_trajectory(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get ABSOLUTE EE pose from parent LeRobotDataset (in baselink frame)
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]
-        T_gt_in_baselink = pose_to_mat(abs_pose_6d)
+        # Get ABSOLUTE EE pose from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        T_gt_in_baselink = pose_to_mat(ee_data[:6])
 
         # Step 1: T_in_first_frame = inv(T_first_gt) @ T_gt (relative SE(3) transform)
         T_gt_in_first_frame = np.linalg.inv(first_ee_pose) @ T_gt_in_baselink
@@ -213,13 +200,9 @@ def compute_raw_gt_trajectory_with_poses(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get absolute EE pose from parent LeRobotDataset
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-
-        # Convert absolute state to 4x4 matrix
-        abs_pose_6d = abs_state[:6]
-        current_ee_pose = pose_to_mat(abs_pose_6d)
+        # Get absolute EE pose from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        current_ee_pose = pose_to_mat(ee_data[:6])
         current_ee_position = current_ee_pose[:3, 3].copy()
 
         all_ee_positions.append(current_ee_position)
@@ -235,7 +218,7 @@ def compute_raw_action_trajectory(
     """
     Compute raw action trajectory from dataset (no frame transformation).
 
-    This extracts the absolute EE positions directly from the dataset's observation.state,
+    This extracts the absolute EE positions directly from the dataset's observation.ee,
     staying in the original world frame (no reset_pose_ee transformation, no action chaining).
 
     Args:
@@ -260,13 +243,9 @@ def compute_raw_action_trajectory(
     for i in range(ep_length):
         idx = start_idx + i
 
-        # Get absolute EE position from parent LeRobotDataset
-        abs_sample = LeRobotDataset.__getitem__(dataset, idx)
-        abs_state = abs_sample['observation.state'].cpu().numpy()
-
-        # Convert absolute state to 4x4 matrix and extract position
-        abs_pose_6d = abs_state[:6]
-        current_ee_pose = pose_to_mat(abs_pose_6d)
+        # Get absolute EE position from observation.ee column
+        ee_data = np.array(dataset.hf_dataset[idx]['observation.ee'], dtype=np.float64)
+        current_ee_pose = pose_to_mat(ee_data[:6])
         current_ee_position = current_ee_pose[:3, 3].copy()
 
         all_ee_positions.append(current_ee_position)
@@ -413,7 +392,7 @@ def plot_raw_action_trajectory(
     raw_action_trajectory: np.ndarray,
     output_path: Path,
     episode_idx: int,
-    title_suffix: str = "Raw Action Trajectory (No Frame Transform)\nAbsolute positions from observation.state in original world frame",
+    title_suffix: str = "Raw Action Trajectory (No Frame Transform)\nAbsolute positions from observation.ee in original world frame",
 ):
     """
     Create a 3D visualization showing raw action trajectory with RGB frame at origin.
@@ -672,7 +651,7 @@ def plot_raw_action_trajectory_2d(
 
     plt.suptitle(
         f'Episode {episode_idx} - Raw Action Trajectory (2D Projections)\n'
-        f'Absolute positions from observation.state in original world frame',
+        f'Absolute positions from observation.ee in original world frame',
         fontsize=12
     )
     plt.tight_layout()
@@ -896,10 +875,9 @@ def main():
             frames_dir = output_dir / "tmp_frames"
             frames_dir.mkdir(parents=True, exist_ok=True)
 
-            # Get the first frame's EE pose (for alignment)
-            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-            first_ee_pose = pose_to_mat(first_abs_state[:6])
+            # Get the first frame's EE pose from observation.ee column
+            first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+            first_ee_pose = pose_to_mat(first_ee_data[:6])
 
             # Create base frame transform (identity at origin)
             base_T = np.eye(4)
@@ -908,10 +886,9 @@ def main():
             for frame_idx in range(ep_length):
                 frame_idx_global = start_idx + frame_idx
 
-                # Get current EE position
-                abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx_global)
-                abs_state = abs_sample['observation.state'].cpu().numpy()
-                current_ee_pose = pose_to_mat(abs_state[:6])
+                # Get current EE position from observation.ee column
+                ee_data = np.array(dataset.hf_dataset[frame_idx_global]['observation.ee'], dtype=np.float64)
+                current_ee_pose = pose_to_mat(ee_data[:6])
 
                 # Use SE(3) transform-based reparenting
                 T_current_ee_in_first_frame = np.linalg.inv(first_ee_pose) @ current_ee_pose
@@ -976,14 +953,12 @@ def main():
 
             # Get current EE position for the specified frame
             frame_idx_global = start_idx + args.frame_idx
-            abs_sample = LeRobotDataset.__getitem__(dataset, frame_idx_global)
-            abs_state = abs_sample['observation.state'].cpu().numpy()
-            current_ee_pose = pose_to_mat(abs_state[:6])
+            ee_data = np.array(dataset.hf_dataset[frame_idx_global]['observation.ee'], dtype=np.float64)
+            current_ee_pose = pose_to_mat(ee_data[:6])
 
-            # Get the first frame's EE pose
-            first_abs_sample = LeRobotDataset.__getitem__(dataset, start_idx)
-            first_abs_state = first_abs_sample['observation.state'].cpu().numpy()
-            first_ee_pose = pose_to_mat(first_abs_state[:6])
+            # Get the first frame's EE pose from observation.ee column
+            first_ee_data = np.array(dataset.hf_dataset[start_idx]['observation.ee'], dtype=np.float64)
+            first_ee_pose = pose_to_mat(first_ee_data[:6])
 
             # Use SE(3) transform-based reparenting (same as GT trajectory computation)
             # Step 1: T_in_first_frame = inv(T_first_gt) @ T_current_ee

@@ -56,7 +56,6 @@ import placo
 import torch
 from placo_utils.visualization import robot_frame_viz, points_viz, robot_viz
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.relative_ee_dataset import RelativeEEDataset, pose_to_mat
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -240,13 +239,18 @@ def main():
     parser.add_argument(
         "--camera_name",
         type=str,
-        default="camera",
+        default="wrist",
         help="Camera observation name in dataset",
     )
     parser.add_argument(
         "--cameraview",
         action="store_true",
         help="Show camera feed in cv2 window (image fed into model)",
+    )
+    parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations (for models trained with use_joint_obs=True)",
     )
 
     args = parser.parse_args()
@@ -265,10 +269,13 @@ def main():
 
     # Get obs_state_horizon from policy config (or use default)
     policy_obs_state_horizon = getattr(policy.config, 'obs_state_horizon', 1)
+    disable_temporal_wrapper = getattr(policy.config, 'disable_temporal_wrapper', False)
     obs_state_horizon = args.obs_state_horizon if args.obs_state_horizon is not None else policy_obs_state_horizon
 
-    # Only wrap with TemporalACTWrapper if obs_state_horizon > 1
-    if obs_state_horizon > 1:
+    # Only wrap with TemporalACTWrapper if needed
+    if disable_temporal_wrapper or obs_state_horizon == 1:
+        logger.info(f"TemporalACTWrapper DISABLED (obs_state_horizon={obs_state_horizon})")
+    elif obs_state_horizon > 1:
         original_model = policy.model
         policy.model = TemporalACTWrapper(original_model, policy.config)
         policy.model = policy.model.to(device)
@@ -296,7 +303,7 @@ def main():
         logger.info(f"obs_state_horizon=1, TemporalACTWrapper not needed")
 
     # Load processors (use standard or temporal based on obs_state_horizon)
-    if obs_state_horizon > 1:
+    if not (disable_temporal_wrapper or obs_state_horizon == 1) and obs_state_horizon > 1:
         logger.info("Loading temporal processors from pretrained model...")
         temp_preprocessor, _ = make_pre_post_processors(
             policy_cfg=policy,
@@ -357,6 +364,7 @@ def main():
         obs_state_horizon=obs_state_horizon,
         delta_timestamps=delta_timestamps,
         compute_stats=False,
+        use_joint_obs=args.use_joint_obs,
     )
 
     logger.info(f"Dataset loaded: {len(dataset)} frames")
@@ -438,12 +446,8 @@ def main():
     # This matches the logic in visualize_predictions.py: target_ee = chunk_base_pose @ rel_T
 
     # Get first frame to compute the transformation
-    first_frame = LeRobotDataset.__getitem__(dataset, episode_start_idx)
-    first_action = first_frame['action'].numpy()
-    if first_action.ndim == 1:
-        first_ee_pose_6d = first_action[:6]
-    else:
-        first_ee_pose_6d = first_action[0, :6]
+    first_ee_data = np.array(dataset.hf_dataset[episode_start_idx]['observation.ee'], dtype=np.float64)
+    first_ee_pose_6d = first_ee_data[:6]
 
     # The first action in the dataset is at origin [0,0,0, rot]
     # We compute where this pose actually is in the robot frame via IK
@@ -475,15 +479,10 @@ def main():
     # Transform each GT pose: robot_T = dataset_to_robot_T @ dataset_T
     gt_positions = []
     for i in range(episode_start_idx, episode_end_idx):
-        parent_frame = LeRobotDataset.__getitem__(dataset, i)
-        parent_action = parent_frame['action'].numpy()
-        if parent_action.ndim == 1:
-            ee_pose_6d = parent_action[:6]
-        else:
-            ee_pose_6d = parent_action[0, :6]
+        ee_data = np.array(dataset.hf_dataset[i]['observation.ee'], dtype=np.float64)
 
-        # Convert dataset pose to 4x4 transform matrix
-        dataset_T = pose_to_mat(ee_pose_6d)
+        # Convert to 4x4 transform matrix
+        dataset_T = pose_to_mat(ee_data[:6])
 
         # Apply full transformation: robot_T = dataset_to_robot_T @ dataset_T
         robot_T = dataset_to_robot_T @ dataset_T
@@ -549,15 +548,10 @@ def main():
             # - observation.images.camera: (T, C, H, W) - temporal images
             # - action: (chunk_size, 10) - relative actions (NOT absolute EE poses!)
 
-            # To get absolute EE pose for IK and visualization, we need the parent dataset
-            parent_frame = LeRobotDataset.__getitem__(dataset, frame_idx)
-            parent_action = parent_frame['action'].numpy()
-            if parent_action.ndim == 1:
-                gt_ee_pose_6d = parent_action[:6]  # [x, y, z, rx, ry, rz]
-                gt_gripper = parent_action[6]
-            else:
-                gt_ee_pose_6d = parent_action[0, :6]
-                gt_gripper = parent_action[0, 6]
+            # Get absolute EE pose from observation.ee column
+            ee_data = np.array(dataset.hf_dataset[frame_idx]['observation.ee'], dtype=np.float64)
+            gt_ee_pose_6d = ee_data[:6]
+            gt_gripper = ee_data[6]
 
             # Get GT EE position
             gt_ee_pos = gt_ee_pose_6d[:3]
@@ -645,7 +639,7 @@ def main():
                 pred_actions = policy.predict_action_chunk(processed_batch)
 
                 # Call postprocessor differently based on processor type
-                if obs_state_horizon > 1:
+                if disable_temporal_wrapper or obs_state_horizon == 1:
                     # Temporal processors: wrap in dict
                     pred_actions = postprocessor({"action": pred_actions})
                 else:

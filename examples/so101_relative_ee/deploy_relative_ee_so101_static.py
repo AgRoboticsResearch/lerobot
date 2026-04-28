@@ -27,12 +27,12 @@ Usage:
         --robot_port /dev/ttyUSB0
 
 The observation format for this policy is:
-    - observation.state: (obs_state_horizon, 10) - relative poses (identity at current timestep)
-    - action: (action_horizon, 10) - relative future poses
+    - Mode 2 (--use_joint_obs not set): observation.state is (obs_state_horizon, 10) EE identity
+    - Mode 3 (--use_joint_obs): observation.state is (1, 6) joint positions
 
 Action chaining (UMI-style):
     - Each chunk is predicted from the CURRENT actual EE pose
-    - Within a chunk, actions are chained cumulatively
+    - Within a chunk, actions are relative to chunk base (NOT chained)
     - When chunk exhausted, predict NEW chunk from actual robot pose
 """
 
@@ -343,6 +343,11 @@ def main():
         help="Also send actions to the real robot (in addition to digital twin)",
     )
     parser.add_argument(
+        "--use_joint_obs",
+        action="store_true",
+        help="Use 6D joint observations instead of 10D EE identity (for models trained with use_joint_obs=True)",
+    )
+    parser.add_argument(
         "--cameras",
         type=str,
         default=None,
@@ -570,17 +575,24 @@ def main():
             # -------------------------------------------------------------------
             # Prepare observation for policy
             # -------------------------------------------------------------------
-            obs_state, history_buffer = create_relative_observation(
-                current_ee_T=chunk_base_pose,
-                gripper_pos=obs_dict["gripper.pos"] / 100.0,
-                obs_state_horizon=policy.config.n_obs_steps,
-                history_buffer=history_buffer,
-            )
+            current_gripper = obs_dict["gripper.pos"] / 100.0
 
-            if obs_state.shape[0] == 1:
-                state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
+            if args.use_joint_obs:
+                # Mode 3: 6D joint observations
+                current_joints_for_obs = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
+                state_tensor = torch.from_numpy(current_joints_for_obs.astype(np.float32)).unsqueeze(0).to(device)
             else:
-                state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)
+                # Mode 2: 10D EE identity observations
+                obs_state, history_buffer = create_relative_observation(
+                    current_ee_T=chunk_base_pose,
+                    gripper_pos=current_gripper,
+                    obs_state_horizon=policy.config.n_obs_steps,
+                    history_buffer=history_buffer,
+                )
+                if obs_state.shape[0] == 1:
+                    state_tensor = torch.from_numpy(obs_state).squeeze(0).unsqueeze(0).to(device)
+                else:
+                    state_tensor = torch.from_numpy(obs_state[0]).unsqueeze(0).to(device)
 
             batch = {"observation.state": state_tensor}
 

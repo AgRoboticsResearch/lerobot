@@ -132,6 +132,7 @@ python examples/so101_relative_ee/deploy_relative_ee_so101.py \
 | `--num_steps` | `0` | Number of steps to run (0 = infinite) |
 | `--obs_state_horizon` | `2` | Must match training value |
 | `--n_action_steps` | `10` | Actions executed per prediction |
+| `--use_joint_obs` | `false` | Use 6D joint observations (for Mode 3 models) |
 | `--warm_start` | `false` | Move to reset pose before starting |
 | `--ee_bounds_min` | `-0.5 -0.5 0.0` | EE position minimum (m) |
 | `--ee_bounds_max` | `0.5 0.5 0.4` | EE position maximum (m) |
@@ -142,38 +143,53 @@ python examples/so101_relative_ee/deploy_relative_ee_so101.py \
 Your training should use:
 
 ```bash
+# Mode 2 (EE identity obs + relative EE action):
 python train_relative_ee.py \
-    --dataset.repo_id=your_dataset \
+    --dataset.repo_id=your_dataset_ee_v2 \
     --policy.type=act \
-    --policy.obs_state_horizon=2 \
-    --policy.chunk_size=100 \
-    # ... other params
+    --policy.obs_state_horizon=1 \
+    --policy.chunk_size=30 \
+    --policy.n_action_steps=30 \
+    --policy.use_joint_obs=false
+
+# Mode 3 (joint obs + relative EE action):
+python train_relative_ee.py \
+    --dataset.repo_id=your_dataset_ee_v2 \
+    --policy.type=act \
+    --policy.obs_state_horizon=1 \
+    --policy.chunk_size=30 \
+    --policy.n_action_steps=30 \
+    --policy.use_joint_obs=true
 ```
 
 The deployment script will:
 1. Load the checkpoint
-2. Use `obs_state_horizon=2` for observation
-3. Execute 10 actions per prediction (`n_action_steps`)
+2. Use `obs_state_horizon` from policy config
+3. Execute `n_action_steps` actions per prediction
 4. Re-predict when actions exhausted
 
 ## Implementation Details
 
 ### Observation Format
 
-The policy expects observations in **relative 10D format**:
-- Current timestep is always **identity**: `[0,0,0, 1,0,0,0,1,0, gripper]`
-- Historical timesteps stored in buffer
+The policy expects different observations depending on the training mode:
+
+**Mode 2** (default, `--use_joint_obs` not set):
+- Observation is 10D EE identity: `[0,0,0, 1,0,0,0,1,0, gripper]`
+- Current timestep is always identity relative to itself
+
+**Mode 3** (`--use_joint_obs` flag):
+- Observation is 6D joint positions: `[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]`
+- Read directly from robot sensors
 
 ```python
-def create_relative_observation(current_ee_T, gripper_pos, obs_state_horizon=2):
-    # Current obs is always identity relative to itself
-    current_obs = np.array([
-        0.0, 0.0, 0.0,              # position (identity)
-        1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  # rot6d (identity rotation)
-        gripper_pos,
-    ])
-    # Stack with history
-    return stack_with_history(current_obs, history_buffer)
+# Mode 2: create relative observation (identity at current)
+obs_state, history_buffer = create_relative_observation(
+    current_ee_T, gripper_pos, obs_state_horizon, history_buffer
+)
+
+# Mode 3: use raw joint readings
+state_tensor = torch.from_numpy(current_joints.astype(np.float32)).unsqueeze(0)
 ```
 
 ### Action Application Logic
