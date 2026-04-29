@@ -65,11 +65,11 @@ MOTOR_NAMES = [
 
 # Default RESET pose (starting position) in degrees
 RESET_POSE_DEG = np.array([
-    -5.54,    # shoulder_pan
-    -114.59,  # shoulder_lift
+    0,    # shoulder_pan
+    -90,  # shoulder_lift
     80.44,    # elbow_flex
     15.84,     # wrist_flex
-    -5.19,    # wrist_roll
+    0,    # wrist_roll
     35.13,    # gripper
 ])
 
@@ -204,6 +204,12 @@ def main():
         action="store_true",
         help="Move to reset pose before starting the control loop",
     )
+    parser.add_argument(
+        "--n_action_steps",
+        type=int,
+        default=None,
+        help="Number of action steps to execute per predicted chunk (default: use value from config)",
+    )
 
     args = parser.parse_args()
 
@@ -235,6 +241,9 @@ def main():
         pretrained_path=model_path,
         preprocessor_overrides={"device_processor": {"device": str(device)}},
     )
+
+    if args.n_action_steps is not None:
+        policy.config.n_action_steps = args.n_action_steps
 
     logger.info("Policy loaded successfully")
     logger.info(f"  Policy type: {policy.config.type}")
@@ -338,12 +347,14 @@ def main():
             # -------------------------------------------------------------------
             # ACT policy's select_action manages an internal action queue and
             # returns a single action for each call
+            t0 = time.perf_counter()
             with torch.inference_mode(), autocast_context:
                 processed_batch = preprocessor(batch)
                 # select_action returns a single action: (batch, action_dim)
                 action_output = policy.select_action(processed_batch)
                 # postprocessor converts PolicyAction to dict format
                 action_output = postprocessor(action_output)
+            infer_ms = (time.perf_counter() - t0) * 1e3
 
             # Extract the action from postprocessor output
             # Output is dict with "action" key containing (batch, action_dim) tensor
@@ -360,7 +371,8 @@ def main():
             robot.send_action(action_dict)
 
             step_count += 1
-            print("Step:", step_count, "Action:", action_dict)
+            # print("Step:", step_count, "Action:", action_dict)
+            print(f"Step: {step_count}  Inference: {infer_ms:.1f}ms")
 
             # -------------------------------------------------------------------
             # Maintain timing

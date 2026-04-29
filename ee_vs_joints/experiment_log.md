@@ -176,4 +176,44 @@ tmux attach -t train    # attach to tmux session
 
 ## Results
 
-*(To be filled after training completes)*
+We tested mode 1 using the following command, however, the performance is not good. the robot is moving to the correct direction but not picking the strawberry well, i would assume the reason might be
+1. not having a thrid view camera.  
+2. the data was record in another time.  
+3. the robot calibration changes.  
+4. not using async inference. 
+5. the act chunk size is too small for joint control (was 100 now 30)
+``` bash
+python examples/so101/deploy_act_so101.py \
+  --robot_id=oscar_so101_follower \
+  --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model \
+  --robot_port /dev/ttyACM0 \
+  --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }" \
+  --warm_start
+```
+
+## Commands
+```bash
+# ACT Solo script 
+python examples/so101/deploy_act_so101.py \
+  --robot_id=oscar_so101_follower \
+  --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model \
+  --robot_port /dev/ttyACM0 \
+  --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }" \
+  --warm_start \
+  --n_action_steps 10
+
+
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=oscar_so101_follower \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: /dev/video4,
+   width: 640, height: 480, fps: 25, fourcc: MJPG} }" \
+    --display_data=true \
+    --dataset.repo_id=tmp/eval_throwaway \
+    --dataset.num_episodes=10 \
+    --dataset.single_task="Pick the red strawberry" \
+    --dataset.push_to_hub=false \
+    --policy.path=./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model
+```
