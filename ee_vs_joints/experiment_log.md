@@ -260,9 +260,61 @@ python examples/so101/deploy_act_so101.py \
   --warm_start
 ```
 
+## Things that need to be verified
+1. what is the EE the robot is learning? Camera_link?
+2. What is the EE the robot is output and following? Camera_link?
+3. Should we unify the representation of input state EE and action EE for EE policy? (now the input use 6d EE and action is using 10d EE)
+
+## Potential Bugs
+  observation.ee is NEVER used by the ACT model
+
+  1. Dataset (relative_ee_dataset.py:539-540):
+  - use_joint_obs=True → observation.state = 6D joints (unchanged)
+  - observation.ee stays in the item dict (inherited from
+  LeRobotDataset.__getitem__), but only used to compute relative actions
+   (T_current), not as model input
+
+  2. Normalizer (normalize_processor.py:254-257):
+  - Iterates over configured features, but checks key in new_observation
+   before normalizing
+  - If observation.ee is absent from the batch → silently skipped
+  - If observation.ee IS present → it gets normalized but never consumed
+   downstream
+
+  3. ACT model (modeling_act.py:378-510): The model only reads these
+  batch keys:
+  - OBS_STATE = observation.state — via robot_state_feature property
+  (matches key name exactly "observation.state")
+  - OBS_IMAGES = camera images — via image_features property (matches
+  type VISUAL)
+  - OBS_ENV_STATE — via env_state_feature property (matches type ENV)
+
+  The robot_state_feature property (policies.py:127-131) specifically
+  requires ft_name == OBS_STATE. So observation.ee (type STATE) doesn't
+  match — it falls through all three property lookups and is never read.
+
+  Conclusion
+
+  Mode 3 (use_joint_obs=True) is functionally identical to Mode 1 (joint
+   obs + joint action) for what the model sees. The observation.ee
+  column exists in the training data but the ACT architecture has no
+  code path to consume a second STATE feature. The model only ever sees:
+  - 6D joint positions (observation.state)
+  - Camera image(s) (observation.images.*)
+  - 10D relative EE actions (for loss computation during training)
+
+  The EE pose information only contributes indirectly — it's used by the
+   dataset to compute the relative action labels, but the model never
+  observes it as an input. This means Mode 3's intended benefit (joints
+  for proprioception + EE pose for spatial awareness) is not actually
+  realized. The model is learning joint→relative-EE mapping without ever
+   seeing the EE pose.
+
+
+
 ## Commands
 ```bash
-# ACT Solo script 
+# ACT (Joint space control) solo inference script (recommended) 
 python examples/so101/deploy_act_so101.py \
   --robot_id=oscar_so101_follower \
   --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model \
@@ -271,8 +323,7 @@ python examples/so101/deploy_act_so101.py \
   --warm_start \
   --n_action_steps 10
 
-
-
+# ACT record-inference script
 lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
@@ -285,4 +336,12 @@ lerobot-record \
     --dataset.single_task="Pick the red strawberry" \
     --dataset.push_to_hub=false \
     --policy.path=./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model
+
+# Relative Policy
+# Mode2
+python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/ee_obs_ee_action_v2/checkpoints/200000/pretrained_model   --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf   --robot_port /dev/ttyACM0   --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal
+
+# Mode3
+python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk30/checkpoints/200000/pretrained_model   --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf   --robot_port /dev/ttyACM0   --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal --use_joint_obs
+
 ```
