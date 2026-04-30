@@ -98,6 +98,7 @@ class ACTConfig(PreTrainedConfig):
     obs_down_sample_steps: int = 1  # For RelativeEEDataset: skip frames (1=consecutive, 3=UMI default)
     disable_temporal_wrapper: bool = True  # If True, don't use TemporalACTWrapper even with obs_state_horizon > 1
     use_joint_obs: bool = False  # If True, use 6D joints as observation input (like lerobot-train)
+    ee_target_frame: str = ""  # EE frame used during training (e.g., "camera_link"). Empty = not set (legacy).
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {

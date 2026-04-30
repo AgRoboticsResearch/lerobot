@@ -191,8 +191,8 @@ python train_relative_ee.py \
 | 1b | `lerobot-train` | source | 6D joints | 6D joints | 100 | n/a |
 | 2a | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | 30 | `false` |
 | 2b | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | 100 | `false` |
-| 3a | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | 30 | `true` |
-| 3b | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | 100 | `true` |
+| 3a | `train_relative_ee.py` | EE v2 | 15D joints+EE(rot6d) | 10D relative EE | 30 | `true` |
+| 3b | `train_relative_ee.py` | EE v2 | 15D joints+EE(rot6d) | 10D relative EE | 100 | `true` |
 
 ## Checkpoints
 
@@ -202,10 +202,10 @@ All checkpoints stored at: `~/code/lerobot/outputs/train/ee_vs_joints/`
 |------|-----------|-----------|--------|
 | 1a | `joint_obs_joint_action_v2_chunk30/` | 30 | Completed 500K |
 | 1b | `joint_obs_joint_action_v2_chunk100/` | 100 | Completed 500K |
-| 2a | `ee_obs_ee_action_v2_chunk30/` | 30 | Completed 500K |
-| 2b | `ee_obs_ee_action_v2_chunk100/` | 100 | Pending |
-| 3a | `joint_obs_ee_action_v2_chunk30/` | 30 | Completed 500K |
-| 3b | `joint_obs_ee_action_v2_chunk100/` | 100 | Pending |
+| 2a | `ee_obs_ee_action_v2_chunk30/` | 30 | Retraining (v3: ee_target_frame) |
+| 2b | `ee_obs_ee_action_v2_chunk100/` | 100 | Retraining (v3: ee_target_frame) |
+| 3a | `joint_obs_ee_action_v2_chunk30/` | 30 | Retraining (v3: 15D obs + ee_target_frame) |
+| 3b | `joint_obs_ee_action_v2_chunk100/` | 100 | Retraining (v3: 15D obs + ee_target_frame) |
 
 ## Common Parameters
 
@@ -260,55 +260,51 @@ python examples/so101/deploy_act_so101.py \
   --warm_start
 ```
 
-## Things that need to be verified
-1. what is the EE the robot is learning? Camera_link?
-2. What is the EE the robot is output and following? Camera_link?
-3. Should we unify the representation of input state EE and action EE for EE policy? (now the input use 6d EE and action is using 10d EE)
+## Verified Findings (2026-04-28)
 
-## Potential Bugs
-  observation.ee is NEVER used by the ACT model
+### Bug Confirmed: `observation.ee` is NEVER consumed by the ACT model
 
-  1. Dataset (relative_ee_dataset.py:539-540):
-  - use_joint_obs=True → observation.state = 6D joints (unchanged)
-  - observation.ee stays in the item dict (inherited from
-  LeRobotDataset.__getitem__), but only used to compute relative actions
-   (T_current), not as model input
+The data flow analysis confirms `observation.ee` is only an internal computation artifact:
 
-  2. Normalizer (normalize_processor.py:254-257):
-  - Iterates over configured features, but checks key in new_observation
-   before normalizing
-  - If observation.ee is absent from the batch → silently skipped
-  - If observation.ee IS present → it gets normalized but never consumed
-   downstream
+1. **Dataset** (`relative_ee_dataset.py`): `__getitem__()` reads `hf_dataset[idx]['observation.ee']` internally to compute `T_current` for relative action labels, but **never places** it in the returned item dict
+2. **Normalizer** (`normalize_processor.py`): Since `observation.ee` is not in the batch dict, the `key in new_observation` check skips it
+3. **ACT model** (`modeling_act.py`): `forward()` only reads `observation.state`, `observation.images.*`, and `observation.environment_state`
+4. **Feature lookup** (`configs/policies.py:129`): `robot_state_feature` requires exact key match `"observation.state"` — `"observation.ee"` fails this check even though both are `FeatureType.STATE`
 
-  3. ACT model (modeling_act.py:378-510): The model only reads these
-  batch keys:
-  - OBS_STATE = observation.state — via robot_state_feature property
-  (matches key name exactly "observation.state")
-  - OBS_IMAGES = camera images — via image_features property (matches
-  type VISUAL)
-  - OBS_ENV_STATE — via env_state_feature property (matches type ENV)
+**Impact on Mode 3**: ~~The model sees only 6D joints + images (same as Mode 1)~~ **FIXED**: `observation.state` is now 15D (6D joints + 9D EE pose: xyz + rot6d) when `use_joint_obs=True`. The model receives proprioceptive joints AND spatial EE awareness as a single concatenated vector. No changes to ACT architecture needed — the input MLP adapts its dimension automatically.
 
-  The robot_state_feature property (policies.py:127-131) specifically
-  requires ft_name == OBS_STATE. So observation.ee (type STATE) doesn't
-  match — it falls through all three property lookups and is never read.
+### Q1: What EE frame does the robot learn during training?
 
-  Conclusion
+**Resolved default: `camera_link` via `so101_sroi.urdf`**
 
-  Mode 3 (use_joint_obs=True) is functionally identical to Mode 1 (joint
-   obs + joint action) for what the model sees. The observation.ee
-  column exists in the training data but the ACT architecture has no
-  code path to consume a second STATE feature. The model only ever sees:
-  - 6D joint positions (observation.state)
-  - Camera image(s) (observation.images.*)
-  - 10D relative EE actions (for loss computation during training)
+- `convert_joint_to_ee_dataset.py`: `EE_LINK_NAME = "camera_link"`
+- Default URDF: `urdf/Simulation/SO101/so101_sroi.urdf`
+- Dataset metadata records `ee_target_frame="camera_link"` and the URDF path used for conversion.
 
-  The EE pose information only contributes indirectly — it's used by the
-   dataset to compute the relative action labels, but the model never
-  observes it as an input. This means Mode 3's intended benefit (joints
-  for proprioception + EE pose for spatial awareness) is not actually
-  realized. The model is learning joint→relative-EE mapping without ever
-   seeing the EE pose.
+### Q2: What EE frame does the robot output/follow at deployment?
+
+**Resolved default: `camera_link` via `so101_sroi.urdf`**
+
+- `deploy_relative_ee_so101.py`: default `--urdf_path=urdf/Simulation/SO101/so101_sroi.urdf`
+- Default `--deploy_frame=camera_link`
+- `RobotKinematics(target_frame_name=args.deploy_frame)` so FK, IK, chunk bases, and visualization use the same deploy frame.
+
+**Default frame consistency:**
+
+| Aspect | Training | Deployment |
+|--------|----------|------------|
+| Target frame | `camera_link` | `camera_link` |
+| URDF | `so101_sroi.urdf` | `so101_sroi.urdf` |
+
+Legacy checkpoints that have `ee_target_frame="gripper_frame_link"` still use the deploy-time frame adapter.
+
+### Q3: Should we unify the representation?
+
+**Yes, implemented for new SO101 relative-EE experiments:**
+
+1. **Frame consistency**: Training and deployment default to `camera_link` with `so101_sroi.urdf`.
+
+2. **State-action representation**: Mode 2 uses 10D identity obs + 10D relative EE action. Mode 3 uses 15D joints+EE obs + 10D relative EE action.
 
 
 
@@ -339,9 +335,9 @@ lerobot-record \
 
 # Relative Policy
 # Mode2
-python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/ee_obs_ee_action_v2/checkpoints/200000/pretrained_model   --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf   --robot_port /dev/ttyACM0   --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal
+python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/ee_obs_ee_action_v2/checkpoints/200000/pretrained_model   --robot_port /dev/ttyACM0   --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal
 
 # Mode3
-python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk30/checkpoints/200000/pretrained_model   --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf   --robot_port /dev/ttyACM0   --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal --use_joint_obs
+python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk30/checkpoints/200000/pretrained_model   --robot_port /dev/ttyACM0   --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal --use_joint_obs
 
 ```

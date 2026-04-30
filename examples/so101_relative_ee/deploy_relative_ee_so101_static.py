@@ -23,12 +23,11 @@ with custom processors to convert to joint positions for the SO101 robot.
 Usage:
     python deploy_relative_ee_so101.py \
         --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
-        --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyUSB0
 
 The observation format for this policy is:
     - Mode 2 (--use_joint_obs not set): observation.state is (obs_state_horizon, 10) EE identity
-    - Mode 3 (--use_joint_obs): observation.state is (1, 6) joint positions
+    - Mode 3 (--use_joint_obs): observation.state is (1, 15) joints + EE pose (rot6d)
 
 Action chaining (UMI-style):
     - Each chunk is predicted from the CURRENT actual EE pose
@@ -64,6 +63,7 @@ from lerobot.robots.so101_follower.relative_ee_processor import (
     Relative10DAccumulatedToAbsoluteEE,
     pose10d_to_mat,
 )
+from lerobot.datasets.relative_ee_dataset import mat_to_pose10d
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
@@ -92,6 +92,8 @@ RESET_POSE_DEG = np.array([
 ])
 
 FPS = 30  # Control loop frequency (Hz) - must match training fps
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
+DEFAULT_DEPLOY_FRAME = "camera_link"
 
 
 class SimulatedSO101Robot:
@@ -260,8 +262,8 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        required=True,
-        help="Path to SO101 URDF file for IK",
+        default=DEFAULT_URDF_PATH,
+        help=f"Path to SO101 URDF file for IK (default: {DEFAULT_URDF_PATH})",
     )
     parser.add_argument(
         "--robot_port",
@@ -417,7 +419,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="camera_link",
+        target_frame_name=DEFAULT_DEPLOY_FRAME,
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -578,9 +580,12 @@ def main():
             current_gripper = obs_dict["gripper.pos"] / 100.0
 
             if args.use_joint_obs:
-                # Mode 3: 6D joint observations
+                # Mode 3: 15D joint+EE observations (6D joints + 9D EE pose in rot6d format)
                 current_joints_for_obs = np.array([obs_dict[f"{name}.pos"] for name in MOTOR_NAMES])
-                state_tensor = torch.from_numpy(current_joints_for_obs.astype(np.float32)).unsqueeze(0).to(device)
+                current_ee_T_obs = kinematics.forward_kinematics(current_joints_for_obs)
+                ee_9d = mat_to_pose10d(current_ee_T_obs)  # [pos3, rot6d_6]
+                joint_ee_state = np.concatenate([current_joints_for_obs, ee_9d]).astype(np.float32)
+                state_tensor = torch.from_numpy(joint_ee_state).unsqueeze(0).to(device)
             else:
                 # Mode 2: 10D EE identity observations
                 obs_state, history_buffer = create_relative_observation(
@@ -727,7 +732,7 @@ def main():
                 current_joints[i] = float(joints_action[f"{name}.pos"])
 
             # Display EE frame on digital twin
-            robot_frame_viz(digital_twin.robot, "camera_link")
+            robot_frame_viz(digital_twin.robot, DEFAULT_DEPLOY_FRAME)
 
             # Update counters
             actions_processed_in_chunk += 1

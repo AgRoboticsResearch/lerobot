@@ -26,7 +26,6 @@ deploy_relative_ee_so101.py, but without robot control - just visualization.
 Usage:
     python visualize_predictions.py \
         --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
-        --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyACM0 \
         --cameras "{ camera: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"
 
@@ -82,6 +81,8 @@ MOTOR_NAMES = [
 ]
 
 FPS = 30  # Control loop frequency (Hz) - must match training fps
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
+DEFAULT_DEPLOY_FRAME = "camera_link"
 
 
 class SimulatedSO101Robot:
@@ -323,8 +324,8 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        required=True,
-        help="Path to SO101 URDF file for IK",
+        default=DEFAULT_URDF_PATH,
+        help=f"Path to SO101 URDF file for IK (default: {DEFAULT_URDF_PATH})",
     )
     parser.add_argument(
         "--robot_port",
@@ -481,7 +482,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="camera_link",
+        target_frame_name=DEFAULT_DEPLOY_FRAME,
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")

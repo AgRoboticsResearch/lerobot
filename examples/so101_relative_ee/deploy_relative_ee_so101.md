@@ -117,7 +117,6 @@ This approach:
 ```bash
 python examples/so101_relative_ee/deploy_relative_ee_so101.py \
     --pretrained_path outputs/train/my_model \
-    --urdf_path /path/to/so101.urdf \
     --robot_port /dev/ttyUSB0
 ```
 
@@ -126,7 +125,8 @@ python examples/so101_relative_ee/deploy_relative_ee_so101.py \
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--pretrained_path` | required | Path to model checkpoint or training output |
-| `--urdf_path` | required | Path to SO101 URDF file for IK |
+| `--urdf_path` | `urdf/Simulation/SO101/so101_sroi.urdf` | Path to SO101 URDF file for IK |
+| `--deploy_frame` | `camera_link` | EE frame used for FK, IK, chunk bases, and visualization |
 | `--robot_port` | `/dev/ttyUSB0` | Serial port for robot connection |
 | `--fps` | `10` | Control loop frequency (Hz) |
 | `--num_steps` | `0` | Number of steps to run (0 = infinite) |

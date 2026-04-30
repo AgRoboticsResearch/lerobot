@@ -121,8 +121,15 @@ def make_relative_ee_dataset(cfg: TrainPipelineConfig, obs_state_horizon: int = 
     logging.info(f"  obs_state_horizon: {obs_state_horizon}")
     logging.info(f"  obs_down_sample_steps: {obs_down_sample_steps}")
     logging.info(f"  use_joint_obs: {use_joint_obs}")
+
+    # Propagate EE target frame from dataset metadata to policy config
+    # This is saved with the checkpoint and used at deployment for frame mismatch handling
+    if hasattr(dataset, 'ee_target_frame') and dataset.ee_target_frame:
+        cfg.policy.ee_target_frame = dataset.ee_target_frame
+        logging.info(f"  ee_target_frame: {dataset.ee_target_frame} (from dataset metadata)")
+
     if use_joint_obs:
-        logging.info(f"  Observation mode: JOINT (6D joints as input)")
+        logging.info(f"  Observation mode: JOINT+EE (15D: 6D joints + 9D EE pose in rot6d format)")
     else:
         logging.info(f"  Observation mode: EE identity (10D)")
     if obs_down_sample_steps == 1:

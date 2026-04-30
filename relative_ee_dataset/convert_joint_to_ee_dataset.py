@@ -35,10 +35,10 @@ from lerobot.model.kinematics import RobotKinematics
 
 
 # ---------------- DEFAULT CONFIGURATION ----------------
-DEFAULT_URDF_PATH = "/home/zfei/code/lerobot_ik/SO101/so101_new_calib.urdf"
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
 
 JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
-EE_LINK_NAME = "gripper_frame_link"
+EE_LINK_NAME = "camera_link"
 
 # Gripper limits from URDF (in degrees)
 GRIPPER_LOWER_DEG = -10.0
@@ -606,6 +606,10 @@ def main():
 
     # Update splits
     new_info["splits"] = {"train": f"0:{len(episodes_df)}"}
+
+    # Record EE frame info for deployment frame handling
+    new_info["ee_target_frame"] = EE_LINK_NAME
+    new_info["ee_urdf_path"] = str(urdf_path)
 
     info_output_path = target_path / "meta" / "info.json"
     with open(info_output_path, "w") as f:

@@ -269,7 +269,20 @@ class RelativeEEDataset(LeRobotDataset):
         if hasattr(self, 'meta') and hasattr(self.meta, 'info'):
             features = self.meta.info.setdefault('features', {})
 
-            if not self.use_joint_obs:
+            if self.use_joint_obs:
+                # Observation: 15D = 6D joints + 9D EE pose (pos3 + rot6d, matching action rotation format)
+                features['observation.state'] = {
+                    'dtype': 'float32',
+                    'shape': [15],
+                    'names': [
+                        'shoulder_pan', 'shoulder_lift', 'elbow_flex',
+                        'wrist_flex', 'wrist_roll', 'gripper',
+                        'ee_x', 'ee_y', 'ee_z',
+                        'ee_rot6d.0', 'ee_rot6d.1', 'ee_rot6d.2',
+                        'ee_rot6d.3', 'ee_rot6d.4', 'ee_rot6d.5',
+                    ],
+                }
+            else:
                 # Observation: 10D identity (current pose = reference frame)
                 features['observation.state'] = {
                     'dtype': 'float32',
@@ -298,6 +311,9 @@ class RelativeEEDataset(LeRobotDataset):
             self.meta.info['gripper_lower_deg'] = self.gripper_lower_deg
             self.meta.info['gripper_upper_deg'] = self.gripper_upper_deg
 
+        # Expose EE target frame from dataset metadata for propagation to policy config
+        self.ee_target_frame = self.meta.info.get('ee_target_frame', '')
+
         # Update normalization stats for the new shapes
         # Following UMI's approach: compute stats from actual transformed data
         if hasattr(self, 'meta') and hasattr(self.meta, 'stats'):
@@ -314,8 +330,8 @@ class RelativeEEDataset(LeRobotDataset):
                     print(f"  Processing {num_stat_samples}/{num_frames} training frames...")
                 stats = self._compute_normalization_stats(num_stat_samples)
 
-                # Update observation state stats (skip if use_joint_obs - keep source joint stats)
-                if not self.use_joint_obs and 'observation.state' in stats:
+                # Update observation state stats
+                if 'observation.state' in stats:
                     if 'observation.state' in self.meta.stats:
                         self.meta.stats['observation.state'] = stats['observation.state']
 
@@ -414,9 +430,16 @@ class RelativeEEDataset(LeRobotDataset):
 
             actions = torch.stack(actions_for_idx, dim=0)
 
-            # Observation: identity (current timestep = reference frame)
-            identity_obs = np.array([0, 0, 0, 1, 0, 0, 0, 1, 0, current_ee[6].item()], dtype=np.float32)
-            obs_list.append(identity_obs)
+            # Observation based on mode
+            if self.use_joint_obs:
+                # 15D: 6D joints + 9D EE pose (pos3 + rot6d, matching action representation)
+                joints = np.array(self.hf_dataset[idx]['observation.state'], dtype=np.float32)
+                T_ee = pose_to_mat(current_pose_6d)
+                ee_9d = mat_to_pose10d(T_ee)
+                obs_list.append(np.concatenate([joints, ee_9d]))
+            else:
+                identity_obs = np.array([0, 0, 0, 1, 0, 0, 0, 1, 0, current_ee[6].item()], dtype=np.float32)
+                obs_list.append(identity_obs)
 
             # Compute relative actions
             relative_actions_list = []
@@ -440,17 +463,18 @@ class RelativeEEDataset(LeRobotDataset):
         all_is_pad = np.concatenate(is_pad_list, axis=0)
         valid_actions = all_actions[~all_is_pad]
 
-        def compute_stats(all_data):
+        def compute_stats(all_data, override_rot6d=True):
             mean = all_data.mean(axis=0)
             std = all_data.std(axis=0)
             min_val = all_data.min(axis=0)
             max_val = all_data.max(axis=0)
 
-            # Override rotation 6D stats for identity normalization
-            mean[3:9] = 0.0
-            std[3:9] = 1.0
-            min_val[3:9] = -1.0
-            max_val[3:9] = 1.0
+            # Override rotation 6D stats for identity/rot6d normalization (10D obs/action)
+            if override_rot6d and all_data.shape[-1] == 10:
+                mean[3:9] = 0.0
+                std[3:9] = 1.0
+                min_val[3:9] = -1.0
+                max_val[3:9] = 1.0
 
             return {
                 'mean': torch.tensor(mean, dtype=torch.float32),
@@ -460,10 +484,9 @@ class RelativeEEDataset(LeRobotDataset):
             }
 
         stats = {
-            'observation.state': compute_stats(all_obs) if not self.use_joint_obs else None,
+            'observation.state': compute_stats(all_obs, override_rot6d=not self.use_joint_obs),
             'action': compute_stats(valid_actions),
         }
-        stats = {k: v for k, v in stats.items() if v is not None}
 
         return stats
 
@@ -480,7 +503,7 @@ class RelativeEEDataset(LeRobotDataset):
         Returns:
             Dictionary containing:
             - observation.state:
-              - use_joint_obs=True: 6D joints (unchanged from dataset)
+              - use_joint_obs=True: 15D (6D joints + 9D EE pose in rot6d format)
               - use_joint_obs=False: 10D identity (current = reference frame)
             - observation.images.*: Image history of shape (obs_state_horizon, C, H, W)
             - action: Relative actions of shape (action_horizon, 10)
@@ -537,7 +560,20 @@ class RelativeEEDataset(LeRobotDataset):
 
         # Set observation based on mode
         if self.use_joint_obs:
-            item['observation.state'] = item['observation.state']  # 6D joints, unchanged
+            # 15D: 6D joints + 9D EE pose (pos3 + rot6d, matching action rotation representation)
+            joints = item['observation.state']  # (T, 6) or (6,)
+            # Convert EE from axis-angle to rot6d (same representation as actions)
+            ee_pose_6d = current_pose_6d  # [x, y, z, wx, wy, wz] (numpy, from line 515)
+            T_ee = pose_to_mat(ee_pose_6d)  # 4x4 matrix
+            ee_9d = mat_to_pose10d(T_ee)  # [x, y, z, rot6d_0..5] (numpy, 9D)
+            ee_9d_tensor = torch.tensor(ee_9d, dtype=torch.float32)
+            if joints.ndim == 1:
+                combined = torch.cat([joints, ee_9d_tensor])
+            else:
+                # Temporal: (T, 6) + (9,) -> (T, 15), EE pose is the same for all timesteps
+                ee_expanded = ee_9d_tensor.unsqueeze(0).expand(joints.shape[0], -1)
+                combined = torch.cat([joints, ee_expanded], dim=-1)
+            item['observation.state'] = combined
         else:
             identity_obs = np.array([0, 0, 0, 1, 0, 0, 0, 1, 0, current_ee[6].item()], dtype=np.float32)
             item['observation.state'] = torch.tensor(identity_obs, dtype=torch.float32)

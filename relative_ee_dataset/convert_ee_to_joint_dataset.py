@@ -55,8 +55,8 @@ def main():
     )
     parser.add_argument(
         "--urdf",
-        default="urdf/Simulation/SO101/so101_new_calib.urdf",
-        help="Path to robot URDF file",
+        default="urdf/Simulation/SO101/so101_sroi.urdf",
+        help="Path to robot URDF file (default: urdf/Simulation/SO101/so101_sroi.urdf)",
     )
     parser.add_argument(
         "--reset-pose",
@@ -92,8 +92,8 @@ def main():
     )
     parser.add_argument(
         "--target-frame",
-        default="gripper_frame_link",
-        help="Name of end-effector frame in URDF (default: gripper_frame_link)",
+        default="camera_link",
+        help="Name of end-effector frame in URDF (default: camera_link)",
     )
     parser.add_argument(
         "--video-backend",

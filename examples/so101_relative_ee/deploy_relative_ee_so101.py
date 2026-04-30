@@ -24,19 +24,17 @@ Usage:
     # Mode 2 (EE identity obs + relative EE action):
     python deploy_relative_ee_so101.py \
         --pretrained_path outputs/train/ee_obs_ee_action_v2/checkpoints/.../pretrained_model \
-        --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyUSB0
 
     # Mode 3 (joint obs + relative EE action):
     python deploy_relative_ee_so101.py \
         --pretrained_path outputs/train/joint_obs_ee_action_v2/checkpoints/.../pretrained_model \
-        --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyUSB0 \
         --use_joint_obs
 
 Observation format:
     - Mode 2 (--use_joint_obs not set): observation.state is (1, 10) EE identity
-    - Mode 3 (--use_joint_obs): observation.state is (1, 6) joint positions
+    - Mode 3 (--use_joint_obs): observation.state is (1, 15) joints + EE pose (rot6d)
 
 Action format (both modes):
     - action: (chunk_size, 10) relative EE poses
@@ -71,6 +69,7 @@ from lerobot.processor.converters import (
     transition_to_robot_action,
 )
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+from lerobot.datasets.relative_ee_dataset import mat_to_pose10d
 from lerobot.robots.so101_follower.relative_ee_processor import (
     Relative10DAccumulatedToAbsoluteEE,
     pose10d_to_mat,
@@ -103,6 +102,27 @@ RESET_POSE_DEG = np.array([
     -0.66,    # wrist_roll
     55.28,    # gripper
 ])
+
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
+DEFAULT_DEPLOY_FRAME = "camera_link"
+
+
+def adapt_relative_action(
+    rel_action_10d: np.ndarray,
+    T_deploy_to_train: np.ndarray,
+    T_train_to_deploy: np.ndarray,
+) -> np.ndarray:
+    """Adapt a 10D relative SE(3) action from training frame to deploy frame.
+
+    Uses similarity transform: T_rel_adapted = T_deploy_to_train @ T_rel @ T_train_to_deploy
+    This is equivalent to: convert base to training frame, apply prediction, convert result back.
+
+    Gripper value (dim 9) is passed through unchanged.
+    """
+    T_rel = pose10d_to_mat(rel_action_10d[:9])
+    T_rel_adapted = T_deploy_to_train @ T_rel @ T_train_to_deploy
+    adapted_9d = mat_to_pose10d(T_rel_adapted)
+    return np.concatenate([adapted_9d, [rel_action_10d[9]]])
 
 FPS = 30  # Control loop frequency (Hz) - must match training fps
 
@@ -251,8 +271,8 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        required=True,
-        help="Path to SO101 URDF file for IK",
+        default=DEFAULT_URDF_PATH,
+        help=f"Path to SO101 URDF file for IK (default: {DEFAULT_URDF_PATH})",
     )
     parser.add_argument(
         "--robot_port",
@@ -360,6 +380,14 @@ def main():
         help="Use last sent target EE pose as chunk base instead of actual sensor readings. "
              "First chunk still uses actual. Prevents tracking error accumulation.",
     )
+    parser.add_argument(
+        "--deploy_frame",
+        type=str,
+        default=DEFAULT_DEPLOY_FRAME,
+        help="Target EE frame for deployment (e.g., 'camera_link'). "
+             "If different from model's training frame (stored in config), "
+             "a static transform is computed from the URDF to adapt actions.",
+    )
 
     args = parser.parse_args()
 
@@ -426,12 +454,41 @@ def main():
     if not urdf_path.exists():
         raise FileNotFoundError(f"URDF not found at {urdf_path}")
 
+    deploy_frame = args.deploy_frame
+
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="camera_link",
+        target_frame_name=deploy_frame,
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
+    logger.info(f"Deploy frame: {deploy_frame}")
+
+    # ========================================================================
+    # Frame Mismatch Handling
+    # ========================================================================
+    # If the model was trained in a different EE frame than the deployment frame,
+    # compute the static transform between them and adapt relative actions.
+    training_frame = getattr(policy.config, 'ee_target_frame', '')
+
+    frame_adapter = None
+    if training_frame and training_frame != deploy_frame:
+        logger.warning(f"Frame mismatch detected: training={training_frame}, deploy={deploy_frame}")
+        logger.warning("Computing static transform between frames from URDF...")
+
+        # Initialize robot state so placo can compute frame transforms
+        kinematics.forward_kinematics(np.zeros(len(MOTOR_NAMES)))
+
+        T_train_to_deploy = kinematics.robot.get_T_a_b(training_frame, deploy_frame)
+        T_deploy_to_train = np.linalg.inv(T_train_to_deploy)
+
+        logger.info(f"  T_train_to_deploy:\n{T_train_to_deploy}")
+        logger.info(f"  All relative actions will be adapted from {training_frame} to {deploy_frame}")
+        frame_adapter = (T_deploy_to_train, T_train_to_deploy)
+    elif training_frame:
+        logger.info(f"Training frame ({training_frame}) matches deploy frame ({deploy_frame}). No transform needed.")
+    else:
+        logger.warning("No ee_target_frame in model config (legacy checkpoint). Assuming frames match.")
 
     # ========================================================================
     # Build RobotProcessorPipeline for converting EE actions to joints
@@ -544,7 +601,7 @@ def main():
     # Update sim_robot to match actual robot pose
     if sim_robot is not None:
         sim_robot.set_joints(current_joints)
-        robot_frame_viz(sim_robot.robot, "camera_link")
+        robot_frame_viz(sim_robot.robot, deploy_frame)
 
     # Get initial EE pose via FK
     current_ee_T = kinematics.forward_kinematics(current_joints)
@@ -590,8 +647,10 @@ def main():
             current_ee_T = kinematics.forward_kinematics(current_joints)
 
             if args.use_joint_obs:
-                # Mode 3: 6D joint observations
-                state_tensor = torch.from_numpy(current_joints.astype(np.float32)).unsqueeze(0).to(device)  # (1, 6)
+                # Mode 3: 15D joint+EE observations (6D joints + 9D EE pose in rot6d format)
+                ee_9d = mat_to_pose10d(current_ee_T)  # [pos3, rot6d_6] from 4x4 matrix
+                joint_ee_state = np.concatenate([current_joints, ee_9d]).astype(np.float32)  # (15,)
+                state_tensor = torch.from_numpy(joint_ee_state).unsqueeze(0).to(device)  # (1, 15)
             else:
                 # Mode 2: 10D EE identity observations
                 obs_state, history_buffer = create_relative_observation(
@@ -662,6 +721,12 @@ def main():
 
                 # Fill action queue with all actions from chunk
                 action_queue = [pred_actions[i].copy() for i in range(pred_actions.shape[0])]
+
+                # Adapt relative actions if training/deploy frames differ
+                if frame_adapter is not None:
+                    T_d2t, T_t2d = frame_adapter
+                    action_queue = [adapt_relative_action(a, T_d2t, T_t2d) for a in action_queue]
+
                 chunk_actions_for_viz = action_queue.copy()
 
                 logger.info(f"Predicted {len(action_queue)} actions")
@@ -672,7 +737,7 @@ def main():
                 if args.placo_vis and sim_robot is not None:
                     # First, update sim_robot to current robot pose so visualization starts from correct position
                     sim_robot.set_joints(current_joints)
-                    robot_frame_viz(sim_robot.robot, "camera_link")
+                    robot_frame_viz(sim_robot.robot, deploy_frame)
 
                     pred_positions = []
                     ik_fk_positions = []
@@ -705,7 +770,7 @@ def main():
                         points_viz("ik_fk_trajectory", np.array(ik_fk_positions), color=0xffff00, radius=0.003)
 
                     # Show robot frame
-                    robot_frame_viz(sim_robot.robot, "camera_link")
+                    robot_frame_viz(sim_robot.robot, deploy_frame)
 
                     logger.info(f"Visualized {len(pred_positions)} trajectory points")
 
@@ -801,7 +866,7 @@ def main():
                 _, actual_joints = read_robot_state(robot, MOTOR_NAMES)
                 sim_robot.set_joints(actual_joints)
                 # Show robot frame at current position
-                robot_frame_viz(sim_robot.robot, "camera_link")
+                robot_frame_viz(sim_robot.robot, deploy_frame)
                 # Show target EE pose point (RED - where robot is commanded to go)
                 target_pos = target_ee_pose[:3, 3]
                 points_viz("target_ee", np.array([target_pos]), color=0xff0000)

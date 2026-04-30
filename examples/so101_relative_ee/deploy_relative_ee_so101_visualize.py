@@ -27,7 +27,6 @@ This script:
 Usage:
     python deploy_relative_ee_so101_visualize.py \
         --pretrained_path outputs/train/my_model/checkpoints/001000/pretrained_model \
-        --urdf_path /path/to/so101.urdf \
         --robot_port /dev/ttyUSB0 \
         --num_actions 50
 """
@@ -58,6 +57,7 @@ from lerobot.robots.so101_follower.relative_ee_processor import (
     Relative10DAccumulatedToAbsoluteEE,
     pose10d_to_mat,
 )
+from lerobot.datasets.relative_ee_dataset import mat_to_pose10d
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
@@ -86,6 +86,8 @@ RESET_POSE_DEG = np.array([
 ])
 
 FPS = 10  # Control loop frequency
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
+DEFAULT_DEPLOY_FRAME = "camera_link"
 
 
 def parse_cameras_config(cameras_str: str | None) -> dict[str, Any]:
@@ -311,8 +313,8 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        required=True,
-        help="Path to SO101 URDF file for IK",
+        default=DEFAULT_URDF_PATH,
+        help=f"Path to SO101 URDF file for IK (default: {DEFAULT_URDF_PATH})",
     )
     parser.add_argument(
         "--robot_port",
@@ -433,7 +435,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="camera_link",
+        target_frame_name=DEFAULT_DEPLOY_FRAME,
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
@@ -519,8 +521,10 @@ def main():
     history_buffer = None
 
     if args.use_joint_obs:
-        # Mode 3: 6D joint observations
-        state_tensor = torch.from_numpy(current_joints.astype(np.float32)).unsqueeze(0).to(device)  # (1, 6)
+        # Mode 3: 15D joint+EE observations (6D joints + 9D EE pose in rot6d format)
+        ee_9d = mat_to_pose10d(chunk_base_pose)  # [pos3, rot6d_6]
+        joint_ee_state = np.concatenate([current_joints, ee_9d]).astype(np.float32)
+        state_tensor = torch.from_numpy(joint_ee_state).unsqueeze(0).to(device)  # (1, 15)
     else:
         # Mode 2: 10D EE identity observations
         obs_state, history_buffer = create_relative_observation(

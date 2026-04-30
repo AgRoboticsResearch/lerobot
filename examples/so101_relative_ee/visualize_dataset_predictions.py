@@ -24,8 +24,7 @@ Usage:
     python visualize_dataset_predictions.py \
         --dataset_root /mnt/ldata/sroi_lerobot/red_strawberry_picking_260119_merged_ee \
         --episode_index 0 \
-        --pretrained_path ./outputs/train/red_strawberry_picking_260119_merged_obs1_ds_1/checkpoints/100000/pretrained_model \
-        --urdf_path ./urdf/Simulation/SO101/so101_sroi.urdf
+        --pretrained_path ./outputs/train/red_strawberry_picking_260119_merged_obs1_ds_1/checkpoints/100000/pretrained_model
 
 === Visualization Colors ===
 
@@ -78,6 +77,8 @@ MOTOR_NAMES = [
 ]
 
 FPS = 30  # Visualization frequency (Hz)
+DEFAULT_URDF_PATH = "urdf/Simulation/SO101/so101_sroi.urdf"
+DEFAULT_DEPLOY_FRAME = "camera_link"
 
 
 class SimulatedSO101Robot:
@@ -209,8 +210,8 @@ def main():
     parser.add_argument(
         "--urdf_path",
         type=str,
-        required=True,
-        help="Path to SO101 URDF file for IK",
+        default=DEFAULT_URDF_PATH,
+        help=f"Path to SO101 URDF file for IK (default: {DEFAULT_URDF_PATH})",
     )
     parser.add_argument(
         "--fps",
@@ -411,7 +412,7 @@ def main():
 
     kinematics = RobotKinematics(
         urdf_path=str(urdf_path),
-        target_frame_name="camera_link",
+        target_frame_name=DEFAULT_DEPLOY_FRAME,
         joint_names=MOTOR_NAMES,
     )
     logger.info(f"URDF loaded: {urdf_path}")
