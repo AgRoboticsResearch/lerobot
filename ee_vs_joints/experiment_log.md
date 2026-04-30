@@ -44,13 +44,14 @@ python relative_ee_dataset/convert_joint_to_ee_dataset.py \
 
 Standard `lerobot-train`. Observation and action are both in joint space.
 
+**Mode 1a (chunk30)** — Completed:
 ```bash
 lerobot-train \
   --dataset.repo_id=red_strawberry_picking_260119_merged \
   --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged \
   --policy.type=act \
-  --output_dir=outputs/train/joint_obs_joint_action \
-  --job_name=act_joint_obs_joint_action \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/joint_obs_joint_action_v2_chunk30 \
+  --job_name=act_joint_obs_joint_action_chunk30 \
   --policy.device=cuda \
   --wandb.enable=true \
   --policy.repo_id=zfff/act_policy \
@@ -60,21 +61,40 @@ lerobot-train \
   --policy.n_action_steps=30
 ```
 
+**Mode 1b (chunk100)** — Completed:
+```bash
+lerobot-train \
+  --dataset.repo_id=red_strawberry_picking_260119_merged \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged \
+  --policy.type=act \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/joint_obs_joint_action_v2_chunk100 \
+  --job_name=act_joint_obs_joint_action_chunk100 \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
+  --save_freq=50000 \
+  --steps=500000 \
+  --policy.chunk_size=100 \
+  --policy.n_action_steps=100
+```
+
 - **Observation**: 6D joints
 - **Action**: 6D joints
-- **Status**: Completed 500K steps, loss ~0.04
+- **Status**: chunk30 completed, chunk100 completed
 
 ### Mode 2: EE Identity Obs + Relative EE Action
 
 `train_relative_ee.py` with `use_joint_obs=false`. Observation is a 10D identity (current pose = reference frame). Actions are 10D relative SE(3) transforms computed from `observation.ee` (T_current) and `action` (T_future).
 
+**Mode 2a (chunk30)** — Completed:
 ```bash
 python train_relative_ee.py \
   --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
   --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
-  --output_dir=outputs/train/ee_obs_ee_action_v2 \
-  --job_name=act_ee_obs_ee_action_v2 \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/ee_obs_ee_action_v2_chunk30 \
+  --job_name=act_ee_obs_ee_action_chunk30 \
   --policy.device=cuda \
   --wandb.enable=true \
   --policy.push_to_hub=false \
@@ -88,21 +108,43 @@ python train_relative_ee.py \
   --policy.use_joint_obs=false
 ```
 
-- **Observation**: 10D identity `[0,0,0, 1,0,0,0,1,0, gripper]` (current = reference frame)
-- **Action**: 10D relative EE `[delta.xyz(3), rot6d(6), gripper(1)]` — `T_rel = T_current⁻¹ @ T_future`
-- **Status**: Training started (v2, clean format)
-
-### Mode 3: Joint Obs + Relative EE Action (hybrid)
-
-`train_relative_ee.py` with `use_joint_obs=true`. Observation is 6D joints (like baseline). Actions are 10D relative EE (like mode 2).
-
+**Mode 2b (chunk100)** — Pending:
 ```bash
 python train_relative_ee.py \
   --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
   --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
   --policy.type=act \
-  --output_dir=outputs/train/joint_obs_ee_action_v2 \
-  --job_name=act_joint_obs_ee_action_v2 \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/ee_obs_ee_action_v2_chunk100 \
+  --job_name=act_ee_obs_ee_action_chunk100 \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.push_to_hub=false \
+  --save_freq=50000 \
+  --steps=500000 \
+  --policy.chunk_size=100 \
+  --policy.n_action_steps=100 \
+  --num_stat_samples=0 \
+  --policy.obs_down_sample_steps=1 \
+  --policy.obs_state_horizon=1 \
+  --policy.use_joint_obs=false
+```
+
+- **Observation**: 10D identity `[0,0,0, 1,0,0,0,1,0, gripper]` (current = reference frame)
+- **Action**: 10D relative EE `[delta.xyz(3), rot6d(6), gripper(1)]` — `T_rel = T_current⁻¹ @ T_future`
+- **Status**: chunk30 completed, chunk100 pending
+
+### Mode 3: Joint Obs + Relative EE Action (hybrid)
+
+`train_relative_ee.py` with `use_joint_obs=true`. Observation is 6D joints (like baseline). Actions are 10D relative EE (like mode 2).
+
+**Mode 3a (chunk30)** — Completed:
+```bash
+python train_relative_ee.py \
+  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
+  --policy.type=act \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk30 \
+  --job_name=act_joint_obs_ee_action_chunk30 \
   --policy.device=cuda \
   --wandb.enable=true \
   --policy.push_to_hub=false \
@@ -116,33 +158,60 @@ python train_relative_ee.py \
   --policy.use_joint_obs=true
 ```
 
+**Mode 3b (chunk100)** — Pending:
+```bash
+python train_relative_ee.py \
+  --dataset.repo_id=red_strawberry_picking_260119_merged_ee_v2 \
+  --dataset.root=/mnt/data0/data/sroi/sroi_lerobot/red_strawberry_picking_260119_merged_ee_v2 \
+  --policy.type=act \
+  --output_dir=~/code/lerobot/outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk100 \
+  --job_name=act_joint_obs_ee_action_chunk100 \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.push_to_hub=false \
+  --save_freq=50000 \
+  --steps=500000 \
+  --policy.chunk_size=100 \
+  --policy.n_action_steps=100 \
+  --num_stat_samples=0 \
+  --policy.obs_down_sample_steps=1 \
+  --policy.obs_state_horizon=1 \
+  --policy.use_joint_obs=true
+```
+
 - **Observation**: 6D joints
 - **Action**: 10D relative EE
-- **Status**: Training started (v2, clean format)
+- **Status**: chunk30 completed, chunk100 pending
 
 ## Summary Table
 
-| Mode | Script | Dataset | Observation | Action | `use_joint_obs` |
-|------|--------|---------|-------------|--------|-----------------|
-| 1 | `lerobot-train` | source | 6D joints | 6D joints | n/a |
-| 2 | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | `false` |
-| 3 | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | `true` |
+| Mode | Script | Dataset | Observation | Action | Chunk Size | `use_joint_obs` |
+|------|--------|---------|-------------|--------|-----------|-----------------|
+| 1a | `lerobot-train` | source | 6D joints | 6D joints | 30 | n/a |
+| 1b | `lerobot-train` | source | 6D joints | 6D joints | 100 | n/a |
+| 2a | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | 30 | `false` |
+| 2b | `train_relative_ee.py` | EE v2 | 10D identity | 10D relative EE | 100 | `false` |
+| 3a | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | 30 | `true` |
+| 3b | `train_relative_ee.py` | EE v2 | 6D joints + obs.ee | 10D relative EE | 100 | `true` |
 
 ## Checkpoints
 
-| Mode | Output directory | Checkpoint interval |
-|------|-----------------|---------------------|
-| 1 | `outputs/train/joint_obs_joint_action_v2/checkpoints/` | Every 50K steps |
-| 2 | `outputs/train/ee_obs_ee_action_v2/checkpoints/` | Every 50K steps |
-| 3 | `outputs/train/joint_obs_ee_action_v2/checkpoints/` | Every 50K steps |
+All checkpoints stored at: `~/code/lerobot/outputs/train/ee_vs_joints/`
 
-Working directory: `/mnt/data0/code/lerobot` (not `/home/zfei/code/lerobot/outputs/train/ee_vs_joint/`)
+| Mode | Directory | Chunk Size | Status |
+|------|-----------|-----------|--------|
+| 1a | `joint_obs_joint_action_v2_chunk30/` | 30 | Completed 500K |
+| 1b | `joint_obs_joint_action_v2_chunk100/` | 100 | Completed 500K |
+| 2a | `ee_obs_ee_action_v2_chunk30/` | 30 | Completed 500K |
+| 2b | `ee_obs_ee_action_v2_chunk100/` | 100 | Pending |
+| 3a | `joint_obs_ee_action_v2_chunk30/` | 30 | Completed 500K |
+| 3b | `joint_obs_ee_action_v2_chunk100/` | 100 | Pending |
 
 ## Common Parameters
 
 - Policy: ACT
-- chunk_size: 30
-- n_action_steps: 30
+- chunk_size: 30 or 100
+- n_action_steps: same as chunk_size
 - steps: 500,000
 - save_freq: 50,000
 - device: cuda
