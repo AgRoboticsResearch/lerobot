@@ -56,6 +56,34 @@ class SmolVLAConfig(PreTrainedConfig):
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 
+    # Relative actions support (UMI-style relative trajectory).
+    # Each action in the chunk is an offset from the current state at prediction time.
+    use_relative_actions: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    action_feature_names: list[str] | None = None  # populated at runtime from dataset metadata
+
+    # Relative state (UMI-style relative proprioception): converts multi-timestep
+    # observation.state to offsets from the current timestep, providing velocity info.
+    # Requires state_obs_steps >= 2. The flattened multi-timestep state is padded to
+    # max_state_dim, so ensure state_obs_steps * state_dim <= max_state_dim.
+    use_relative_state: bool = False
+    state_obs_steps: int = 1
+    relative_exclude_state_joints: list[str] = field(default_factory=list)
+    # Populated at runtime from dataset metadata by make_policy.
+    state_feature_names: list[str] | None = None
+
+    # Derive observation.state from the action column (UMI-style).
+    # When True, action_delta_indices loads one extra leading timestep [-1, 0, ..., chunk_size-1],
+    # DeriveStateFromActionStep extracts [action[t-1], action[t]] as a 2-step state,
+    # and strips the extra timestep from the action chunk.
+    # Implies use_relative_state=True and state_obs_steps=2.
+    derive_state_from_action: bool = False
+
+    # Latency compensation: skip this many steps from the start of each predicted
+    # action chunk during inference. E.g. at 10Hz with ~200ms total latency,
+    # latency_skip_steps=2 compensates for the delay.
+    latency_skip_steps: int = 0
+
     # Tokenizer
     tokenizer_max_length: int = 48
 
@@ -109,6 +137,10 @@ class SmolVLAConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
+        if self.derive_state_from_action:
+            self.use_relative_state = True
+            self.state_obs_steps = 2
+
         """Input validation (not exhaustive)."""
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
@@ -118,6 +150,13 @@ class SmolVLAConfig(PreTrainedConfig):
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
+            )
+
+        if self.use_relative_state and self.state_obs_steps < 2:
+            raise ValueError(
+                "use_relative_state requires state_obs_steps >= 2 "
+                f"(got {self.state_obs_steps}). Set state_obs_steps=2 for "
+                "UMI-style relative proprioception."
             )
 
     def validate_features(self) -> None:
@@ -151,7 +190,15 @@ class SmolVLAConfig(PreTrainedConfig):
         return [0]
 
     @property
+    def state_delta_indices(self) -> list[int] | None:
+        if self.state_obs_steps >= 2:
+            return list(range(-(self.state_obs_steps - 1), 1))
+        return None
+
+    @property
     def action_delta_indices(self) -> list:
+        if self.derive_state_from_action:
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

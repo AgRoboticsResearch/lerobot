@@ -19,12 +19,16 @@ from typing import Any
 import torch
 
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
+    DeriveStateFromActionStep,
     DeviceProcessorStep,
     NewLineTaskProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    RelativeActionsProcessorStep,
+    RelativeStateProcessorStep,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
@@ -66,6 +70,25 @@ def make_smolvla_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    derive_state_step = DeriveStateFromActionStep(
+        enabled=getattr(config, "derive_state_from_action", False),
+    )
+
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+
+    relative_state_step = RelativeStateProcessorStep(
+        enabled=getattr(config, "use_relative_state", False),
+        exclude_joints=getattr(config, "relative_exclude_state_joints", []),
+        state_names=getattr(config, "state_feature_names", None),
+    )
+
+    # Order: DeriveStateFromAction extracts state from the extended action chunk,
+    # then relative_action uses current state[t] for subtraction,
+    # then relative_state converts the multi-timestep state to offsets.
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
@@ -77,6 +100,9 @@ def make_smolvla_pre_post_processors(
             max_length=config.tokenizer_max_length,
         ),
         DeviceProcessorStep(device=config.device),
+        derive_state_step,
+        relative_step,
+        relative_state_step,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -87,6 +113,7 @@ def make_smolvla_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
     return (

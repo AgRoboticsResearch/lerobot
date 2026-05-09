@@ -39,6 +39,7 @@ from lerobot.processor import (
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import (
     ACTION,
+    OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
@@ -484,7 +485,27 @@ def make_policy(
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
         action_names = ds_meta.features.get(ACTION, {}).get("names")
         if action_names is not None:
+            # Normalize {"axes": [...]} / {"names": [...]} dict format to plain list
+            if isinstance(action_names, dict):
+                for key in ("axes", "names"):
+                    if key in action_names:
+                        action_names = action_names[key]
+                        break
+                else:
+                    action_names = list(action_names.keys())
             cfg.action_feature_names = list(action_names)
+        # Store state feature names for relative_exclude_state_joints support
+        if hasattr(cfg, "state_feature_names") and cfg.state_feature_names is None:
+            state_names = ds_meta.features.get(OBS_STATE, {}).get("names")
+            if state_names is not None:
+                if isinstance(state_names, dict):
+                    for key in ("axes", "names"):
+                        if key in state_names:
+                            state_names = state_names[key]
+                            break
+                    else:
+                        state_names = list(state_names.keys())
+                cfg.state_feature_names = list(state_names)
 
     kwargs["config"] = cfg
 

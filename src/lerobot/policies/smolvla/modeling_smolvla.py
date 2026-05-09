@@ -345,7 +345,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
+            skip = self.config.latency_skip_steps
+            self._queues[ACTION].extend(actions.transpose(0, 1)[skip : skip + self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
 
@@ -482,8 +483,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return actions
 
     def prepare_state(self, batch):
-        """Pad state"""
-        state = batch[OBS_STATE][:, -1, :] if batch[OBS_STATE].ndim > 2 else batch[OBS_STATE]
+        """Flatten multi-timestep state and pad to max_state_dim."""
+        state = batch[OBS_STATE]
+        if state.ndim == 3:
+            state = state.flatten(start_dim=1)
         state = pad_vector(state, self.config.max_state_dim)
         return state
 
