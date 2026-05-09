@@ -114,9 +114,16 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Solve IK - iterate to allow convergence
+        for _ in range(50):
+            self.solver.solve(True)
+            self.robot.update_kinematics()
+
+            # Stop early if close enough (0.1mm)
+            current_T = self.robot.get_T_world_frame(self.target_frame_name)
+            error = np.linalg.norm(desired_ee_pose[:3, 3] - current_T[:3, 3])
+            if error < 1e-4:
+                break
 
         # Extract joint positions
         joint_pos_rad = []
