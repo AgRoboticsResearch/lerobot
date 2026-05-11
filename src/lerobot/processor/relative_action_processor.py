@@ -40,53 +40,179 @@ __all__ = [
 ]
 
 
-def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
-    """Convert absolute actions to relative: relative = action - state (for masked dims).
+# --- SE(3) transformation helpers (torch, batched) ---
+
+
+def _axis_angle_to_matrix(axis_angle: Tensor) -> Tensor:
+    """Convert axis-angle vectors to rotation matrices via Rodrigues formula.
+
+    Args:
+        axis_angle: (..., 3) rotation vectors.
+    Returns:
+        (..., 3, 3) rotation matrices.
+    """
+    theta = axis_angle.norm(dim=-1, keepdim=True).clamp(min=1e-7)
+    k = axis_angle / theta
+    kx, ky, kz = k[..., 0], k[..., 1], k[..., 2]
+    zeros = torch.zeros_like(kx)
+    K = torch.stack([zeros, -kz, ky, kz, zeros, -kx, -ky, kx, zeros], dim=-1).reshape(
+        *axis_angle.shape[:-1], 3, 3
+    )
+    I = torch.eye(3, device=axis_angle.device, dtype=axis_angle.dtype)
+    sin_t = torch.sin(theta).unsqueeze(-1)
+    cos_t = torch.cos(theta).unsqueeze(-1)
+    return I + sin_t * K + (1 - cos_t) * (K @ K)
+
+
+def _matrix_to_axis_angle(R: Tensor) -> Tensor:
+    """Convert rotation matrices to axis-angle vectors.
+
+    Args:
+        R: (..., 3, 3) rotation matrices.
+    Returns:
+        (..., 3) axis-angle vectors.
+    """
+    rx = R[..., 2, 1] - R[..., 1, 2]
+    ry = R[..., 0, 2] - R[..., 2, 0]
+    rz = R[..., 1, 0] - R[..., 0, 1]
+    vec = torch.stack([rx, ry, rz], dim=-1)
+    sin_theta = vec.norm(dim=-1)
+    cos_theta = ((R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]) - 1) / 2
+    theta = torch.atan2(sin_theta / 2, cos_theta)
+    near_zero = sin_theta.abs() < 1e-7
+    result = vec / (sin_theta.unsqueeze(-1) + 1e-8) * theta.unsqueeze(-1)
+    return torch.where(near_zero.unsqueeze(-1), vec / 2, result)
+
+
+def _pose_se3_relative(pose_from: Tensor, pose_to: Tensor) -> Tensor:
+    """SE(3) relative: T_delta = inv(T_from) @ T_to.
+
+    Args:
+        pose_from: (..., 6) reference pose [x, y, z, wx, wy, wz].
+        pose_to:   (..., 6) target pose [x, y, z, wx, wy, wz].
+    Returns:
+        (..., 6) relative pose delta.
+    """
+    R_from = _axis_angle_to_matrix(pose_from[..., 3:6])
+    R_to = _axis_angle_to_matrix(pose_to[..., 3:6])
+    R_from_T = R_from.transpose(-2, -1)
+    R_delta = R_from_T @ R_to
+    dt = pose_to[..., :3] - pose_from[..., :3]
+    t_delta = (R_from_T @ dt.unsqueeze(-1)).squeeze(-1)
+    r_delta = _matrix_to_axis_angle(R_delta)
+    return torch.cat([t_delta, r_delta], dim=-1)
+
+
+def _pose_se3_absolute(pose_delta: Tensor, pose_ref: Tensor) -> Tensor:
+    """SE(3) absolute: T = T_ref @ T_delta.
+
+    Args:
+        pose_delta: (..., 6) relative pose [x, y, z, wx, wy, wz].
+        pose_ref:   (..., 6) reference pose [x, y, z, wx, wy, wz].
+    Returns:
+        (..., 6) absolute pose.
+    """
+    R_ref = _axis_angle_to_matrix(pose_ref[..., 3:6])
+    R_delta = _axis_angle_to_matrix(pose_delta[..., 3:6])
+    R = R_ref @ R_delta
+    t = pose_ref[..., :3] + (R_ref @ pose_delta[..., :3].unsqueeze(-1)).squeeze(-1)
+    r = _matrix_to_axis_angle(R)
+    return torch.cat([t, r], dim=-1)
+
+
+def _should_use_se3(mask_t: Tensor, dims: int, pose_dim: int) -> bool:
+    """True when pose_dim >= 6, the mask covers at least pose_dim dims,
+    and all of those dims are masked (the full 6-DoF pose is relative)."""
+    return pose_dim >= 6 and dims >= pose_dim and mask_t[:pose_dim].all()
+
+
+# --- Public conversion functions ---
+
+
+def to_relative_actions(
+    actions: Tensor, state: Tensor, mask: Sequence[bool], pose_dim: int = 0
+) -> Tensor:
+    """Convert absolute actions to relative (for masked dims).
+
+    When *pose_dim* >= 6 and the mask covers all pose dims, the first *pose_dim*
+    dimensions are treated as an SE(3) pose [x,y,z,wx,wy,wz] and converted via
+    proper transformation-matrix math (T_delta = inv(T_state) @ T_action).
+    Remaining masked dims use element-wise subtraction.
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim) or (B, obs_steps, state_dim). If 3D, the last obs step is used.
         mask: Which dims to convert. Can be shorter than action_dim.
+        pose_dim: Number of leading dims that form an SE(3) pose (6: xyz + wxwywz).
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
-    # Align state to the same device/dtype as actions. _last_state is cached before
-    # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # If state has an obs-step dimension (B, obs_steps, state_dim), take the last step.
     if state.ndim == 3:
         state = state[:, -1, :]
-    state_offset = state[..., :dims] * mask_t
-    if actions.ndim == 3:
-        state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
-    actions[..., :dims] -= state_offset
+
+    if _should_use_se3(mask_t, dims, pose_dim):
+        state_pose = state[..., :pose_dim]
+        action_pose = actions[..., :pose_dim]
+        if action_pose.ndim > state_pose.ndim:
+            state_pose = state_pose.unsqueeze(-2)
+        actions[..., :pose_dim] = _pose_se3_relative(state_pose, action_pose)
+        remaining = mask_t[pose_dim:]
+        if remaining.any():
+            state_rem = state[..., pose_dim:dims] * remaining
+            if actions.ndim == 3:
+                state_rem = state_rem.unsqueeze(-2)
+            actions[..., pose_dim:dims] -= state_rem
+    else:
+        state_offset = state[..., :dims] * mask_t
+        if actions.ndim == 3:
+            state_offset = state_offset.unsqueeze(-2)
+        actions[..., :dims] -= state_offset
     return actions
 
 
-def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
-    """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
+def to_absolute_actions(
+    actions: Tensor, state: Tensor, mask: Sequence[bool], pose_dim: int = 0
+) -> Tensor:
+    """Convert relative actions back to absolute (for masked dims).
+
+    When *pose_dim* >= 6 and the mask covers all pose dims, the first *pose_dim*
+    dimensions are treated as an SE(3) pose and converted via T = T_ref @ T_delta.
+    Remaining masked dims use element-wise addition.
 
     Args:
         actions: (B, T, action_dim) or (B, action_dim).
         state: (B, state_dim) or (B, obs_steps, state_dim). If 3D, the last obs step is used.
         mask: Which dims to convert. Can be shorter than action_dim.
+        pose_dim: Number of leading dims that form an SE(3) pose (6: xyz + wxwywz).
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
-    # Align state to the same device/dtype as actions. _last_state is cached before
-    # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # If state has an obs-step dimension (B, obs_steps, state_dim), take the last step.
     if state.ndim == 3:
         state = state[:, -1, :]
-    state_offset = state[..., :dims] * mask_t
-    if actions.ndim == 3:
-        state_offset = state_offset.unsqueeze(-2)
     actions = actions.clone()
-    actions[..., :dims] += state_offset
+
+    if _should_use_se3(mask_t, dims, pose_dim):
+        state_pose = state[..., :pose_dim]
+        action_pose = actions[..., :pose_dim]
+        if action_pose.ndim > state_pose.ndim:
+            state_pose = state_pose.unsqueeze(-2)
+        actions[..., :pose_dim] = _pose_se3_absolute(action_pose, state_pose)
+        remaining = mask_t[pose_dim:]
+        if remaining.any():
+            state_rem = state[..., pose_dim:dims] * remaining
+            if actions.ndim == 3:
+                state_rem = state_rem.unsqueeze(-2)
+            actions[..., pose_dim:dims] += state_rem
+    else:
+        state_offset = state[..., :dims] * mask_t
+        if actions.ndim == 3:
+            state_offset = state_offset.unsqueeze(-2)
+        actions[..., :dims] += state_offset
     return actions
 
 
@@ -158,6 +284,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
+    pose_dim: int = 0
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     @staticmethod
@@ -216,7 +343,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask, self.pose_dim)
         return new_transition
 
     def get_cached_state(self) -> torch.Tensor | None:
@@ -228,6 +355,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+            "pose_dim": self.pose_dim,
         }
 
     def transform_features(
@@ -236,21 +364,31 @@ class RelativeActionsProcessorStep(ProcessorStep):
         return features
 
 
-def to_relative_state(state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_relative_state(state: Tensor, mask: Sequence[bool], pose_dim: int = 0) -> Tensor:
     """Convert multi-timestep absolute state to relative (offset from current timestep).
 
-    Each timestep becomes: ``state[..., t, :] - state[..., -1, :]`` for masked dims.
-    The last (current) timestep becomes zeros for masked dims.
+    Each timestep becomes relative to the last (current) timestep.
+    When *pose_dim* >= 6, uses SE(3) for the pose portion.
 
     Args:
         state: (..., n_obs, state_dim) — last timestep is the reference (current).
         mask: Which dims to convert. Can be shorter than state_dim.
+        pose_dim: Number of leading dims that form an SE(3) pose (6: xyz + wxwywz).
     """
     mask_t = torch.tensor(mask, dtype=state.dtype, device=state.device)
     dims = mask_t.shape[0]
-    current = state[..., -1:, :]  # (..., 1, state_dim)
+    current = state[..., -1:, :]
     state = state.clone()
-    state[..., :dims] -= current[..., :dims] * mask_t
+
+    if _should_use_se3(mask_t, dims, pose_dim):
+        current_pose = current[..., :pose_dim]
+        state_pose = state[..., :pose_dim]
+        state[..., :pose_dim] = _pose_se3_relative(current_pose, state_pose)
+        remaining = mask_t[pose_dim:]
+        if remaining.any():
+            state[..., pose_dim:dims] -= current[..., pose_dim:dims] * remaining
+    else:
+        state[..., :dims] -= current[..., :dims] * mask_t
     return state
 
 
@@ -278,6 +416,7 @@ class RelativeStateProcessorStep(ProcessorStep):
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     state_names: list[str] | None = None
+    pose_dim: int = 0
     _previous_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, state_dim: int) -> list[bool]:
@@ -316,7 +455,7 @@ class RelativeStateProcessorStep(ProcessorStep):
 
         if state.ndim >= 3:
             # [B, n_obs, D] — multi-timestep (training with state_delta_indices)
-            relative = to_relative_state(state, mask)
+            relative = to_relative_state(state, mask, self.pose_dim)
             new_obs[OBS_STATE] = relative.flatten(start_dim=-2)  # [B, n_obs*D]
         elif state.ndim == 2:
             # [B, D] — single timestep (inference): buffer previous and stack
@@ -327,7 +466,7 @@ class RelativeStateProcessorStep(ProcessorStep):
             if prev.device != current.device or prev.dtype != current.dtype:
                 prev = prev.to(device=current.device, dtype=current.dtype)
             stacked = torch.stack([prev, current], dim=-2)  # [B, 2, D]
-            relative = to_relative_state(stacked, mask)
+            relative = to_relative_state(stacked, mask, self.pose_dim)
             new_obs[OBS_STATE] = relative.flatten(start_dim=-2)  # [B, 2*D]
             self._previous_state = current.clone()
 
@@ -343,6 +482,7 @@ class RelativeStateProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "state_names": self.state_names,
+            "pose_dim": self.pose_dim,
         }
 
     def transform_features(
@@ -391,7 +531,8 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             return new_transition
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        pose_dim = getattr(self.relative_step, "pose_dim", 0)
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask, pose_dim)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

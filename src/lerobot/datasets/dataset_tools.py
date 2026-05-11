@@ -1544,6 +1544,7 @@ def recompute_stats(
     relative_exclude_state_joints: list[str] | None = None,
     state_obs_steps: int = 2,
     derive_state_from_action: bool = False,
+    pose_dim: int = 0,
 ) -> LeRobotDataset:
     """Recompute stats.json from scratch by iterating all episodes.
 
@@ -1601,6 +1602,7 @@ def recompute_stats(
             chunk_size=chunk_size,
             exclude_joints=relative_exclude_joints,
             num_workers=num_workers,
+            pose_dim=pose_dim,
         )
         features_to_compute.pop(ACTION, None)
 
@@ -1619,6 +1621,7 @@ def recompute_stats(
             state_obs_steps=state_obs_steps,
             exclude_joints=relative_exclude_state_joints,
             source_key=source_key,
+            pose_dim=pose_dim,
         )
         features_to_compute.pop(OBS_STATE, None)
 

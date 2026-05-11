@@ -61,6 +61,10 @@ class SmolVLAConfig(PreTrainedConfig):
     use_relative_actions: bool = False
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     action_feature_names: list[str] | None = None  # populated at runtime from dataset metadata
+    # Number of leading action dims that form an SE(3) pose [x,y,z,wx,wy,wz].
+    # When >= 6 and the mask covers all pose dims, uses transformation-matrix math
+    # instead of element-wise +/- for proper robot-pose arithmetic.
+    pose_dim: int = 0
 
     # Relative state (UMI-style relative proprioception): converts multi-timestep
     # observation.state to offsets from the current timestep, providing velocity info.

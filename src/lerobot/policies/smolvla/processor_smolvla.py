@@ -78,12 +78,14 @@ def make_smolvla_pre_post_processors(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
+        pose_dim=getattr(config, "pose_dim", 0),
     )
 
     relative_state_step = RelativeStateProcessorStep(
         enabled=getattr(config, "use_relative_state", False),
         exclude_joints=getattr(config, "relative_exclude_state_joints", []),
         state_names=getattr(config, "state_feature_names", None),
+        pose_dim=getattr(config, "pose_dim", 0),
     )
 
     # Order: DeriveStateFromAction extracts state from the extended action chunk,

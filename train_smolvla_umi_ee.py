@@ -112,6 +112,7 @@ def main():
         relative_exclude_state_joints=["gripper"],
         state_obs_steps=2,
         derive_state_from_action=True,
+        pose_dim=6,
     )
     stats_time = time.time() - t0
     logger.info("Stats recomputation finished in %.1f seconds", stats_time)
@@ -136,6 +137,7 @@ def main():
         policy=SmolVLAConfig(
             derive_state_from_action=True,
             use_relative_actions=True,
+            pose_dim=6,
             relative_exclude_joints=["gripper"],
             relative_exclude_state_joints=["gripper"],
             freeze_vision_encoder=True,

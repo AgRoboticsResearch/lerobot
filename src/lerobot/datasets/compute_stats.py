@@ -27,6 +27,50 @@ from .io_utils import load_image_as_numpy
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
 
+# --- Numpy SE(3) helpers (mirroring torch versions in relative_action_processor.py) ---
+
+
+def _axis_angle_to_matrix_np(axis_angle: np.ndarray) -> np.ndarray:
+    """Convert axis-angle (..., 3) to rotation matrices (..., 3, 3) via Rodrigues."""
+    theta = np.linalg.norm(axis_angle, axis=-1, keepdims=True).clip(min=1e-7)
+    k = axis_angle / theta
+    kx, ky, kz = k[..., 0], k[..., 1], k[..., 2]
+    zeros = np.zeros_like(kx)
+    K = np.stack([zeros, -kz, ky, kz, zeros, -kx, -ky, kx, zeros], axis=-1).reshape(
+        *axis_angle.shape[:-1], 3, 3
+    )
+    I = np.eye(3, dtype=axis_angle.dtype)
+    sin_t = np.sin(theta)[..., None]
+    cos_t = np.cos(theta)[..., None]
+    return I + sin_t * K + (1 - cos_t) * (K @ K)
+
+
+def _matrix_to_axis_angle_np(R: np.ndarray) -> np.ndarray:
+    """Convert rotation matrices (..., 3, 3) to axis-angle (..., 3)."""
+    rx = R[..., 2, 1] - R[..., 1, 2]
+    ry = R[..., 0, 2] - R[..., 2, 0]
+    rz = R[..., 1, 0] - R[..., 0, 1]
+    vec = np.stack([rx, ry, rz], axis=-1)
+    sin_theta = np.linalg.norm(vec, axis=-1)
+    cos_theta = ((R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]) - 1) / 2
+    theta = np.arctan2(sin_theta / 2, cos_theta)
+    near_zero = np.abs(sin_theta) < 1e-7
+    result = vec / (sin_theta[..., None] + 1e-8) * theta[..., None]
+    return np.where(near_zero[..., None], vec / 2, result)
+
+
+def _pose_se3_relative_np(pose_from: np.ndarray, pose_to: np.ndarray) -> np.ndarray:
+    """SE(3) relative: T_delta = inv(T_from) @ T_to.  Poses (..., 6) [xyz, wxwywz]."""
+    R_from = _axis_angle_to_matrix_np(pose_from[..., 3:6])
+    R_to = _axis_angle_to_matrix_np(pose_to[..., 3:6])
+    R_from_T = np.swapaxes(R_from, -2, -1)
+    R_delta = R_from_T @ R_to
+    dt = pose_to[..., :3] - pose_from[..., :3]
+    t_delta = (R_from_T @ dt[..., None])[..., 0]
+    r_delta = _matrix_to_axis_angle_np(R_delta)
+    return np.concatenate([t_delta, r_delta], axis=-1)
+
+
 class RunningQuantileStats:
     """
     Maintains running statistics for batches of vectors, including mean,
@@ -650,8 +694,12 @@ def _compute_relative_chunk_batch(
     all_states: np.ndarray,
     chunk_size: int,
     relative_mask: np.ndarray,
+    pose_dim: int = 0,
 ) -> np.ndarray:
     """Vectorised relative-action computation for a batch of start indices.
+
+    When *pose_dim* >= 6 and the mask covers all pose dims, the first *pose_dim*
+    dimensions use SE(3) transformation math; the rest use element-wise subtraction.
 
     Returns an ``(N * chunk_size, action_dim)`` float32 array.
     """
@@ -662,7 +710,20 @@ def _compute_relative_chunk_batch(
     chunks = all_actions[frame_idx].copy()
     states = all_states[start_indices]
     mask_dim = len(relative_mask)
-    chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
+
+    use_se3 = pose_dim >= 6 and mask_dim >= pose_dim and relative_mask[:pose_dim].all()
+    if use_se3:
+        state_pose = states[:, :pose_dim]  # (N, 6)
+        action_pose = chunks[:, :, :pose_dim]  # (N, chunk_size, 6)
+        state_pose_exp = np.broadcast_to(state_pose[:, None, :], action_pose.shape)
+        chunks[:, :, :pose_dim] = _pose_se3_relative_np(state_pose_exp.copy(), action_pose)
+        remaining = relative_mask[pose_dim:]
+        if remaining.any():
+            chunks[:, :, pose_dim:mask_dim] -= (
+                states[:, None, pose_dim:mask_dim] * remaining[None, None, :]
+            )
+    else:
+        chunks[:, :, :mask_dim] -= states[:, None, :mask_dim] * relative_mask[None, None, :]
     return chunks.reshape(-1, all_actions.shape[1])
 
 
@@ -672,6 +733,7 @@ def compute_relative_action_stats(
     chunk_size: int,
     exclude_joints: list[str] | None = None,
     num_workers: int = 0,
+    pose_dim: int = 0,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for relative actions over the full dataset.
 
@@ -744,6 +806,7 @@ def compute_relative_action_stats(
                     all_states,
                     chunk_size,
                     relative_mask,
+                    pose_dim,
                 )
                 for batch in batches
             ]
@@ -752,7 +815,7 @@ def compute_relative_action_stats(
     else:
         for batch in batches:
             running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask, pose_dim)
             )
 
     stats = running_stats.get_statistics()
@@ -775,6 +838,7 @@ def compute_relative_state_stats(
     state_obs_steps: int = 2,
     exclude_joints: list[str] | None = None,
     source_key: str = OBS_STATE,
+    pose_dim: int = 0,
 ) -> dict[str, np.ndarray]:
     """Compute normalization statistics for observation.state after relative conversion.
 
@@ -833,6 +897,8 @@ def compute_relative_state_stats(
 
     running_stats = RunningQuantileStats()
 
+    use_se3 = pose_dim >= 6 and mask_dim >= pose_dim and relative_mask[:pose_dim].all()
+
     batch_size = 50_000
     for i in range(0, len(valid_starts), batch_size):
         batch_starts = valid_starts[i : i + batch_size]
@@ -840,7 +906,19 @@ def compute_relative_state_stats(
         windows = all_states[frame_idx].copy()  # [N, state_obs_steps, state_dim]
 
         current = windows[:, -1:, :]  # [N, 1, state_dim]
-        windows[:, :, :mask_dim] -= current[:, :, :mask_dim] * relative_mask[None, None, :]
+        if use_se3:
+            current_pose = current[:, :, :pose_dim]  # (N, 1, 6)
+            state_pose = windows[:, :, :pose_dim]  # (N, obs_steps, 6)
+            windows[:, :, :pose_dim] = _pose_se3_relative_np(
+                np.broadcast_to(current_pose, state_pose.shape).copy(), state_pose
+            )
+            remaining = relative_mask[pose_dim:]
+            if remaining.any():
+                windows[:, :, pose_dim:mask_dim] -= (
+                    current[:, :, pose_dim:mask_dim] * remaining[None, None, :]
+                )
+        else:
+            windows[:, :, :mask_dim] -= current[:, :, :mask_dim] * relative_mask[None, None, :]
 
         flattened = windows.reshape(len(batch_starts), -1)
         running_stats.update(flattened)
