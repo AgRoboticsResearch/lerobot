@@ -260,6 +260,17 @@ python examples/so101/deploy_act_so101.py \
   --warm_start
 ```
 
+## Evaluation Results (2026-05-15)
+
+### Mode 3 (Joint Obs + EE Action) — Performs Very Well
+
+Deployed Mode 3 (chunk30, 200K checkpoint) on the real SO101 robot for red strawberry picking. The robot successfully picks the strawberry with smooth, accurate motions. This is the best-performing mode so far, significantly better than Mode 1 (joint obs + joint action) which struggled with grasp precision.
+
+**Why it works well despite `observation.ee` not being consumed by the model:**
+- The 15D `observation.state` (6D joints + 9D EE pose) gives the model both proprioceptive and spatial information as a single concatenated vector
+- The relative EE action space (10D SE(3) transforms) is more task-centric than joint-space actions, providing smoother trajectories that generalize better across configurations
+- Chunk size 30 provides a good balance between prediction horizon and reactivity
+
 ## Verified Findings (2026-04-28)
 
 ### Bug Confirmed: `observation.ee` is NEVER consumed by the ACT model
@@ -313,11 +324,11 @@ Legacy checkpoints that have `ee_target_frame="gripper_frame_link"` still use th
 # ACT (Joint space control) solo inference script (recommended) 
 python examples/so101/deploy_act_so101.py \
   --robot_id=oscar_so101_follower \
-  --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_joint_action_v2/checkpoints/200000/pretrained_model \
+  --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_joint_action_v2_chunk30/checkpoints/last/pretrained_model \
   --robot_port /dev/ttyACM0 \
   --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }" \
   --warm_start \
-  --n_action_steps 10
+  --n_action_steps 30
 
 # ACT record-inference script
 lerobot-record \
