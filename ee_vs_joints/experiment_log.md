@@ -352,3 +352,105 @@ python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar
 python examples/so101_relative_ee/deploy_relative_ee_so101.py   --robot_id=oscar_so101_follower   --pretrained_path ./outputs/train/ee_vs_joints/joint_obs_ee_action_v2_chunk30/checkpoints/200000/pretrained_model   --robot_port /dev/ttyACM0   --cameras "{ wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG} }"   --warm_start   --n_action_steps 30   --cameraview   --delay_chunk 0   --display_data   --chunk_base_ideal --use_joint_obs
 
 ```
+
+---
+
+## Mode 4: UMI-Style Processor Pipeline + rot6d (2026-05-26)
+
+**Date**: 2026-05-26
+
+### Goal
+
+Train ACT with UMI-style relative EE actions using the processor pipeline approach. Unlike Modes 2/3 which use `RelativeEEDataset` + `TemporalACTWrapper`, this mode uses a standard `LeRobotDataset` with processor steps that handle all SE(3) math. State is derived from the action column (`derive_state_from_action`), so the dataset doesn't need an `observation.state` column at all.
+
+### Key Differences from Modes 2/3
+
+| Aspect | Mode 2/3 (Pattern A) | Mode 4 (Processor Pipeline) |
+|--------|----------------------|------------------------------|
+| Dataset class | `RelativeEEDataset` wrapper | Standard `LeRobotDataset` |
+| State source | `observation.ee` column | Derived from action column |
+| SE(3) math | In dataset `__getitem__()` | In processor steps (saved in checkpoint) |
+| observation.state in dataset | Required | Not needed |
+| Normalization | MEAN_STD | MIN_MAX (UMI-style) |
+
+### Dataset
+
+- **Repo**: `lerobot_sroi_v2`
+- **Root**: `/mnt/data1/data/lerobot/lerobot_sroi_v2`
+- 85 episodes, 13050 frames, 30 fps
+- Features: `action` (7D EE `[x,y,z,wx,wy,wz,gripper]`) + `observation.images.camera` (video)
+- No `observation.state` column — state derived from action during training
+
+### Training Command
+
+```bash
+PYTHONPATH=src python train_relative_ee_processor.py \
+  --dataset.repo_id=lerobot_sroi_v2 \
+  --dataset.root=/mnt/data1/data/lerobot/lerobot_sroi_v2 \
+  --policy.type=act \
+  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30 \
+  --job_name=act_umi_processor_ee_action_chunk30 \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
+  --save_freq=50000 \
+  --steps=500000 \
+  --batch_size=8 \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.derive_state_from_action=true \
+  --policy.use_relative_actions=true \
+  --policy.pose_dim=6 \
+  --policy.use_rot6d=true
+```
+
+### Pipeline
+
+```
+DeriveStateFromAction → RelativeRot6dActions → RelativeRot6dState → Normalizer → ACT Model
+
+Input:  7D aa absolute from dataset action column
+State:  20D (2×10D rot6d relative, derived from action[t-1] and action[t])
+Output: 10D rot6d relative to model
+Post:   10D rot6d relative → 7D aa absolute (via cached state)
+```
+
+### Dimension Flow
+
+| Stage | Action | State |
+|--------|--------|-------|
+| Dataset on disk | 7D aa | (none) |
+| After DeriveState | 7D aa (chunk) | 2×7D aa |
+| After RelativeRot6d | 10D rot6d relative | 20D rot6d relative |
+| Model | 10D rot6d relative | 20D rot6d relative |
+| After Postprocessor | 7D aa absolute | — |
+
+### Status
+
+- **Status**: In progress
+- **Loss at 13K steps**: 0.114 (converging well)
+- **Speed**: ~34ms/step
+- **Output dir**: `umi_processor_ee_action_chunk30/`
+
+### Deploy Command
+
+```bash
+python examples/so101_relative_ee/deploy_relative_ee_processor_so101.py \
+  --pretrained_path ./outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30/checkpoints/last/pretrained_model \
+  --robot_id=oscar_so101_follower \
+  --robot_port /dev/ttyACM0 \
+  --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG}}" \
+  --deploy_frame camera_link \
+  --n_action_steps 30 \
+  --warm_start
+```
+
+### Files
+
+- `examples/umi_relative_ee/train_relative_ee_processor.py` — training script
+- `examples/umi_relative_ee/deploy_relative_ee_processor_so101.py` — deployment script
+- `examples/umi_relative_ee/umi_style_ee_processor_pipeline.md` — detailed documentation
+- `src/lerobot/processor/relative_action_processor.py` — SE(3) rot6d math + processor steps
+- `src/lerobot/processor/relative_action_processor_act.py` — ACT processor factory
+- `src/lerobot/datasets/relative_action_stats.py` — 10D rot6d relative stats

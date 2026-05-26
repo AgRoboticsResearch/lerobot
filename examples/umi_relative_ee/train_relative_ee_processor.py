@@ -9,7 +9,7 @@ Uses UMI-style architecture:
 - 10D rot6d output (same math as Pattern A)
 
 Usage:
-    PYTHONPATH=src python train_relative_ee_processor.py \
+    PYTHONPATH=../../src python train_relative_ee_processor.py \
       --dataset.repo_id=lerobot_sroi_v2 \
       --dataset.root=/path/to/dataset \
       --policy.type=act \

@@ -254,7 +254,7 @@ The preprocessor and postprocessor are separate pipelines, but the postprocessor
 ### Training command
 
 ```bash
-PYTHONPATH=src python train_relative_ee_processor.py \
+PYTHONPATH=../../src python train_relative_ee_processor.py \
   --dataset.repo_id=lerobot_sroi_v2 \
   --dataset.root=/mnt/data1/data/lerobot/lerobot_sroi_v2 \
   --policy.type=act \
@@ -316,12 +316,12 @@ cfg.policy.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
 
 ### Deployment script
 
-`examples/so101_relative_ee/deploy_relative_ee_processor_so101.py`
+`deploy_relative_ee_processor_so101.py`
 
 ### Deployment command
 
 ```bash
-python examples/so101_relative_ee/deploy_relative_ee_processor_so101.py \
+python deploy_relative_ee_processor_so101.py \
   --pretrained_path outputs/<run>/checkpoints/last/pretrained_model \
   --robot_port /dev/ttyACM0 \
   --cameras '{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG}}' \
@@ -352,6 +352,67 @@ python examples/so101_relative_ee/deploy_relative_ee_processor_so101.py \
 - **Action queue**: `select_action` manages a queue of `n_action_steps` actions. When the queue empties, it predicts a new chunk. This means the model is queried every `n_action_steps` frames, not every frame.
 - **Processors are saved in checkpoint**: No need to pass config flags at deployment — the preprocessor and postprocessor are loaded from `policy_preprocessor.json` and `policy_postprocessor.json` in the checkpoint directory.
 
+## Visualization
+
+`visualize_predictions.py` — overlays predicted or GT trajectories onto camera images.
+
+All projection works purely with **relative** SE(3) transforms — no base frame involved:
+```
+P_optical = T_opt_cam @ T_rel @ T_cam_grip
+```
+
+### Camera mode (handheld camera, no robot needed)
+
+Runs live inference with a physical camera. Uses identity 7D aa state (no FK).
+
+```bash
+PYTHONPATH=../../src python visualize_predictions.py \
+  --pretrained_path outputs/<run>/checkpoints/last/pretrained_model \
+  --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG}}" \
+  --camera_info_path /path/to/camera_info.json
+```
+
+Optional flags:
+- `--gripper`: show gripper state on trajectory
+- `--initial_state 0 0 0 0 0 0 0.5`: custom initial 7D aa state
+- `--update_state`: chain predictions (last predicted action becomes next state)
+
+### Dataset mode
+
+Loads a `LeRobotDataset` and projects trajectories onto observation images.
+
+GT only:
+```bash
+PYTHONPATH=../../src python visualize_predictions.py \
+  --dataset_root /path/to/dataset \
+  --episode_indices 0 \
+  --camera_name camera \
+  --camera_info_path /path/to/camera_info.json \
+  --mp4 \
+  --output_dir outputs/debug/visualization
+```
+
+With model inference (+ GT overlay):
+```bash
+PYTHONPATH=../../src python visualize_predictions.py \
+  --dataset_root /path/to/dataset \
+  --episode_indices 0 \
+  --camera_name camera \
+  --camera_info_path /path/to/camera_info.json \
+  --pretrained_path outputs/<run>/checkpoints/last/pretrained_model \
+  --inference --gt --gripper \
+  --mp4 \
+  --output_dir outputs/debug/visualization
+```
+
+### Projection approach
+
+For inference: the model outputs 10D rot6d relative actions. These are unnormalized and converted to 4×4 relative transforms, then projected directly — the postprocessor's absolute conversion is skipped for visualization.
+
+For GT: the dataset stores 7D aa absolute actions. These are converted to relative using `T_rel = inv(action[0]) @ action[k]` (relative to the current frame), then projected.
+
+In both cases the trajectory start point is fixed at `T_opt_cam @ T_cam_grip` (current gripper position in optical frame) and does not drift across frames.
+
 ## Files
 
 ### New files (processor pipeline)
@@ -362,8 +423,11 @@ python examples/so101_relative_ee/deploy_relative_ee_processor_so101.py \
 | `src/lerobot/processor/relative_action_config.py` | `ACTRelativeEEConfig` — config subclass with UMI fields |
 | `src/lerobot/processor/relative_action_processor_act.py` | ACT processor factory (preprocessor/postprocessor) |
 | `src/lerobot/datasets/relative_action_stats.py` | Stats computation for 10D rot6d relative actions |
-| `train_relative_ee_processor.py` | Training script (monkey-patches standard pipeline) |
-| `examples/so101_relative_ee/deploy_relative_ee_processor_so101.py` | SO101 deployment script |
+| `examples/umi_relative_ee/train_relative_ee_processor.py` | Training script (monkey-patches standard pipeline) |
+| `examples/umi_relative_ee/deploy_relative_ee_processor_so101.py` | SO101 deployment script |
+| `examples/umi_relative_ee/test_inference_processor.py` | Inference test script |
+| `examples/umi_relative_ee/verify_pipeline_correctness.py` | Pipeline verification tests |
+| `examples/umi_relative_ee/visualize_predictions.py` | Trajectory visualization (camera + dataset modes) |
 
 ### Modified files (minimal)
 
