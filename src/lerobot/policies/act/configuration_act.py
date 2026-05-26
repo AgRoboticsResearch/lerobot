@@ -100,6 +100,13 @@ class ACTConfig(PreTrainedConfig):
     use_joint_obs: bool = False  # If True, use 6D joints as observation input (like lerobot-train)
     ee_target_frame: str = ""  # EE frame used during training (e.g., "camera_link"). Empty = not set (legacy).
 
+    # Processor pipeline relative EE (UMI) action fields
+    derive_state_from_action: bool = False  # Derive obs.state from action column (UMI-style)
+    use_relative_actions: bool = False  # Enable relative rot6d action conversion
+    pose_dim: int = 0  # 6 = xyz + axis-angle → triggers SE(3) mode
+    use_rot6d: bool = False  # True → 10D rot6d output instead of 7D aa
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -184,6 +191,8 @@ class ACTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.derive_state_from_action:
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

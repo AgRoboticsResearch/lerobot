@@ -135,3 +135,13 @@ __all__ = [
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]
+
+# UMI-style relative rot6d action processors
+from lerobot.processor.relative_action_processor import (
+    AbsoluteRot6dActionsProcessorStep,
+    DeriveStateFromActionStep,
+    RelativeRot6dActionsProcessorStep,
+    RelativeRot6dStateProcessorStep,
+)
+from lerobot.processor.relative_action_config import ACTRelativeEEConfig
+from lerobot.processor.relative_action_processor_act import make_act_relative_ee_pre_post_processors
