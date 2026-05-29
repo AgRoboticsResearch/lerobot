@@ -435,7 +435,7 @@ def run_dry_run(args):
 
 def main():
     args = parse_args()
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, force=True)
 
     if args.dry_run:
         run_dry_run(args)
@@ -652,6 +652,10 @@ def main():
                     pred = pred["action"]
 
                 actions_aa = pred[0].cpu().numpy()
+                if step_count < 5:
+                    logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
+                    logger.info(f"  First action_aa: {actions_aa[0]}")
+                    logger.info(f"  Last action_aa:  {actions_aa[-1]}")
                 action_queue = [
                     actions_aa[i]
                     for i in range(min(args.n_action_steps, len(actions_aa)))
@@ -684,6 +688,13 @@ def main():
                 for i, name in enumerate(ARM_JOINTS)
             }
 
+            if step_count < 5 or step_count % 100 == 0:
+                logger.info(
+                    f"  action_aa: [{action_aa[0]:.4f}, {action_aa[1]:.4f}, {action_aa[2]:.4f}, "
+                    f"{action_aa[3]:.4f}, {action_aa[4]:.4f}, {action_aa[5]:.4f}, grip={action_aa[6]:.3f}]"
+                )
+                logger.info(f"  current_joints: {current_joints}")
+
             try:
                 result = ik_pipeline((action_dict, observation_dict))
             except Exception as e:
@@ -692,12 +703,13 @@ def main():
                 continue
 
             # Send arm joint commands
-            if "action" in result:
-                joint_cmds = result["action"]
-                joint_values = np.array(
-                    [joint_cmds.get(f"{name}.pos", 0.0) for name in ARM_JOINTS]
-                )
-                piper.write_joints(joint_values)
+            joint_values = np.array(
+                [result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS]
+            )
+            if step_count < 5 or step_count % 100 == 0:
+                logger.info(f"  IK result joints: {joint_values}")
+                logger.info(f"  joint delta: {joint_values - current_joints}")
+            piper.write_joints(joint_values)
 
             # Send gripper command (separate from IK pipeline)
             gripper_value = float(action_aa[6])
