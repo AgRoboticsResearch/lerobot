@@ -454,3 +454,17 @@ python examples/so101_relative_ee/deploy_relative_ee_processor_so101.py \
 - `src/lerobot/processor/relative_action_processor.py` — SE(3) rot6d math + processor steps
 - `src/lerobot/processor/relative_action_processor_act.py` — ACT processor factory
 - `src/lerobot/datasets/relative_action_stats.py` — 10D rot6d relative stats
+
+### Handheld Visualization Command (RealSense D405)
+
+Live inference with handheld RealSense D405 camera (no robot needed):
+
+```bash
+PYTHONPATH=src python examples/umi_relative_ee/visualize_predictions.py --pretrained_path outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30/checkpoints/last/pretrained_model --cameras "{camera: {type: intelrealsense, serial_number_or_name: '230322274337', fps: 30, width: 640, height: 480}}" --camera_info_path outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30/camera_info_color.json --gripper
+```
+
+Notes:
+- Camera name must be `camera` (matches model's `observation.images.camera` key)
+- State defaults to identity `[0,0,0,0,0,0,0.5]` — no robot FK needed
+- Optional: `--update_state` to chain predictions, `--initial_state` for custom start pose
+- Press `Esc` to stop
