@@ -26,7 +26,7 @@ import logging
 import os
 import sys
 import time
-import warnings
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -69,10 +69,24 @@ GRIPPER_CLOSED_RAD = 0.734
 GRIPPER_OPEN_MM = 0.0
 GRIPPER_CLOSED_MM = 55.0
 
-DEFAULT_URDF_PATH = os.path.expanduser(
-    "~/codes/sroi-piper/src/utils/piper_urdf/piper.urdf"
-)
+DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "..", "sroi-piper",
+    "src", "utils", "piper_urdf", "piper.urdf",
+)))
+DEFAULT_PIPER_SRC_PATH = os.path.normpath(os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "..", "sroi-piper", "src",
+)))
 DEFAULT_DEPLOY_FRAME = "camera_link"
+
+
+@contextmanager
+def _timed_phase(name: str):
+    """Time a startup phase and log the elapsed time in ms."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        print(f"[startup] {name}: {(time.perf_counter() - t0) * 1000:.0f} ms")
 
 
 def gripper_norm_to_external(gripper_norm: float, kp: float, kd: float) -> tuple:
@@ -116,25 +130,20 @@ def move_to_safe(piper, gripper, gripper_kp, gripper_kd, duration=3.0):
 # ---------------------------------------------------------------------------
 
 def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return T_opt_cam (camera_link→optical) and T_cam_ee (ee_link→camera_link)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        old_stdout = sys.stdout
-        sys.stdout = open(os.devnull, "w")
-        try:
-            from lerobot.model.kinematics import RobotKinematics as _RK
-            kin_opt = _RK(str(urdf_path), target_frame_name="camera_optical_link")
-            kin_cam = _RK(str(urdf_path), target_frame_name="camera_link")
-            kin_ee = _RK(str(urdf_path), target_frame_name="ee_link")
-            joints = np.zeros(len(kin_opt.joint_names))
-            T_base_opt = kin_opt.forward_kinematics(joints)
-            T_base_cam = kin_cam.forward_kinematics(joints)
-            T_base_ee = kin_ee.forward_kinematics(joints)
-            T_opt_cam = np.linalg.inv(T_base_opt) @ T_base_cam
-            T_cam_ee = np.linalg.inv(T_base_cam) @ T_base_ee
-        finally:
-            sys.stdout.close()
-            sys.stdout = old_stdout
+    """Return T_opt_cam (optical→cam) and T_cam_ee (cam→ee) at the neutral pose.
+
+    These are static transforms between fixed links, so we use placo's RobotWrapper
+    directly for FK — no KinematicsSolver (that's IK-only machinery). The flags skip
+    collision-pair setup and visual-mesh parsing, avoiding the slow self-collision
+    scan (~15 s on the Piper URDF) and stderr warning spam from the previous
+    3x RobotKinematics approach.
+    """
+    import placo
+    flags = placo.Flags.ignore_collisions | placo.Flags.collision_as_visual
+    robot = placo.RobotWrapper(str(urdf_path), flags)
+    robot.update_kinematics()
+    T_opt_cam = np.asarray(robot.get_T_a_b("camera_optical_link", "camera_link"))
+    T_cam_ee = np.asarray(robot.get_T_a_b("camera_link", "ee_link"))
     return T_opt_cam, T_cam_ee
 
 
@@ -442,9 +451,8 @@ def main():
         return
 
     # Import Piper hardware interfaces
-    piper_src = os.path.expanduser("~/codes/sroi-piper/src")
-    if piper_src not in sys.path:
-        sys.path.insert(0, piper_src)
+    if DEFAULT_PIPER_SRC_PATH not in sys.path:
+        sys.path.insert(0, DEFAULT_PIPER_SRC_PATH)
 
     from modules.piper_interface import PiperInterface
 
@@ -454,22 +462,26 @@ def main():
     model_path = args.pretrained_path
     logger.info(f"Loading policy from: {model_path}")
 
-    policy = ACTPolicy.from_pretrained(model_path, local_files_only=True)
-    policy.eval()
-    policy.config.device = str(device)
+    with _timed_phase("load policy"):
+        policy = ACTPolicy.from_pretrained(model_path, local_files_only=True)
+        policy.eval()
+        policy.config.device = str(device)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=model_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-    )
+    with _timed_phase("build pre/post processors"):
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=model_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
     logger.info("Policy and processors loaded")
 
     # Visualization setup (shared by both modes)
-    action_stats = extract_action_stats(preprocessor) if not args.no_vis else None
+    with _timed_phase("extract action stats"):
+        action_stats = extract_action_stats(preprocessor) if not args.no_vis else None
     viz_T_opt_cam = viz_T_cam_ee = camera_matrix = None
     if not args.no_vis:
-        viz_T_opt_cam, viz_T_cam_ee = get_kinematic_transforms(args.urdf_path)
+        with _timed_phase("load kinematic transforms (URDF)"):
+            viz_T_opt_cam, viz_T_cam_ee = get_kinematic_transforms(args.urdf_path)
         if args.camera_info_path:
             import json
             with open(args.camera_info_path) as f:
@@ -478,11 +490,12 @@ def main():
         # Try auto-detect from RealSense later after camera connect
 
     # ── 2. Initialize kinematics ───────────────────────────────────────
-    kinematics = RobotKinematics(
-        urdf_path=args.urdf_path,
-        target_frame_name=args.deploy_frame,
-        joint_names=ARM_JOINTS,
-    )
+    with _timed_phase("init IK kinematics"):
+        kinematics = RobotKinematics(
+            urdf_path=args.urdf_path,
+            target_frame_name=args.deploy_frame,
+            joint_names=ARM_JOINTS,
+        )
     logger.info(f"URDF: {args.urdf_path}, frame: {args.deploy_frame}")
 
     # ── 3. Build IK pipeline (7D aa absolute → 6 joint positions) ──────
