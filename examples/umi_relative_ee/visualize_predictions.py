@@ -35,9 +35,8 @@ Usage (dataset mode — inference):
 import json
 import logging
 import os
-import sys
 import time
-import warnings
+from contextlib import contextmanager
 from pathlib import Path
 
 import cv2
@@ -49,7 +48,6 @@ from lerobot.cameras import CameraConfig
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.model.kinematics import RobotKinematics
 from lerobot.utils.constants import OBS_STATE
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -76,9 +74,21 @@ logger = logging.getLogger(__name__)
 
 FPS = 30
 
-DEFAULT_URDF_PATH = os.path.expanduser(
-    "~/codes/sroi-piper/src/utils/piper_urdf/piper.urdf"
+DEFAULT_URDF_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "sroi-piper",
+    "src", "utils", "piper_urdf", "piper.urdf",
 )
+DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(DEFAULT_URDF_PATH))
+
+
+@contextmanager
+def _timed_phase(name: str):
+    """Time a startup phase and log the elapsed time in ms."""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        print(f"[startup] {name}: {(time.perf_counter() - t0) * 1000:.0f} ms")
 
 
 # ---------------------------------------------------------------------------
@@ -166,26 +176,19 @@ def auto_detect_camera_intrinsics(cameras: dict) -> np.ndarray | None:
 # ---------------------------------------------------------------------------
 
 def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return T_opt_cam (camera_link→optical) and T_cam_ee (ee_link→camera_link)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        old_stdout = sys.stdout
-        sys.stdout = open(os.devnull, "w")
-        try:
-            kin_opt = RobotKinematics(str(urdf_path), target_frame_name="camera_optical_link")
-            kin_cam = RobotKinematics(str(urdf_path), target_frame_name="camera_link")
-            kin_ee = RobotKinematics(str(urdf_path), target_frame_name="ee_link")
+    """Return T_opt_cam (optical→cam) and T_cam_ee (cam→ee) at the neutral pose.
 
-            joints = np.zeros(len(kin_opt.joint_names))
-            T_base_opt = kin_opt.forward_kinematics(joints)
-            T_base_cam = kin_cam.forward_kinematics(joints)
-            T_base_ee = kin_ee.forward_kinematics(joints)
-
-            T_opt_cam = np.linalg.inv(T_base_opt) @ T_base_cam
-            T_cam_ee = np.linalg.inv(T_base_cam) @ T_base_ee
-        finally:
-            sys.stdout.close()
-            sys.stdout = old_stdout
+    These are static transforms between fixed links, so we use placo's RobotWrapper
+    directly for FK — no KinematicsSolver (that's IK-only machinery). The flags skip
+    collision-pair setup and visual-mesh parsing, which avoids the slow self-collision
+    scan and the stderr warning spam from the previous 3x RobotKinematics approach.
+    """
+    import placo
+    flags = placo.Flags.ignore_collisions | placo.Flags.collision_as_visual
+    robot = placo.RobotWrapper(str(urdf_path), flags)
+    robot.update_kinematics()  # required before get_T_a_b reads frame placements
+    T_opt_cam = np.asarray(robot.get_T_a_b("camera_optical_link", "camera_link"))
+    T_cam_ee = np.asarray(robot.get_T_a_b("camera_link", "ee_link"))
     return T_opt_cam, T_cam_ee
 
 
@@ -287,38 +290,50 @@ def extract_action_stats(preprocessor) -> dict:
 
 def run_camera_mode(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    startup_t0 = time.perf_counter()
 
     logger.info(f"Loading policy from {args.pretrained_path}")
-    policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
-    policy.eval()
-    policy.config.device = str(device)
+    with _timed_phase("load policy"):
+        policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
+        policy.eval()
+        policy.config.device = str(device)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-    )
+    with _timed_phase("build pre/post processors"):
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy,
+            pretrained_path=args.pretrained_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
     logger.info("Policy and processors loaded")
 
-    action_stats = extract_action_stats(preprocessor)
-    chunk_size = policy.config.chunk_size
+    with _timed_phase("extract action stats"):
+        action_stats = extract_action_stats(preprocessor)
+        chunk_size = policy.config.chunk_size
 
-    T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
+    with _timed_phase("load kinematic transforms (URDF)"):
+        T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
 
     camera_matrix = None
     if args.camera_info_path:
-        camera_matrix = load_camera_matrix_from_file(args.camera_info_path)
+        with _timed_phase("load camera matrix from file"):
+            camera_matrix = load_camera_matrix_from_file(args.camera_info_path)
 
-    cameras_config = parse_cameras_config(args.cameras)
-    if not cameras_config:
-        raise ValueError("No cameras configured")
-    cameras = make_cameras_from_configs(cameras_config)
-    for cam_name, camera in cameras.items():
-        camera.connect()
-        logger.info(f"Connected camera: {cam_name}")
+    with _timed_phase("parse cameras config"):
+        cameras_config = parse_cameras_config(args.cameras)
+        if not cameras_config:
+            raise ValueError("No cameras configured")
+
+    with _timed_phase("make cameras"):
+        cameras = make_cameras_from_configs(cameras_config)
+
+    with _timed_phase("connect cameras"):
+        for cam_name, camera in cameras.items():
+            camera.connect()
+            logger.info(f"Connected camera: {cam_name}")
 
     if camera_matrix is None:
-        camera_matrix = auto_detect_camera_intrinsics(cameras)
+        with _timed_phase("auto-detect camera intrinsics"):
+            camera_matrix = auto_detect_camera_intrinsics(cameras)
 
     if camera_matrix is None:
         logger.warning("No camera intrinsics — trajectory overlay disabled")
@@ -328,9 +343,12 @@ def run_camera_mode(args):
     else:
         current_state = np.array([0, 0, 0, 0, 0, 0, 0.5], dtype=np.float32)
 
-    policy.reset()
-    preprocessor.reset()
-    postprocessor.reset()
+    with _timed_phase("reset policy/processors"):
+        policy.reset()
+        preprocessor.reset()
+        postprocessor.reset()
+
+    logger.info(f"[startup] total: {(time.perf_counter() - startup_t0) * 1000:.0f} ms")
 
     step_count = 0
     logger.info("Starting inference loop (Ctrl+C to stop)")
@@ -424,17 +442,21 @@ def run_dataset_mode(args):
     repo_id = Path(dataset_root).name
     camera_name = args.camera_name
     save_mp4 = args.mp4
+    startup_t0 = time.perf_counter()
 
-    T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
+    with _timed_phase("load kinematic transforms (URDF)"):
+        T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
 
     if args.camera_info_path:
-        camera_matrix = load_camera_matrix_from_file(args.camera_info_path)
+        with _timed_phase("load camera matrix from file"):
+            camera_matrix = load_camera_matrix_from_file(args.camera_info_path)
     else:
-        try:
-            camera_matrix = load_camera_matrix_from_dataset(dataset_root)
-        except FileNotFoundError:
-            logger.error("No camera_info. Provide --camera_info_path")
-            raise
+        with _timed_phase("load camera matrix from dataset"):
+            try:
+                camera_matrix = load_camera_matrix_from_dataset(dataset_root)
+            except FileNotFoundError:
+                logger.error("No camera_info. Provide --camera_info_path")
+                raise
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
@@ -443,26 +465,32 @@ def run_dataset_mode(args):
     action_stats = None
     if args.inference:
         logger.info(f"Loading policy from {args.pretrained_path}")
-        policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
-        policy.eval()
-        policy.config.device = str(device)
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy,
-            pretrained_path=args.pretrained_path,
-            preprocessor_overrides={"device_processor": {"device": str(device)}},
-        )
-        action_stats = extract_action_stats(preprocessor)
+        with _timed_phase("load policy"):
+            policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
+            policy.eval()
+            policy.config.device = str(device)
+        with _timed_phase("build pre/post processors"):
+            preprocessor, postprocessor = make_pre_post_processors(
+                policy_cfg=policy,
+                pretrained_path=args.pretrained_path,
+                preprocessor_overrides={"device_processor": {"device": str(device)}},
+            )
+        with _timed_phase("extract action stats"):
+            action_stats = extract_action_stats(preprocessor)
 
     fps = getattr(policy.config, "fps", 30) if policy else 30
     chunk_size = policy.config.chunk_size if policy else 30
 
     delta_timestamps = {"action": [i / fps for i in range(chunk_size)]}
-    dataset = LeRobotDataset(
-        repo_id=repo_id,
-        root=dataset_root,
-        delta_timestamps=delta_timestamps,
-    )
+    with _timed_phase("load LeRobotDataset"):
+        dataset = LeRobotDataset(
+            repo_id=repo_id,
+            root=dataset_root,
+            delta_timestamps=delta_timestamps,
+        )
     logger.info(f"Dataset: {len(dataset)} frames, {len(dataset.meta.episodes)} episodes")
+
+    logger.info(f"[startup] total: {(time.perf_counter() - startup_t0) * 1000:.0f} ms")
 
     mode_label = "inference" if args.inference else "gt"
 
