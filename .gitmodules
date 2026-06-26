@@ -1,3 +1,6 @@
 [submodule "urdf"]
 	path = urdf
 	url = https://github.com/AgRoboticsResearch/SO-ARM100.git
+[submodule "sroi-piper"]
+	path = sroi-piper
+	url = git@github.com:AgRoboticsResearch/sroi-piper.git
