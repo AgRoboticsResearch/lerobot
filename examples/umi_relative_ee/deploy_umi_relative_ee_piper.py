@@ -24,9 +24,12 @@ Usage:
 import argparse
 import logging
 import os
+import queue
 import sys
+import threading
 import time
 from contextlib import contextmanager
+from enum import Enum, auto
 
 import cv2
 import numpy as np
@@ -89,6 +92,110 @@ def _timed_phase(name: str):
         print(f"[startup] {name}: {(time.perf_counter() - t0) * 1000:.0f} ms")
 
 
+# ---------------------------------------------------------------------------
+# Non-blocking keyboard input (pynput.Listener + queue)
+# ---------------------------------------------------------------------------
+
+# Recognized key names — normalized to lowercase single chars or special tokens.
+_KEY_MAP = {
+    "q": "q", "r": "r", "s": "s", ".": "dot", "h": "h",
+    "space": "space", "esc": "esc",
+}
+
+
+_KEYMAP_HELP = """
+╔══════════════════════════════════════════════════════════════╗
+║                    KEYBOARD CONTROLS                         ║
+║       (policy inference always runs; these keys              ║
+║        only control whether the arm executes it)             ║
+╠══════════════════════════════════════════════════════════════╣
+║  s          engage control — arm starts following policy     ║
+║  SPACE      pause control — arm holds pose, overlay live     ║
+║  q          move to START pose, then pause control           ║
+║  r          move to SAFE pose, then pause control            ║
+║  . (period) execute one chunk (~30 actions) then re-pause    ║
+║  h          reprint this keymap                              ║
+║  ESC        graceful shutdown (cleanup + safe pose)          ║
+║  Ctrl+C     force quit (same cleanup)                        ║
+╚══════════════════════════════════════════════════════════════╝
+""".strip()
+
+
+class KeyboardCommandHandler:
+    """Background-thread non-blocking keyboard reader.
+
+    pynput.Listener pushes recognized keys onto a queue.Queue; the main loop
+    polls it via poll() each tick (microsecond cost). Unrecognized keys are
+    dropped silently. Safe to use as a context manager.
+
+    Why a thread over select(stdin): works whether or not an OpenCV window
+    has focus, and is independent of terminal focus. pynput is already a
+    LeRobot dependency (used by teleoperators/keyboard).
+    """
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[str] = queue.Queue()
+        self._listener = None
+        self._lock = threading.Lock()
+
+    def connect(self) -> None:
+        from pynput import keyboard as pk
+        self._listener = pk.Listener(on_press=self._on_press)
+        self._listener.daemon = True
+        self._listener.start()
+
+    def disconnect(self) -> None:
+        if self._listener is not None:
+            self._listener.stop()
+            self._listener = None
+
+    def __enter__(self) -> "KeyboardCommandHandler":
+        self.connect()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.disconnect()
+
+    def _on_press(self, key) -> None:
+        name = self._normalize(key)
+        if name is not None:
+            self._queue.put(name)
+
+    @staticmethod
+    def _normalize(key) -> str | None:
+        # pynput passes either a KeyCode (printable) or a Key (special).
+        if hasattr(key, "char"):
+            ch = (key.char or "").lower()
+            return _KEY_MAP.get(ch)
+        if hasattr(key, "name"):
+            return _KEY_MAP.get(key.name.lower())
+        return None
+
+    def poll(self) -> str | None:
+        """Return the next queued key name, or None if empty. Non-blocking."""
+        try:
+            return self._queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def drain(self) -> list[str]:
+        """Pop all pending keys (useful after a long blocking move)."""
+        out = []
+        while True:
+            k = self.poll()
+            if k is None:
+                break
+            out.append(k)
+        return out
+
+
+class LoopState(Enum):
+    PAUSED = auto()
+    INFERENCE = auto()
+    MOVING = auto()
+    SHUTDOWN = auto()
+
+
 def gripper_norm_to_external(gripper_norm: float, kp: float, kd: float) -> tuple:
     pos = gripper_norm * (GRIPPER_CLOSED_RAD - GRIPPER_OPEN_RAD) + GRIPPER_OPEN_RAD
     return kp, kd, pos
@@ -114,15 +221,32 @@ def ee_pose_aa_from_fk(kinematics, joints_deg: np.ndarray, gripper_norm: float) 
     return np.concatenate([pos, aa, [gripper_norm]]).astype(np.float32)
 
 
+def move_to_pose(piper, gripper, target_deg, *, label, gripper_kp=0.0, gripper_kd=0.0,
+                 duration=3.0, open_gripper=True):
+    """Move arm to an absolute joint pose (degrees) and (optionally) open the gripper.
+
+    Sends the target to the Piper and lets its internal controller smooth the
+    trajectory; sleeps `duration` s to let it arrive. Blocks the caller — by
+    design, the inference loop is paused during this.
+    """
+    logger.info(f"Moving to {label} pose: {target_deg}")
+    piper.write_joints(target_deg)
+    if gripper is not None:
+        if open_gripper:
+            gripper.send_command(kp=gripper_kp, kd=gripper_kd, position=0.0)
+    else:
+        if open_gripper:
+            piper.write_gripper(GRIPPER_OPEN_MM)
+    time.sleep(duration)
+
+
 def move_to_safe(piper, gripper, gripper_kp, gripper_kd, duration=3.0):
     """Move arm to safe pose and open gripper before disable."""
-    logger.info(f"Moving to safe pose: {SAFE_POSE_DEG}")
-    piper.write_joints(SAFE_POSE_DEG)
-    if gripper is not None:
-        gripper.send_command(kp=gripper_kp, kd=gripper_kd, position=0.0)
-    else:
-        piper.write_gripper(GRIPPER_OPEN_MM)
-    time.sleep(duration)
+    move_to_pose(
+        piper, gripper, SAFE_POSE_DEG,
+        label="safe", gripper_kp=gripper_kp, gripper_kd=gripper_kd,
+        duration=duration, open_gripper=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,150 +726,224 @@ def main():
     chunk_traj_3d = None
 
     logger.info(f"Starting control loop at {args.fps} Hz")
+    print(_KEYMAP_HELP)
 
     try:
-        while args.num_steps == 0 or step_count < args.num_steps:
-            t0 = time.perf_counter()
+        with KeyboardCommandHandler() as kb:
+            state = LoopState.PAUSED
+            single_chunk = False
+            logger.info("Loop state: PAUSED (press s to engage control)")
 
-            # Read arm joints
-            current_joints = piper.read_joints()
+            while args.num_steps == 0 or step_count < args.num_steps:
+                t0 = time.perf_counter()
 
-            # Read gripper and normalize to [0,1]
-            if gripper is not None:
-                grip_pos_rad = gripper.position
-                gripper_norm = gripper_external_to_norm(grip_pos_rad)
-            else:
-                grip_pos_mm = piper.read_gripper()
-                gripper_norm = gripper_builtin_to_norm(grip_pos_mm)
+                # ── 8a. Drain keyboard queue ────────────────────────────
+                key = kb.poll()
+                while key is not None:
+                    if key == "esc":
+                        state = LoopState.SHUTDOWN
+                        logger.info("ESC — graceful shutdown")
+                        break
+                    elif key == "q":
+                        logger.info("q — moving to START pose (control paused)")
+                        move_to_pose(
+                            piper, gripper, START_POSE_DEG,
+                            label="start",
+                            gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
+                            duration=2.0, open_gripper=True,
+                        )
+                        action_queue.clear()
+                        chunk_traj_3d = None
+                        state = LoopState.PAUSED
+                        kb.drain()
+                    elif key == "r":
+                        logger.info("r — moving to SAFE pose (control paused)")
+                        move_to_pose(
+                            piper, gripper, SAFE_POSE_DEG,
+                            label="safe",
+                            gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
+                            duration=3.0, open_gripper=True,
+                        )
+                        action_queue.clear()
+                        chunk_traj_3d = None
+                        state = LoopState.PAUSED
+                        kb.drain()
+                    elif key == "s" and state == LoopState.PAUSED:
+                        action_queue.clear()
+                        chunk_traj_3d = None
+                        state = LoopState.INFERENCE
+                        logger.info("s — control engaged (arm follows policy)")
+                    elif key == "space" and state == LoopState.INFERENCE:
+                        state = LoopState.PAUSED
+                        logger.info("space — control paused (arm holds pose, inference still runs)")
+                    elif key == "dot" and state == LoopState.PAUSED:
+                        action_queue.clear()
+                        single_chunk = True
+                        state = LoopState.INFERENCE
+                        logger.info(". — execute one chunk then re-pause")
+                    elif key == "h":
+                        print(_KEYMAP_HELP)
+                    key = kb.poll()
 
-            gripper_norm = np.clip(gripper_norm, 0.0, 1.0)
+                if state == LoopState.SHUTDOWN:
+                    break
 
-            # Get 7D aa EE pose via FK
-            ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)
-            state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
+                # ── 8b. Read sensors (always — feedback during pause too) ─
+                current_joints = piper.read_joints()
 
-            batch = {OBS_STATE: state_tensor}
+                if gripper is not None:
+                    grip_pos_rad = gripper.position
+                    gripper_norm = gripper_external_to_norm(grip_pos_rad)
+                else:
+                    grip_pos_mm = piper.read_gripper()
+                    gripper_norm = gripper_builtin_to_norm(grip_pos_mm)
+                gripper_norm = np.clip(gripper_norm, 0.0, 1.0)
 
-            # Read camera images
-            for cam_name, camera in cameras.items():
-                img = camera.read()  # (H, W, 3) RGB uint8
+                ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)
+                state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
+                batch = {OBS_STATE: state_tensor}
 
-                if not args.no_vis:
-                    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                    if camera_matrix is not None and chunk_traj_3d is not None:
-                        pts_2d = project_points_to_image(chunk_traj_3d, camera_matrix)
-                        img_bgr = draw_trajectory_on_image(img_bgr, pts_2d)
-                    cv2.imshow(f"Piper: {cam_name}", img_bgr)
-                    cv2.waitKey(1)
-
-                img_float = img.astype(np.float32) / 255.0
-                img_chw = np.transpose(img_float, (2, 0, 1))
-                batch[f"observation.images.{cam_name}"] = (
-                    torch.from_numpy(img_chw).unsqueeze(0).to(device)
-                )
-
-            # Predict new chunk when queue is empty
-            if len(action_queue) == 0:
-                with torch.no_grad():
-                    processed = preprocessor(batch)
-                    pred_norm = policy.predict_action_chunk(processed)
-
-                    # Save normalized rot6d for visualization (before postprocessor)
-                    viz_pred_rel = None
-                    if not args.no_vis and camera_matrix is not None and action_stats is not None:
-                        viz_pred_rel = unnormalize_actions(
-                            pred_norm.clone(), action_stats
-                        ).cpu().numpy()
-                        if viz_pred_rel.ndim == 3:
-                            viz_pred_rel = viz_pred_rel[0]
-
-                    pred = postprocessor(pred_norm)
-
-                if isinstance(pred, dict) and "action" in pred:
-                    pred = pred["action"]
-
-                actions_aa = pred[0].cpu().numpy()
-                if step_count < 5:
-                    logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
-                    logger.info(f"  First action_aa: {actions_aa[0]}")
-                    logger.info(f"  Last action_aa:  {actions_aa[-1]}")
-                action_queue = [
-                    actions_aa[i]
-                    for i in range(min(args.n_action_steps, len(actions_aa)))
-                ]
-                logger.info(f"Predicted chunk of {len(action_queue)} actions")
-
-                # Compute trajectory overlay (reuses already-computed prediction)
-                chunk_traj_3d = None
-                if viz_pred_rel is not None:
-                    T_rel_list = [rot6d_to_matrix(a) for a in viz_pred_rel]
-                    chunk_traj_3d = relative_actions_to_3d_points(
-                        T_rel_list, viz_T_opt_cam, viz_T_cam_ee
+                # ── 8c. Read cameras into batch (viz deferred until 8e) ──
+                for cam_name, camera in cameras.items():
+                    img = camera.read()  # (H, W, 3) RGB uint8
+                    img_float = img.astype(np.float32) / 255.0
+                    img_chw = np.transpose(img_float, (2, 0, 1))
+                    batch[f"observation.images.{cam_name}"] = (
+                        torch.from_numpy(img_chw).unsqueeze(0).to(device)
                     )
 
-            # Execute next action
-            action_aa = action_queue.pop(0)
+                # ── 8d. Always run policy inference (refreshes overlay) ──
+                # Inference is pure computation; PAUSED just skips the IK + write
+                # step below. The action_queue advances at the same rate in both
+                # states so the trajectory overlay stays fresh.
+                if len(action_queue) == 0:
+                    with torch.no_grad():
+                        processed = preprocessor(batch)
+                        pred_norm = policy.predict_action_chunk(processed)
 
-            # Convert 7D aa absolute → joints via IK pipeline
-            action_dict = {
-                "ee.x": float(action_aa[0]),
-                "ee.y": float(action_aa[1]),
-                "ee.z": float(action_aa[2]),
-                "ee.wx": float(action_aa[3]),
-                "ee.wy": float(action_aa[4]),
-                "ee.wz": float(action_aa[5]),
-                "ee.gripper_pos": float(action_aa[6]),
-            }
-            observation_dict = {
-                f"{name}.pos": float(current_joints[i])
-                for i, name in enumerate(ARM_JOINTS)
-            }
+                        viz_pred_rel = None
+                        if not args.no_vis and camera_matrix is not None and action_stats is not None:
+                            viz_pred_rel = unnormalize_actions(
+                                pred_norm.clone(), action_stats
+                            ).cpu().numpy()
+                            if viz_pred_rel.ndim == 3:
+                                viz_pred_rel = viz_pred_rel[0]
 
-            if step_count < 5 or step_count % 100 == 0:
-                logger.info(
-                    f"  action_aa: [{action_aa[0]:.4f}, {action_aa[1]:.4f}, {action_aa[2]:.4f}, "
-                    f"{action_aa[3]:.4f}, {action_aa[4]:.4f}, {action_aa[5]:.4f}, grip={action_aa[6]:.3f}]"
-                )
-                logger.info(f"  current_joints: {current_joints}")
+                        pred = postprocessor(pred_norm)
 
-            try:
-                result = ik_pipeline((action_dict, observation_dict))
-            except Exception as e:
-                logger.warning(f"IK failed: {e}, skipping action")
+                    if isinstance(pred, dict) and "action" in pred:
+                        pred = pred["action"]
+
+                    actions_aa = pred[0].cpu().numpy()
+                    if step_count < 5:
+                        logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
+                        logger.info(f"  First action_aa: {actions_aa[0]}")
+                        logger.info(f"  Last action_aa:  {actions_aa[-1]}")
+                    action_queue = [
+                        actions_aa[i]
+                        for i in range(min(args.n_action_steps, len(actions_aa)))
+                    ]
+                    logger.info(f"Predicted chunk of {len(action_queue)} actions")
+
+                    chunk_traj_3d = None
+                    if viz_pred_rel is not None:
+                        T_rel_list = [rot6d_to_matrix(a) for a in viz_pred_rel]
+                        chunk_traj_3d = relative_actions_to_3d_points(
+                            T_rel_list, viz_T_opt_cam, viz_T_cam_ee
+                        )
+
+                # Pop one action (queue advances in both states so overlay cadence
+                # matches inference cadence — typically one new chunk per n_action_steps).
+                action_aa = action_queue.pop(0)
+                # In single-chunk mode: detect when we just popped the last action
+                # of the chunk so we can return to PAUSED after this tick's write.
+                last_of_chunk = single_chunk and len(action_queue) == 0
+
+                # ── 8e. Render viz with the freshly-computed overlay ─────
+                if not args.no_vis:
+                    for cam_name in cameras:
+                        cam_img = batch[f"observation.images.{cam_name}"].cpu().numpy()
+                        cam_img = np.transpose(cam_img[0], (1, 2, 0))
+                        cam_img = (cam_img * 255).astype(np.uint8)
+                        img_bgr = cv2.cvtColor(cam_img, cv2.COLOR_RGB2BGR)
+                        if camera_matrix is not None and chunk_traj_3d is not None:
+                            pts_2d = project_points_to_image(chunk_traj_3d, camera_matrix)
+                            img_bgr = draw_trajectory_on_image(img_bgr, pts_2d)
+                        cv2.imshow(f"Piper: {cam_name}", img_bgr)
+                    cv2.waitKey(1)
+
+                # ── 8f. PAUSED: arm holds pose, loop continues ───────────
+                if state == LoopState.PAUSED:
+                    elapsed = time.perf_counter() - t0
+                    if elapsed < 1.0 / args.fps:
+                        time.sleep(1.0 / args.fps - elapsed)
+                    continue
+
+                # ── 8g. INFERENCE: IK + write to motors ──────────────────
+                action_dict = {
+                    "ee.x": float(action_aa[0]),
+                    "ee.y": float(action_aa[1]),
+                    "ee.z": float(action_aa[2]),
+                    "ee.wx": float(action_aa[3]),
+                    "ee.wy": float(action_aa[4]),
+                    "ee.wz": float(action_aa[5]),
+                    "ee.gripper_pos": float(action_aa[6]),
+                }
+                observation_dict = {
+                    f"{name}.pos": float(current_joints[i])
+                    for i, name in enumerate(ARM_JOINTS)
+                }
+
+                if step_count < 5 or step_count % 100 == 0:
+                    logger.info(
+                        f"  action_aa: [{action_aa[0]:.4f}, {action_aa[1]:.4f}, {action_aa[2]:.4f}, "
+                        f"{action_aa[3]:.4f}, {action_aa[4]:.4f}, {action_aa[5]:.4f}, grip={action_aa[6]:.3f}]"
+                    )
+                    logger.info(f"  current_joints: {current_joints}")
+
+                ik_failed = False
+                try:
+                    result = ik_pipeline((action_dict, observation_dict))
+                except Exception as e:
+                    logger.warning(f"IK failed: {e}, skipping action")
+                    ik_failed = True
+
+                if not ik_failed:
+                    joint_values = np.array(
+                        [result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS]
+                    )
+                    if step_count < 5 or step_count % 100 == 0:
+                        logger.info(f"  IK result joints: {joint_values}")
+                        logger.info(f"  joint delta: {joint_values - current_joints}")
+                    piper.write_joints(joint_values)
+
+                    gripper_value = float(action_aa[6])
+                    if gripper is not None:
+                        kp, kd, pos_rad = gripper_norm_to_external(
+                            gripper_value, args.gripper_kp, args.gripper_kd
+                        )
+                        gripper.send_command(kp=kp, kd=kd, position=pos_rad)
+                    else:
+                        pos_mm = gripper_norm_to_builtin(gripper_value)
+                        piper.write_gripper(pos_mm)
+
                 step_count += 1
-                continue
 
-            # Send arm joint commands
-            joint_values = np.array(
-                [result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS]
-            )
-            if step_count < 5 or step_count % 100 == 0:
-                logger.info(f"  IK result joints: {joint_values}")
-                logger.info(f"  joint delta: {joint_values - current_joints}")
-            piper.write_joints(joint_values)
+                # Single-chunk mode: return to PAUSED after executing the whole chunk
+                if last_of_chunk:
+                    single_chunk = False
+                    state = LoopState.PAUSED
+                    action_queue.clear()
+                    logger.info("Chunk executed — back to PAUSED")
 
-            # Send gripper command (separate from IK pipeline)
-            gripper_value = float(action_aa[6])
-            if gripper is not None:
-                kp, kd, pos_rad = gripper_norm_to_external(
-                    gripper_value, args.gripper_kp, args.gripper_kd
-                )
-                gripper.send_command(kp=kp, kd=kd, position=pos_rad)
-            else:
-                pos_mm = gripper_norm_to_builtin(gripper_value)
-                piper.write_gripper(pos_mm)
+                elapsed = time.perf_counter() - t0
+                if elapsed < 1.0 / args.fps:
+                    time.sleep(1.0 / args.fps - elapsed)
 
-            step_count += 1
-
-            # Timing
-            elapsed = time.perf_counter() - t0
-            if elapsed < 1.0 / args.fps:
-                time.sleep(1.0 / args.fps - elapsed)
-
-            if step_count % 100 == 0:
-                logger.info(
-                    f"Step {step_count}: EE pos [{ee_aa[0]:.3f}, {ee_aa[1]:.3f}, {ee_aa[2]:.3f}]"
-                )
+                if step_count % 100 == 0:
+                    logger.info(
+                        f"Step {step_count}: EE pos [{ee_aa[0]:.3f}, {ee_aa[1]:.3f}, {ee_aa[2]:.3f}]"
+                    )
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
