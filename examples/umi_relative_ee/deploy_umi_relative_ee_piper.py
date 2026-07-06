@@ -62,7 +62,7 @@ ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 HOME_POSE_DEG = np.array([0.0, 50.60, -50.40, -1.21, 10.00, 0.00])
 SAFE_POSE_DEG = np.array([-0.66, -2.08, 1.8, 1.35, 17.16, 0.0])
-START_POSE_DEG = np.array([1.71, 95.6, -17.68, -2.99, -73.96, 1.73])
+START_POSE_DEG = np.array([-0.55, 79.2, -31.3, -1.59, -45.85, 6.2])
 
 # External DM4310 gripper (MIT mode, radians)
 GRIPPER_OPEN_RAD = -0.139
@@ -247,6 +247,24 @@ def move_to_safe(piper, gripper, gripper_kp, gripper_kd, duration=3.0):
         label="safe", gripper_kp=gripper_kp, gripper_kd=gripper_kd,
         duration=duration, open_gripper=True,
     )
+
+
+def resync_ik_safety(ik_pipeline, kinematics, piper):
+    """Re-anchor the IK safety check to the arm's real pose after a direct move.
+
+    q/r move the arm via piper.write_joints(), which bypasses ik_pipeline — so
+    EEBoundsAndSafety._last_pos stays at the last *pre-move* target. Without
+    resyncing, the first action after re-engaging (s) is measured against that
+    stale pose and rejected as an "EE jump > 0.05m". Set _last_pos to the current
+    EE so the next action is compared to where the arm actually is.
+    """
+    current_joints = piper.read_joints()
+    ee_T = kinematics.forward_kinematics(current_joints)
+    ee_pos = ee_T[:3, 3].copy()
+    for step in ik_pipeline.steps:
+        if hasattr(step, "_last_pos"):
+            step._last_pos = ee_pos
+    logger.info(f"Resynced IK safety _last_pos to current EE pos: {np.round(ee_pos, 3)}")
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +770,7 @@ def main():
                             gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
                             duration=2.0, open_gripper=True,
                         )
+                        resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
                         state = LoopState.PAUSED
@@ -764,6 +783,7 @@ def main():
                             gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
                             duration=3.0, open_gripper=True,
                         )
+                        resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
                         state = LoopState.PAUSED
