@@ -157,6 +157,8 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
+        if self.use_relative_actions and (self.pose_dim != 6 or not self.use_rot6d):
+            raise ValueError("ACT UMI relative-EE mode requires pose_dim=6 and use_rot6d=true.")
         if self.temporal_ensemble_coeff is not None and self.n_action_steps > 1:
             raise NotImplementedError(
                 "`n_action_steps` must be 1 when using temporal ensembling. This is "

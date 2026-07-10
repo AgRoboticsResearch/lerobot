@@ -108,6 +108,13 @@ class DiffusionConfig(PreTrainedConfig):
     horizon: int = 16
     n_action_steps: int = 8
 
+    # Processor-pipeline UMI relative-EE representation.
+    derive_state_from_action: bool = False
+    use_relative_actions: bool = False
+    pose_dim: int = 0
+    use_rot6d: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -167,6 +174,17 @@ class DiffusionConfig(PreTrainedConfig):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
+
+        if self.n_action_steps > self.horizon - self.n_obs_steps + 1:
+            raise ValueError(
+                "Diffusion n_action_steps must be <= horizon - n_obs_steps + 1, got "
+                f"{self.n_action_steps=} {self.horizon=} {self.n_obs_steps=}."
+            )
+        if self.use_relative_actions:
+            if self.n_obs_steps != 1:
+                raise ValueError("Diffusion UMI relative-EE mode requires n_obs_steps=1.")
+            if self.pose_dim != 6 or not self.use_rot6d:
+                raise ValueError("Diffusion UMI relative-EE mode requires pose_dim=6 and use_rot6d=true.")
 
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
@@ -231,6 +249,8 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.derive_state_from_action:
+            return [-1] + list(range(self.horizon))
         return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
 
     @property

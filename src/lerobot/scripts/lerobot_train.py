@@ -264,9 +264,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             },
         }
 
+    # A pretrained base model (not a resume checkpoint) may use processors for a
+    # different action representation. Relative-EE fine-tuning loads the model
+    # weights but constructs new 20D/10D processors from this dataset.
+    processor_pretrained_path = cfg.policy.pretrained_path
+    if getattr(cfg.policy, "use_relative_actions", False) and not cfg.resume:
+        processor_pretrained_path = None
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pretrained_path,
+        pretrained_path=processor_pretrained_path,
         **processor_kwargs,
         **postprocessor_kwargs,
     )

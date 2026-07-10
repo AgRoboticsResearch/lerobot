@@ -53,6 +53,11 @@ def make_act_pre_post_processors(
         pre-processor pipeline and the post-processor pipeline.
     """
 
+    if config.use_relative_actions:
+        from lerobot.processor.relative_action_processor_act import make_act_relative_ee_pre_post_processors
+
+        return make_act_relative_ee_pre_post_processors(config=config, dataset_stats=dataset_stats)
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),

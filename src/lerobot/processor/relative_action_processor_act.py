@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from lerobot.configs.types import NormalizationMode
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -27,6 +26,7 @@ from lerobot.processor.relative_action_processor import (
     DeriveStateFromActionStep,
     RelativeRot6dActionsProcessorStep,
     RelativeRot6dStateProcessorStep,
+    make_relative_ee_cache_key,
 )
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -67,16 +67,14 @@ def make_act_relative_ee_pre_post_processors(
         f"Expected ACTConfig, got {type(config)}"
     )
 
-    # Build relative action processor step
-    action_names = None
-    if dataset_stats and "action" in dataset_stats:
-        # Try to get action names from dataset metadata
-        pass  # action_names set via config
+    cache_key = make_relative_ee_cache_key()
 
+    # Build relative action processor step.
     relative_step = RelativeRot6dActionsProcessorStep(
         enabled=config.use_relative_actions,
         exclude_joints=config.relative_exclude_joints,
         action_names=getattr(config, "_action_names", None),
+        cache_key=cache_key,
     )
 
     # Build derive state step
@@ -127,6 +125,7 @@ def make_act_relative_ee_pre_post_processors(
             AbsoluteRot6dActionsProcessorStep(
                 enabled=True,
                 relative_step=relative_step,
+                cache_key=cache_key,
             )
         )
 

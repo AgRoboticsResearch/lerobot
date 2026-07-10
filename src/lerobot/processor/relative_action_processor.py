@@ -32,6 +32,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import torch
 from torch import Tensor
@@ -40,7 +41,6 @@ from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 from lerobot.utils.constants import ACTION, OBS_STATE
-
 
 # ============================================================================
 # SE(3) Helper Functions (PyTorch)
@@ -193,6 +193,13 @@ def to_relative_actions_rot6d(
     Returns:
         (B, T, 10) or (B, 10) relative actions in rot6d format.
     """
+    if actions_aa.shape[-1] != 7 or state_aa.shape[-1] != 7:
+        raise ValueError(
+            "UMI relative-EE conversion requires 7D axis-angle poses "
+            f"[xyz, axis-angle, gripper], got action={actions_aa.shape[-1]}D "
+            f"and state={state_aa.shape[-1]}D."
+        )
+
     mask_t = torch.tensor(mask, dtype=actions_aa.dtype, device=actions_aa.device)
     dims = mask_t.shape[0]
 
@@ -242,6 +249,13 @@ def to_absolute_actions_rot6d(
     Returns:
         (B, T, 7) or (B, 7) absolute actions in axis-angle.
     """
+    if actions_rot6d.shape[-1] != 10 or state_aa.shape[-1] != 7:
+        raise ValueError(
+            "UMI absolute-EE conversion requires 10D relative rot6d actions and a 7D "
+            f"axis-angle reference pose, got action={actions_rot6d.shape[-1]}D "
+            f"and state={state_aa.shape[-1]}D."
+        )
+
     mask_t = torch.tensor(mask, dtype=actions_rot6d.dtype, device=actions_rot6d.device)
     dims = mask_t.shape[0]
 
@@ -294,15 +308,20 @@ def to_relative_state_rot6d(
 # ============================================================================
 
 _state_cache: dict[str, tuple[Tensor, list[bool]]] = {}
-_CACHE_KEY = "relative_rot6d"
+_LEGACY_CACHE_KEY = "relative_rot6d"
 
 
-def _cache_state(state: Tensor, mask: list[bool]) -> None:
-    _state_cache[_CACHE_KEY] = (state.detach().cpu().clone(), mask)
+def make_relative_ee_cache_key() -> str:
+    """Return a unique cache key shared by one pre/postprocessor pair."""
+    return f"relative_rot6d_{uuid4().hex}"
 
 
-def _get_cached_state() -> tuple[Tensor | None, list[bool] | None]:
-    entry = _state_cache.get(_CACHE_KEY)
+def _cache_state(cache_key: str, state: Tensor, mask: list[bool]) -> None:
+    _state_cache[cache_key] = (state.detach().cpu().clone(), mask)
+
+
+def _get_cached_state(cache_key: str) -> tuple[Tensor | None, list[bool] | None]:
+    entry = _state_cache.get(cache_key)
     if entry is None:
         return None, None
     return entry
@@ -384,6 +403,7 @@ class RelativeRot6dActionsProcessorStep(ProcessorStep):
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     action_names: list[str] | None = None
+    cache_key: str = _LEGACY_CACHE_KEY
     _last_state: Tensor | None = field(default=None, init=False, repr=False)
 
     @staticmethod
@@ -429,7 +449,7 @@ class RelativeRot6dActionsProcessorStep(ProcessorStep):
         # Always cache state for the paired AbsoluteRot6dActionsProcessorStep
         if state is not None:
             self._last_state = state
-            _cache_state(state, self._build_mask(7))
+            _cache_state(self.cache_key, state, self._build_mask(7))
 
         if not self.enabled:
             return transition
@@ -451,7 +471,12 @@ class RelativeRot6dActionsProcessorStep(ProcessorStep):
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
+            "cache_key": self.cache_key,
         }
+
+    def reset(self) -> None:
+        self._last_state = None
+        _state_cache.pop(self.cache_key, None)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -478,6 +503,7 @@ class AbsoluteRot6dActionsProcessorStep(ProcessorStep):
 
     enabled: bool = False
     relative_step: RelativeRot6dActionsProcessorStep | None = field(default=None, repr=False)
+    cache_key: str = _LEGACY_CACHE_KEY
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
@@ -488,7 +514,7 @@ class AbsoluteRot6dActionsProcessorStep(ProcessorStep):
             cached_state = self.relative_step.get_cached_state()
             mask = self.relative_step._build_mask(7)
         else:
-            cached_state, mask = _get_cached_state()
+            cached_state, mask = _get_cached_state(self.cache_key)
 
         if cached_state is None:
             raise RuntimeError(
@@ -504,6 +530,45 @@ class AbsoluteRot6dActionsProcessorStep(ProcessorStep):
             return transition
 
         new_transition[TransitionKey.ACTION] = to_absolute_actions_rot6d(action, cached_state, mask)
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "cache_key": self.cache_key}
+
+    def reset(self) -> None:
+        _state_cache.pop(self.cache_key, None)
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register("diffusion_training_state_dimension_processor")
+@dataclass
+class DiffusionTrainingStateDimensionProcessorStep(ProcessorStep):
+    """Add Diffusion's singleton observation horizon to training state batches.
+
+    Relative-EE training batches contain an action target and a flattened 20D
+    state, while live inference relies on DiffusionPolicy's observation queue
+    to add the temporal dimension.
+    """
+
+    enabled: bool = False
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled or transition.get(TransitionKey.ACTION) is None:
+            return transition
+
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        state = observation.get(OBS_STATE) if observation else None
+        if state is None or state.ndim != 2:
+            return transition
+
+        new_transition = deepcopy(transition)
+        new_observation = dict(observation)
+        new_observation[OBS_STATE] = state.unsqueeze(1)
+        new_transition[TransitionKey.OBSERVATION] = new_observation
         return new_transition
 
     def get_config(self) -> dict[str, Any]:

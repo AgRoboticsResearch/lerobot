@@ -21,23 +21,19 @@ Usage:
 """
 
 import logging
-import sys
 
 import torch
 
+import lerobot.datasets.factory as factory_module
+import lerobot.scripts.lerobot_train as train_module
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.datasets.factory import resolve_delta_timestamps, IMAGENET_STATS
+from lerobot.datasets.factory import IMAGENET_STATS, resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.relative_action_stats import recompute_stats
-import lerobot.scripts.lerobot_train as train_module
 
 train = train_module.train
-
-# Track whether we're using relative actions for processor dispatch
-_using_relative_actions = False
-
 
 def _make_dataset_wrapper(cfg: TrainPipelineConfig):
     """Create dataset with relative rot6d action stats."""
@@ -67,17 +63,20 @@ def _make_dataset_wrapper(cfg: TrainPipelineConfig):
 
     use_relative_actions = getattr(cfg.policy, 'use_relative_actions', False)
     derive_state_from_action = getattr(cfg.policy, 'derive_state_from_action', False)
-    chunk_size = getattr(cfg.policy, 'chunk_size', 30)
+    prediction_horizon = (
+        cfg.policy.horizon if cfg.policy.type == "diffusion" else cfg.policy.chunk_size
+    )
 
     if use_relative_actions:
         logging.info("Recomputing stats for relative rot6d actions...")
         recompute_stats(
             dataset,
             relative_action=True,
-            relative_exclude_joints=["gripper"],
-            chunk_size=chunk_size,
+            relative_exclude_joints=cfg.policy.relative_exclude_joints,
+            chunk_size=prediction_horizon,
             num_workers=2,
             derive_state_from_action=derive_state_from_action,
+            write_to_disk=False,
         )
 
         old_shape = dataset.meta.info['features']['action']['shape']
@@ -102,8 +101,8 @@ def _make_dataset_wrapper(cfg: TrainPipelineConfig):
 
         logging.info(f"  Action stats mean shape: {dataset.meta.stats['action']['mean'].shape}")
 
-    use_imagenet_stats = getattr(cfg.dataset, 'use_imagenet_stats', True)
-    if use_imagenet_stats:
+    use_imagenet_stats = getattr(cfg.dataset, "use_imagenet_stats", True)
+    if use_imagenet_stats and cfg.policy.type == "act":
         for key in dataset.meta.camera_keys:
             if key not in dataset.meta.stats:
                 dataset.meta.stats[key] = {}
@@ -114,46 +113,28 @@ def _make_dataset_wrapper(cfg: TrainPipelineConfig):
     return dataset
 
 
-def _make_pre_post_processors_wrapper(policy_cfg, pretrained_path=None, **kwargs):
-    """Wrapper that creates ACT processors with relative rot6d pipeline."""
-    global _using_relative_actions
-    if _using_relative_actions:
-        from lerobot.processor.relative_action_processor_act import make_act_relative_ee_pre_post_processors
-        dataset_stats = kwargs.pop('dataset_stats', None)
-        return make_act_relative_ee_pre_post_processors(policy_cfg, dataset_stats=dataset_stats)
-    else:
-        from lerobot.policies.act.processor_act import make_act_pre_post_processors
-        dataset_stats = kwargs.pop('dataset_stats', None)
-        return make_act_pre_post_processors(config=policy_cfg, dataset_stats=dataset_stats)
-
-
-# Monkey-patch factory functions
+# Monkey-patch dataset creation so transformed metadata/stats are visible to
+# the otherwise standard LeRobot training loop. Policy factories dispatch by type.
 train_module.make_dataset = _make_dataset_wrapper
 
-import lerobot.datasets.factory as factory_module
 factory_module.make_dataset = _make_dataset_wrapper
-
-import lerobot.policies.factory as policy_factory
-train_module.make_pre_post_processors = _make_pre_post_processors_wrapper
-policy_factory.make_pre_post_processors = _make_pre_post_processors_wrapper
 
 
 @parser.wrap()
 def train_with_relative_ee_processor(cfg: TrainPipelineConfig):
     """Train ACT with UMI-style relative EE actions via processor pipeline."""
-    global _using_relative_actions
-
     use_relative_actions = getattr(cfg.policy, 'use_relative_actions', False)
     derive_state_from_action = getattr(cfg.policy, 'derive_state_from_action', False)
-    chunk_size = getattr(cfg.policy, 'chunk_size', 30)
-    _using_relative_actions = use_relative_actions
+    prediction_horizon = (
+        cfg.policy.horizon if cfg.policy.type == "diffusion" else cfg.policy.chunk_size
+    )
 
     logging.info("=" * 80)
     logging.info("Training with UMI-style: Processor Pipeline + rot6d (10D)")
     logging.info("=" * 80)
     logging.info(f"Dataset: {cfg.dataset.repo_id}")
     logging.info(f"Policy: {cfg.policy.type}")
-    logging.info(f"chunk_size: {chunk_size}")
+    logging.info(f"prediction_horizon: {prediction_horizon}")
     logging.info(f"derive_state_from_action: {derive_state_from_action}")
     logging.info(f"use_relative_actions: {use_relative_actions}")
     logging.info(f"use_rot6d: {getattr(cfg.policy, 'use_rot6d', False)}")

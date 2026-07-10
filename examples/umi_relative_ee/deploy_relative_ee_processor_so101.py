@@ -23,13 +23,11 @@ Usage:
 import argparse
 import logging
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 
-from lerobot.cameras import CameraConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
@@ -38,11 +36,11 @@ from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
 )
-from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 from lerobot.robots.so100_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )
+from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 from lerobot.utils.constants import OBS_STATE
 
 logger = logging.getLogger(__name__)
@@ -183,10 +181,14 @@ def main():
                     img = np.transpose(img, (2, 0, 1))  # HWC → CHW
                     batch[f"observation.images.{cam_name}"] = torch.from_numpy(img).unsqueeze(0).to(device)
 
+            # Keep the two-frame relative state at control-frame cadence, while
+            # converting each newly predicted chunk against one fixed base pose.
+            with torch.no_grad():
+                processed = preprocessor(batch)
+
             # Predict new chunk when queue is empty
             if len(action_queue) == 0:
                 with torch.no_grad():
-                    processed = preprocessor(batch)
                     pred = policy.predict_action_chunk(processed)
                     pred = postprocessor(pred)
 

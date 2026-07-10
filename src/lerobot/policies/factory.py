@@ -444,7 +444,9 @@ def make_policy(
         features = env_to_policy_features(env_cfg)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
+    if not cfg.input_features or getattr(cfg, "use_relative_actions", False):
+        # Relative-EE metadata changes state/action dimensions, so a pretrained
+        # padded policy such as SmolVLA must adopt the current dataset inputs.
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 

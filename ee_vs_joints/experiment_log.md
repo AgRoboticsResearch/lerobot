@@ -468,3 +468,82 @@ Notes:
 - State defaults to identity `[0,0,0,0,0,0,0.5]` — no robot FK needed
 - Optional: `--update_state` to chain predictions, `--initial_state` for custom start pose
 - Press `Esc` to stop
+
+---
+
+## Mode 5: Scale-Up — 1000-Episode Dataset, 2.5M Steps (2026-07-10)
+
+**Date**: 2026-07-10
+
+### Goal
+
+Scale the Mode 4 (UMI-style processor pipeline + rot6d) recipe up to the full ~1000-episode
+dataset and a longer 2.5M-step schedule, to test whether more data + longer training improves
+generalization for strawberry picking. Same architecture, processor pipeline, normalization, and
+10D rot6d relative action format as Mode 4 — only the dataset, step count change. Checkpoint
+cadence stays at every 100k.
+
+### Dataset
+
+- **Repo**: `sroi/sroiv2_strawberry_picking_lab_1000onesb`
+- **Root**: `/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb`
+- 1009 episodes, 88228 frames, 30 fps
+- Features: `action` (7D EE `[x,y,z,wx,wy,wz,gripper]`) + `observation.images.camera`
+- No `observation.state` column — state derived from action during training (same as Mode 4)
+
+### Lineage / Baseline
+
+Predecessor run (same recipe, smaller data): `umi_processor_ee_action_chunk30_sroi_v2_merge`
+- Dataset: `sroiv2_strawberry_picking_lab_20260521_20260702` (205 episodes)
+- steps=500k, save_freq=100k — **completed**
+- Final train/loss @ 500k = 0.01314 (l1=0.01561, kld=1.56e-6), runtime ≈ 5.4 h
+
+### Training Command
+
+```bash
+python examples/umi_relative_ee/train_relative_ee_processor.py \
+  --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1000onesb \
+  --dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb \
+  --policy.type=act \
+  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/umi_processor_ee_action_chunk_30_sroi_v2_1000_one_sb \
+  --job_name=act_umi_processor_ee_action_chunk30 \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
+  --save_freq=100000 \
+  --steps=2500000 \
+  --batch_size=8 \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.derive_state_from_action=true \
+  --policy.use_relative_actions=true \
+  --policy.pose_dim=6 \
+  --policy.use_rot6d=true
+```
+
+Run from the repo root (`/mnt/data0/code/lerobots/lerobot`).
+Note: with `--dataset.root` set, `repo_id` is only a label (files live directly under `root`).
+
+### Differences from Mode 4 baseline
+
+| field | Mode 4 baseline (`..._merge`) | Mode 5 (this run) |
+|---|---|---|
+| dataset | `..._20260521_20260702` (205 ep) | `..._1000onesb` (1009 ep) |
+| steps | 500,000 | 2,500,000 |
+| save_freq | 100,000 | 100,000 |
+| batch_size | 8 | 8 |
+| chunk_size | 30 | 30 |
+
+Everything else (recipe, pipeline, normalization, dimensions) is identical to Mode 4.
+
+### Expected Checkpoints
+
+Every 100k → 25 checkpoints (100k … 2,500k) + last.
+At the baseline throughput (~5.4 h / 500k steps), the full 2.5M run is roughly ~27 h.
+
+### Status
+
+- **Status**: Planned (not yet started)
+- **Output dir**: `umi_processor_ee_action_chunk_30_sroi_v2_1000_one_sb/`
+- **Results**: TBD (fill in final train/loss, eval reward after run)

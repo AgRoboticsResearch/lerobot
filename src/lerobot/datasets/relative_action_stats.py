@@ -205,6 +205,7 @@ def recompute_stats(
     chunk_size: int = 50,
     num_workers: int = 0,
     derive_state_from_action: bool = False,
+    write_to_disk: bool = True,
 ) -> dict:
     """Recompute stats with optional relative action support.
 
@@ -222,6 +223,8 @@ def recompute_stats(
         chunk_size: Must match training chunk_size.
         num_workers: Parallel threads for stats computation.
         derive_state_from_action: Derive state from action column.
+        write_to_disk: Persist transformed stats in the dataset metadata directory.
+            Set to False when transformed dimensions differ from raw stored features.
 
     Returns:
         Updated stats dict.
@@ -313,8 +316,10 @@ def recompute_stats(
             if key not in new_stats:
                 new_stats[key] = value
 
-    # Write and update
-    write_stats(new_stats, dataset.root)
+    # Keep transformed processor stats in memory without replacing raw dataset stats
+    # unless the caller explicitly requests persistence.
+    if write_to_disk:
+        write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
 
     logger.info("Stats recomputed successfully")
@@ -333,16 +338,17 @@ def _compute_relative_action_stats_derived(
     if len(valid_starts) == 0:
         raise RuntimeError("No valid chunks for derived-state stats")
 
-    # For derived state: state = action[t], future_actions = action[t+1:t+1+chunk_size]
+    # A query starts with action[t-1], then action[t:t+chunk_size]. The
+    # second entry is both the base pose and the first retained action target.
     batch_size = 50_000
     batches = [valid_starts[i:i + batch_size] for i in range(0, len(valid_starts), batch_size)]
     running_stats = RunningQuantileStats()
 
     for batch in batches:
         chunks = []
-        states = all_actions[batch]  # state at t
+        states = all_actions[batch + 1]  # action[t], the second queried entry
         for i, start in enumerate(batch):
-            chunk = all_actions[start + 1:start + 1 + chunk_size]  # actions at t+1..t+chunk
+            chunk = all_actions[start + 1:start + 1 + chunk_size]  # action[t:t+chunk_size]
             state_exp = np.broadcast_to(states[i], (chunk_size, 7)).copy()
             chunk_rel = _pose_se3_relative_aa_to_rot6d_np(state_exp, chunk)
             chunks.append(chunk_rel)

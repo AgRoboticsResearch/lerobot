@@ -32,6 +32,13 @@ class SmolVLAConfig(PreTrainedConfig):
     chunk_size: int = 50
     n_action_steps: int = 50
 
+    # Processor-pipeline UMI relative-EE representation.
+    derive_state_from_action: bool = False
+    use_relative_actions: bool = False
+    pose_dim: int = 0
+    use_rot6d: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -115,6 +122,16 @@ class SmolVLAConfig(PreTrainedConfig):
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
+        if self.use_relative_actions:
+            if self.n_obs_steps != 1:
+                raise ValueError("SmolVLA UMI relative-EE mode requires n_obs_steps=1.")
+            if self.pose_dim != 6 or not self.use_rot6d:
+                raise ValueError("SmolVLA UMI relative-EE mode requires pose_dim=6 and use_rot6d=true.")
+            if self.max_state_dim < 20 or self.max_action_dim < 10:
+                raise ValueError(
+                    "SmolVLA UMI relative-EE mode requires max_state_dim>=20 and max_action_dim>=10."
+                )
+
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
@@ -152,6 +169,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.derive_state_from_action:
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

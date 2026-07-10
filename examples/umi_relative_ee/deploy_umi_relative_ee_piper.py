@@ -37,10 +37,14 @@ import torch
 import yaml
 
 from lerobot.cameras import CameraConfig
+
+# Ensure RealSenseCameraConfig is importable for parse_cameras_config
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.model.kinematics import RobotKinematics
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
@@ -51,10 +55,6 @@ from lerobot.robots.so100_follower.robot_kinematic_processor import (
     InverseKinematicsEEToJoints,
 )
 from lerobot.utils.constants import OBS_STATE
-
-# Ensure RealSenseCameraConfig is importable for parse_cameras_config
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -392,11 +392,35 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, CameraConfig]:
     return cameras
 
 
+def load_policy_and_processors(model_path: str, device: torch.device):
+    """Load any supported policy and its checkpointed relative-EE processors."""
+    policy_config = PreTrainedConfig.from_pretrained(model_path)
+    policy_class = get_policy_class(policy_config.type)
+    policy = policy_class.from_pretrained(model_path, local_files_only=True)
+    policy.eval()
+    policy.config.device = str(device)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy.config,
+        pretrained_path=model_path,
+        preprocessor_overrides={"device_processor": {"device": str(device)}},
+    )
+    return policy, preprocessor, postprocessor
+
+
+def add_policy_task(batch: dict, policy, task: str | None) -> None:
+    if policy.name != "smolvla":
+        return
+    if not task:
+        raise ValueError("SmolVLA deployment requires --task (for this dataset: 'pick the strawberry').")
+    batch["task"] = task
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Deploy UMI-style relative EE policy on Piper arm"
     )
     parser.add_argument("--pretrained_path", type=str, required=True)
+    parser.add_argument("--task", type=str, default=None, help="Language task required by SmolVLA")
     parser.add_argument("--can_port", type=str, default="can0")
     parser.add_argument("--gripper_port", type=str, default="/dev/ttyACM0")
     parser.add_argument(
@@ -439,15 +463,7 @@ def run_dry_run(args):
 
     # Load policy + processors
     logger.info(f"Loading policy from: {args.pretrained_path}")
-    policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
-    policy.eval()
-    policy.config.device = str(device)
-
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy,
-        pretrained_path=args.pretrained_path,
-        preprocessor_overrides={"device_processor": {"device": str(device)}},
-    )
+    policy, preprocessor, postprocessor = load_policy_and_processors(args.pretrained_path, device)
     logger.info("Policy and processors loaded")
 
     action_stats = extract_action_stats(preprocessor)
@@ -514,6 +530,7 @@ def run_dry_run(args):
 
             state_tensor = torch.from_numpy(current_state).unsqueeze(0).to(device)
             batch = {OBS_STATE: state_tensor}
+            add_policy_task(batch, policy, args.task)
 
             for cam_name, camera in cameras.items():
                 img = camera.read()
@@ -604,17 +621,8 @@ def main():
     model_path = args.pretrained_path
     logger.info(f"Loading policy from: {model_path}")
 
-    with _timed_phase("load policy"):
-        policy = ACTPolicy.from_pretrained(model_path, local_files_only=True)
-        policy.eval()
-        policy.config.device = str(device)
-
-    with _timed_phase("build pre/post processors"):
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy,
-            pretrained_path=model_path,
-            preprocessor_overrides={"device_processor": {"device": str(device)}},
-        )
+    with _timed_phase("load policy + processors"):
+        policy, preprocessor, postprocessor = load_policy_and_processors(model_path, device)
     logger.info("Policy and processors loaded")
 
     # Visualization setup (shared by both modes)
@@ -822,6 +830,7 @@ def main():
                 ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)
                 state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
                 batch = {OBS_STATE: state_tensor}
+                add_policy_task(batch, policy, args.task)
 
                 # ── 8c. Read cameras into batch (viz deferred until 8e) ──
                 for cam_name, camera in cameras.items():
@@ -832,13 +841,14 @@ def main():
                         torch.from_numpy(img_chw).unsqueeze(0).to(device)
                     )
 
-                # ── 8d. Always run policy inference (refreshes overlay) ──
-                # Inference is pure computation; PAUSED just skips the IK + write
-                # step below. The action_queue advances at the same rate in both
-                # states so the trajectory overlay stays fresh.
+                # Update the two-frame relative state every control tick. Generate
+                # and convert a complete chunk only when the absolute-action queue
+                # is empty, so every action retains the same chunk-start base pose.
+                with torch.no_grad():
+                    processed = preprocessor(batch)
+
                 if len(action_queue) == 0:
                     with torch.no_grad():
-                        processed = preprocessor(batch)
                         pred_norm = policy.predict_action_chunk(processed)
 
                         viz_pred_rel = None

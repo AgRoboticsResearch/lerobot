@@ -62,6 +62,13 @@ def make_diffusion_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    if config.use_relative_actions:
+        from lerobot.processor.relative_action_processor_diffusion import (
+            make_diffusion_relative_ee_pre_post_processors,
+        )
+
+        return make_diffusion_relative_ee_pre_post_processors(config=config, dataset_stats=dataset_stats)
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
