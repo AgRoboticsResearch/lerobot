@@ -26,7 +26,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.scripts.lerobot_train import _make_offline_dataloader, validate_policy
+from lerobot.scripts.lerobot_train import _make_offline_dataloader, _run_validation, validate_policy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
 
@@ -63,6 +63,9 @@ class _LossPolicy(torch.nn.Module):
 
 
 class _SingleProcessAccelerator:
+    def __init__(self):
+        self.wait_count = 0
+
     @staticmethod
     def autocast():
         return nullcontext()
@@ -71,6 +74,9 @@ class _SingleProcessAccelerator:
     def gather_for_metrics(values):
         return values
 
+    def wait_for_everyone(self):
+        self.wait_count += 1
+
 
 class _FakeWandb:
     def __init__(self):
@@ -78,6 +84,14 @@ class _FakeWandb:
 
     def log(self, data, step=None):
         self.logged.append((data, step))
+
+
+class _FakeValidationLogger:
+    def __init__(self):
+        self.logged = []
+
+    def log_dict(self, data, step, mode):
+        self.logged.append((data, step, mode))
 
 
 def test_validation_config_defaults():
@@ -127,6 +141,30 @@ def test_validation_loss_is_sample_weighted_and_restores_state():
     assert policy.training
     assert policy.forward_states == [(False, False), (False, False), (False, False)]
     assert preprocessor.reset_count == 2
+
+
+def test_run_validation_logs_step_zero_before_training():
+    dataset = _ValidationDataset([1.0, 3.0])
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=False)
+    policy = _LossPolicy()
+    preprocessor = _IdentityPreprocessor()
+    accelerator = _SingleProcessAccelerator()
+    logger = _FakeValidationLogger()
+
+    loss = _run_validation(
+        policy,
+        dataloader,
+        preprocessor,
+        accelerator,
+        logger,
+        step=0,
+        is_main_process=True,
+    )
+
+    assert loss == 2.0
+    assert logger.logged == [({"loss": 2.0}, 0, "val")]
+    assert accelerator.wait_count == 1
+    assert policy.forward_states == [(False, False)]
 
 
 def test_validation_dataloader_is_deterministic():

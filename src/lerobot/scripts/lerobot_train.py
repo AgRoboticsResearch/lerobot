@@ -225,6 +225,30 @@ def validate_policy(
     return total_loss / total_samples
 
 
+def _run_validation(
+    policy: PreTrainedPolicy,
+    dataloader: torch.utils.data.DataLoader,
+    preprocessor,
+    accelerator: Accelerator,
+    wandb_logger: WandBLogger | None,
+    step: int,
+    is_main_process: bool,
+) -> float:
+    """Run validation and report its loss consistently at any training step."""
+    if is_main_process:
+        logging.info(f"Validate policy at step {step}")
+
+    val_loss = validate_policy(policy, dataloader, preprocessor, accelerator)
+
+    if is_main_process:
+        logging.info(f"Validation loss at step {step}: {val_loss:.6f}")
+        if wandb_logger:
+            wandb_logger.log_dict({"loss": val_loss}, step, mode="val")
+
+    accelerator.wait_for_everyone()
+    return val_loss
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
@@ -446,6 +470,18 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         validation_dataloader = accelerator.prepare(validation_dataloader)
     dl_iter = cycle(dataloader)
 
+    # Establish a validation baseline before the first optimizer update.
+    if step == 0 and validation_dataloader is not None and cfg.val_freq > 0:
+        _run_validation(
+            policy,
+            validation_dataloader,
+            preprocessor,
+            accelerator,
+            wandb_logger,
+            step=0,
+            is_main_process=is_main_process,
+        )
+
     policy.train()
 
     train_metrics = {
@@ -520,15 +556,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             train_tracker.reset_averages()
 
         if is_validation_step:
-            if is_main_process:
-                logging.info(f"Validate policy at step {step}")
-            val_loss = validate_policy(policy, validation_dataloader, preprocessor, accelerator)
-            if is_main_process:
-                logging.info(f"Validation loss at step {step}: {val_loss:.6f}")
-                if wandb_logger:
-                    wandb_logger.log_dict({"loss": val_loss}, step, mode="val")
-
-            accelerator.wait_for_everyone()
+            _run_validation(
+                policy,
+                validation_dataloader,
+                preprocessor,
+                accelerator,
+                wandb_logger,
+                step=step,
+                is_main_process=is_main_process,
+            )
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
