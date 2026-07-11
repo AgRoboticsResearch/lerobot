@@ -147,6 +147,84 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _make_offline_dataloader(
+    dataset,
+    dataset_config,
+    policy_config,
+    *,
+    num_workers: int,
+    batch_size: int,
+    device: torch.device,
+    shuffle: bool,
+) -> torch.utils.data.DataLoader:
+    """Create a training or deterministic validation dataloader."""
+    if hasattr(policy_config, "drop_n_last_frames"):
+        sampler = EpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
+            drop_n_last_frames=policy_config.drop_n_last_frames,
+            shuffle=shuffle,
+        )
+        dataloader_shuffle = False
+    else:
+        sampler = None
+        dataloader_shuffle = shuffle and not dataset_config.streaming
+
+    return torch.utils.data.DataLoader(
+        dataset,
+        num_workers=num_workers,
+        batch_size=batch_size,
+        shuffle=dataloader_shuffle,
+        sampler=sampler,
+        pin_memory=device.type == "cuda",
+        drop_last=False,
+        prefetch_factor=2 if num_workers > 0 else None,
+    )
+
+
+def _get_batch_size(batch: dict[str, Any]) -> int:
+    for value in batch.values():
+        if isinstance(value, torch.Tensor) and value.ndim > 0:
+            return value.shape[0]
+    raise ValueError("Validation batch does not contain a batched tensor.")
+
+
+def validate_policy(
+    policy: PreTrainedPolicy,
+    dataloader: torch.utils.data.DataLoader,
+    preprocessor,
+    accelerator: Accelerator,
+) -> float:
+    """Compute the sample-weighted validation loss without changing training state."""
+    was_training = policy.training
+    total_loss = 0.0
+    total_samples = 0
+
+    policy.eval()
+    preprocessor.reset()
+    try:
+        with torch.no_grad():
+            for batch in dataloader:
+                batch = preprocessor(batch)
+                with accelerator.autocast():
+                    loss, _ = policy.forward(batch)
+
+                batch_size = _get_batch_size(batch)
+                batch_losses = loss.detach().float().reshape(1).repeat(batch_size)
+                gathered_losses = accelerator.gather_for_metrics(batch_losses)
+                total_loss += gathered_losses.double().sum().item()
+                total_samples += gathered_losses.numel()
+    finally:
+        preprocessor.reset()
+        policy.train(was_training)
+
+    if total_samples == 0:
+        raise ValueError("Validation dataset is empty.")
+
+    return total_loss / total_samples
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
@@ -203,15 +281,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
+    validation_enabled = cfg.validation_dataset is not None and cfg.val_freq > 0
+    validation_dataset = None
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
+        if validation_enabled:
+            logging.info("Creating validation dataset")
+            validation_dataset = make_dataset(cfg, dataset_config=cfg.validation_dataset)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
+    # Now all other processes can safely load the datasets
     if not is_main_process:
         dataset = make_dataset(cfg)
+        if validation_enabled:
+            validation_dataset = make_dataset(cfg, dataset_config=cfg.validation_dataset)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -330,36 +415,35 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
-    # create dataloader for offline training
-    if hasattr(cfg.policy, "drop_n_last_frames"):
-        shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=cfg.policy.drop_n_last_frames,
-            shuffle=True,
-        )
-    else:
-        shuffle = True
-        sampler = None
-
-    dataloader = torch.utils.data.DataLoader(
+    # Create dataloaders for offline training and optional validation.
+    dataloader = _make_offline_dataloader(
         dataset,
+        cfg.dataset,
+        cfg.policy,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle and not cfg.dataset.streaming,
-        sampler=sampler,
-        pin_memory=device.type == "cuda",
-        drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        device=device,
+        shuffle=True,
     )
+    validation_dataloader = None
+    if validation_dataset is not None:
+        validation_dataloader = _make_offline_dataloader(
+            validation_dataset,
+            cfg.validation_dataset,
+            cfg.policy,
+            num_workers=cfg.num_workers,
+            batch_size=cfg.batch_size,
+            device=device,
+            shuffle=False,
+        )
 
-    # Prepare everything with accelerator
+    # Prepare everything with accelerator.
     accelerator.wait_for_everyone()
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+    if validation_dataloader is not None:
+        validation_dataloader = accelerator.prepare(validation_dataloader)
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -412,6 +496,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        is_validation_step = (
+            validation_dataloader is not None and cfg.val_freq > 0 and step % cfg.val_freq == 0
+        )
 
         if is_log_step:
             logging.info(train_tracker)
@@ -431,6 +518,17 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     )
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        if is_validation_step:
+            if is_main_process:
+                logging.info(f"Validate policy at step {step}")
+            val_loss = validate_policy(policy, validation_dataloader, preprocessor, accelerator)
+            if is_main_process:
+                logging.info(f"Validation loss at step {step}: {val_loss:.6f}")
+                if wandb_logger:
+                    wandb_logger.log_dict({"loss": val_loss}, step, mode="val")
+
+            accelerator.wait_for_everyone()
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:

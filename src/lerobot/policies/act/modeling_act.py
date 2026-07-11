@@ -402,7 +402,9 @@ class ACT(nn.Module):
         batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
-        if self.config.use_vae and ACTION in batch and self.training:
+        # Validation batches include actions too. Run the VAE posterior in eval mode
+        # so validation computes the full objective without enabling dropout.
+        if self.config.use_vae and ACTION in batch:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size

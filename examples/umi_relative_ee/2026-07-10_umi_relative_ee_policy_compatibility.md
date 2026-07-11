@@ -750,6 +750,75 @@ without that field use the original shared key for backward compatibility.
 |---|---|
 | examples/umi_relative_ee/2026-07-10_umi_relative_ee_policy_compatibility.md | This compatibility review and implementation plan |
 
+## Optional Offline Validation
+
+The generic training loop accepts a second nested dataset configuration. For
+example, add these arguments to an ACT, SmolVLA, or Diffusion training command:
+
+```bash
+python examples/umi_relative_ee/train_relative_ee_processor.py \
+  --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1000onesb \
+  --dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb \
+  --validation_dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_validation \
+  --validation_dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --policy.type=act \
+  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/act_relative_ee_with_validation \
+  --job_name=act_relative_ee_with_validation \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --steps=2500000 \
+  --batch_size=8 \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.derive_state_from_action=true \
+  --policy.use_relative_actions=true \
+  --policy.pose_dim=6 \
+  --policy.use_rot6d=true \
+  --val_freq=1000
+```
+
+Validation evaluates the full selected validation dataset and logs `val/loss`
+to W&B. Use `--validation_dataset.episodes=[...]` to restrict the validation
+split. Validation uses normalization statistics computed from the training
+dataset. If `--validation_dataset.repo_id` is omitted, training behavior is
+unchanged. Set `--val_freq<=0` to disable configured validation.
+
+### Exact ACT Fresh-Restart Command
+
+The stopped run remains at
+`outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30_sroi_v2_1000_one_sb_corrected`.
+The following command starts again from step 0 in a new output directory:
+
+```bash
+python examples/umi_relative_ee/train_relative_ee_processor.py \
+  --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1000onesb \
+  --dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb \
+  --validation_dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_20260521_20260702 \
+  --validation_dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_20260521_20260702 \
+  --val_freq=1000 \
+  --policy.type=act \
+  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30_sroi_v2_1000_one_sb_corrected_with_validation \
+  --job_name=act_umi_relative_ee_chunk30_corrected_with_validation \
+  --policy.device=cuda \
+  --wandb.enable=true \
+  --policy.repo_id=zfff/act_policy \
+  --policy.push_to_hub=false \
+  --save_freq=100000 \
+  --steps=2500000 \
+  --batch_size=8 \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.derive_state_from_action=true \
+  --policy.use_relative_actions=true \
+  --policy.pose_dim=6 \
+  --policy.use_rot6d=true
+```
+
+The validation dataset contains 205 episodes and 27,182 frames. At batch
+size 8, each complete validation pass has about 3,398 batches, so validation
+every 1,000 training steps is compute-intensive. Increase `--val_freq` or
+select a subset with `--validation_dataset.episodes=[...]` if needed.
+
 ## Tags
 
 #python #pytorch #lerobot #robotics #umi #relative-ee #act #smolvla
