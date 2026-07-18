@@ -471,25 +471,31 @@ Notes:
 
 ---
 
-## Mode 5: Scale-Up — 1000-Episode Dataset, 2.5M Steps (2026-07-10)
+## Mode 5: Scale-Up — 1012-Train / 100-Val, 2.5M Steps (2026-07-10)
 
 **Date**: 2026-07-10
 
 ### Goal
 
-Scale the Mode 4 (UMI-style processor pipeline + rot6d) recipe up to the full ~1000-episode
-dataset and a longer 2.5M-step schedule, to test whether more data + longer training improves
-generalization for strawberry picking. Same architecture, processor pipeline, normalization, and
-10D rot6d relative action format as Mode 4 — only the dataset, step count change. Checkpoint
-cadence stays at every 100k.
+Scale the Mode 4 (UMI-style processor pipeline + rot6d) recipe up to the full ~1012-episode
+dataset (plus a 100-episode held-out validation split) and a longer 2.5M-step schedule, to test
+whether more data + longer training improves generalization for strawberry picking. Same
+architecture, processor pipeline, normalization, and 10D rot6d relative action format as Mode 4 —
+only the dataset and step count change. Validation loss components (l1 / kld) are logged
+separately (see below). Checkpoint cadence stays at every 100k.
 
 ### Dataset
 
 - **Repo**: `sroi/sroiv2_strawberry_picking_lab_1000onesb`
 - **Root**: `/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb`
-- 1009 episodes, 88228 frames, 30 fps
+- 1012 episodes, 88218 frames, 30 fps
 - Features: `action` (7D EE `[x,y,z,wx,wy,wz,gripper]`) + `observation.images.camera`
 - No `observation.state` column — state derived from action during training (same as Mode 4)
+
+**Validation set** (held-out, separate folder — no train/val leakage):
+- **Repo**: `sroi/sroiv2_strawberry_picking_lab_validation`
+- **Root**: `/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation`
+- 100 episodes, 9274 frames, 30 fps
 
 ### Lineage / Baseline
 
@@ -504,9 +510,12 @@ Predecessor run (same recipe, smaller data): `umi_processor_ee_action_chunk30_sr
 python examples/umi_relative_ee/train_relative_ee_processor.py \
   --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1000onesb \
   --dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb \
+  --validation_dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_validation \
+  --validation_dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --val_freq=10000 \
   --policy.type=act \
-  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/umi_processor_ee_action_chunk_30_sroi_v2_1000_one_sb \
-  --job_name=act_umi_processor_ee_action_chunk30 \
+  --output_dir=/home/zfei/code/lerobots/lerobot/outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30_sroi_v2_masked_1012train_100val \
+  --job_name=act_umi_relative_ee_chunk30_masked_1012train_100val \
   --policy.device=cuda \
   --wandb.enable=true \
   --policy.repo_id=zfff/act_policy \
@@ -529,7 +538,9 @@ Note: with `--dataset.root` set, `repo_id` is only a label (files live directly 
 
 | field | Mode 4 baseline (`..._merge`) | Mode 5 (this run) |
 |---|---|---|
-| dataset | `..._20260521_20260702` (205 ep) | `..._1000onesb` (1009 ep) |
+| dataset | `..._20260521_20260702` (205 ep) | `..._1000onesb` (1012 ep) |
+| validation set | none | `..._validation` (100 ep, held-out) |
+| val_freq | n/a | 10,000 |
 | steps | 500,000 | 2,500,000 |
 | save_freq | 100,000 | 100,000 |
 | batch_size | 8 | 8 |
@@ -542,8 +553,36 @@ Everything else (recipe, pipeline, normalization, dimensions) is identical to Mo
 Every 100k → 25 checkpoints (100k … 2,500k) + last.
 At the baseline throughput (~5.4 h / 500k steps), the full 2.5M run is roughly ~27 h.
 
+### Validation / Loss Monitoring (2026-07-16)
+
+ACT is a CVAE: `loss = l1_loss + kl_weight · kld_loss`. A decreasing **total** loss can be
+driven entirely by the KL term collapsing toward 0 (posterior collapse) with no real
+improvement in the actual EE/action prediction (the L1 term). So for this run we log the
+validation loss **components separately**, not just the total:
+
+- `val/loss` — total validation loss
+- `val/l1_loss` — reconstruction / EE-action prediction (the metric that actually matters)
+- `val/kld_loss` — latent KL (watch for collapse toward 0)
+
+Read them together: progress means `val/l1_loss` dropping while `val/kld_loss` stays healthy
+(not →0). A flat/rising `val/l1_loss` with a falling total = posterior collapse, not learning.
+
+**Implementation**: `validate_policy` / `_run_validation` in `src/lerobot/scripts/lerobot_train.py`
+now forward every scalar in the policy's `loss_dict` (sample-weighted) and log them under the
+`val/` namespace. `train/l1_loss` + `train/kld_loss` were already logged, so train and val
+components are directly comparable in W&B. Tests in `tests/training/test_offline_validation.py`.
+
+**Activation**: enabled for this run via a held-out validation split —
+`--validation_dataset.repo_id/root` point at the separate `sroiv2_strawberry_picking_lab_validation`
+folder (100 episodes), `--val_freq=10000`. The wrapper `train_relative_ee_processor.py` supports
+`dataset_config` and correctly reuses *training* normalization stats for validation (no leakage
+from recomputed stats). Validation runs every 10k steps (first at step 10,000 — there is no
+step-0 validation); at ~9.3k val frames / batch 8 that's a short forward pass each time.
+
 ### Status
 
-- **Status**: Planned (not yet started)
-- **Output dir**: `umi_processor_ee_action_chunk_30_sroi_v2_1000_one_sb/`
-- **Results**: TBD (fill in final train/loss, eval reward after run)
+- **Status**: Ready (command finalized; not yet launched)
+- **Output dir**: `umi_processor_ee_action_chunk30_sroi_v2_masked_1012train_100val/`
+- **Job name**: `act_umi_relative_ee_chunk30_masked_1012train_100val`
+- **Validation**: enabled — 100 held-out episodes, val_freq=10000 → logs `val/loss`, `val/l1_loss`, `val/kld_loss`
+- **Results**: TBD (fill in final train/loss, val/l1_loss, val/kld_loss, eval reward after run)

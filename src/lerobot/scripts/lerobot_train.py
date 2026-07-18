@@ -195,10 +195,18 @@ def validate_policy(
     dataloader: torch.utils.data.DataLoader,
     preprocessor,
     accelerator: Accelerator,
-) -> float:
-    """Compute the sample-weighted validation loss without changing training state."""
+) -> dict[str, float]:
+    """Compute sample-weighted validation metrics without changing training state.
+
+    Returns a dict mapping each metric name to its sample-weighted mean over the
+    validation set. ``"loss"`` (the total) is always present; any scalar components
+    the policy reports in its ``loss_dict`` are forwarded alongside it. For ACT this
+    means ``"l1_loss"`` (reconstruction, i.e. the actual action/EE prediction) and
+    ``"kld_loss"`` (latent KL) are tracked separately — so a falling total loss can't
+    masquerade as progress when it is really just the KL term collapsing toward zero.
+    """
     was_training = policy.training
-    total_loss = 0.0
+    metric_sums: dict[str, float] = {}
     total_samples = 0
 
     policy.eval()
@@ -208,13 +216,36 @@ def validate_policy(
             for batch in dataloader:
                 batch = preprocessor(batch)
                 with accelerator.autocast():
-                    loss, _ = policy.forward(batch)
+                    loss, loss_dict = policy.forward(batch)
 
                 batch_size = _get_batch_size(batch)
-                batch_losses = loss.detach().float().reshape(1).repeat(batch_size)
-                gathered_losses = accelerator.gather_for_metrics(batch_losses)
-                total_loss += gathered_losses.double().sum().item()
-                total_samples += gathered_losses.numel()
+
+                # Collect the scalar metrics for this batch: the total loss plus any
+                # per-component scalars the policy exposes (e.g. ACT's l1/kld).
+                batch_metrics: dict[str, torch.Tensor] = {"loss": loss.detach().float()}
+                for key, value in (loss_dict or {}).items():
+                    if key in batch_metrics:
+                        continue
+                    if isinstance(value, torch.Tensor):
+                        if value.numel() == 1:
+                            batch_metrics[key] = value.detach().float().reshape(())
+                    elif isinstance(value, (int, float)):
+                        batch_metrics[key] = torch.tensor(
+                            float(value), device=loss.device, dtype=torch.float32
+                        )
+
+                # Replicate each scalar across the batch and gather once across
+                # processes, keeping per-metric sample weighting identical to the
+                # total-loss path. Shape: [batch_size, n_metrics] -> [N, n_metrics].
+                names = list(batch_metrics.keys())
+                vals = torch.stack(
+                    [batch_metrics[name].reshape(1).repeat(batch_size) for name in names], dim=1
+                )
+                gathered = accelerator.gather_for_metrics(vals)
+                sums = gathered.double().sum(dim=0)
+                for name, value in zip(names, sums.tolist()):
+                    metric_sums[name] = metric_sums.get(name, 0.0) + value
+                total_samples += gathered.shape[0]
     finally:
         preprocessor.reset()
         policy.train(was_training)
@@ -222,7 +253,7 @@ def validate_policy(
     if total_samples == 0:
         raise ValueError("Validation dataset is empty.")
 
-    return total_loss / total_samples
+    return {name: total / total_samples for name, total in metric_sums.items()}
 
 
 def _run_validation(
@@ -234,16 +265,20 @@ def _run_validation(
     step: int,
     is_main_process: bool,
 ) -> float:
-    """Run validation and report its loss consistently at any training step."""
+    """Run validation and report its metrics consistently at any training step."""
     if is_main_process:
         logging.info(f"Validate policy at step {step}")
 
-    val_loss = validate_policy(policy, dataloader, preprocessor, accelerator)
+    val_metrics = validate_policy(policy, dataloader, preprocessor, accelerator)
+    val_loss = val_metrics["loss"]
 
     if is_main_process:
-        logging.info(f"Validation loss at step {step}: {val_loss:.6f}")
+        # Report the total plus each component (e.g. l1 / kld for ACT) so a dropping
+        # total can't hide a collapsing KL term behind an unchanging reconstruction.
+        parts = ", ".join(f"{name}={value:.6f}" for name, value in val_metrics.items())
+        logging.info(f"Validation at step {step}: {parts}")
         if wandb_logger:
-            wandb_logger.log_dict({"loss": val_loss}, step, mode="val")
+            wandb_logger.log_dict(val_metrics, step, mode="val")
 
     accelerator.wait_for_everyone()
     return val_loss
@@ -469,18 +504,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if validation_dataloader is not None:
         validation_dataloader = accelerator.prepare(validation_dataloader)
     dl_iter = cycle(dataloader)
-
-    # Establish a validation baseline before the first optimizer update.
-    if step == 0 and validation_dataloader is not None and cfg.val_freq > 0:
-        _run_validation(
-            policy,
-            validation_dataloader,
-            preprocessor,
-            accelerator,
-            wandb_logger,
-            step=0,
-            is_main_process=is_main_process,
-        )
 
     policy.train()
 

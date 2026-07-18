@@ -17,6 +17,7 @@ import sys
 from contextlib import nullcontext
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from lerobot.configs.default import DatasetConfig
@@ -53,13 +54,24 @@ class _IdentityPreprocessor:
 
 
 class _LossPolicy(torch.nn.Module):
-    def __init__(self):
+    """Minimal policy returning a ``(loss, loss_dict)`` tuple like real policies.
+
+    With ``loss_dict=True`` it reports ACT-style ``l1_loss`` / ``kld_loss``
+    components derived from the batch mean, so tests can verify they are
+    sample-weighted and surfaced separately from the total loss.
+    """
+
+    def __init__(self, loss_dict: bool = False):
         super().__init__()
         self.forward_states: list[tuple[bool, bool]] = []
+        self._report_components = loss_dict
 
     def forward(self, batch):
         self.forward_states.append((self.training, torch.is_grad_enabled()))
-        return batch["value"].mean(), {}
+        value = batch["value"].mean()
+        if self._report_components:
+            return value, {"l1_loss": float(value), "kld_loss": float(value) / 10.0}
+        return value, {}
 
 
 class _SingleProcessAccelerator:
@@ -135,18 +147,68 @@ def test_validation_loss_is_sample_weighted_and_restores_state():
     policy.train()
     preprocessor = _IdentityPreprocessor()
 
-    loss = validate_policy(policy, dataloader, preprocessor, _SingleProcessAccelerator())
+    metrics = validate_policy(policy, dataloader, preprocessor, _SingleProcessAccelerator())
 
-    assert loss == 4.0
+    # The default fake policy reports no loss components, so only the total is returned.
+    assert metrics == {"loss": 4.0}
     assert policy.training
     assert policy.forward_states == [(False, False), (False, False), (False, False)]
     assert preprocessor.reset_count == 2
 
 
-def test_run_validation_logs_step_zero_before_training():
+def test_validation_forwards_loss_components_sample_weighted():
+    """Per-component losses (ACT's l1 / kld) must be sample-weighted and returned
+    separately from the total, so a collapsing KL can't hide behind the total loss."""
+    dataset = _ValidationDataset([1.0, 2.0, 3.0, 4.0, 10.0])
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=False)
+    policy = _LossPolicy(loss_dict=True)
+    policy.train()
+    preprocessor = _IdentityPreprocessor()
+
+    metrics = validate_policy(policy, dataloader, preprocessor, _SingleProcessAccelerator())
+
+    # total and l1 both equal the sample-weighted batch mean = (1+2+3+4+10)/5 = 4.0;
+    # kld is l1 / 10, so its sample-weighted mean is 0.4.
+    assert set(metrics) == {"loss", "l1_loss", "kld_loss"}
+    assert metrics["loss"] == 4.0
+    assert metrics["l1_loss"] == 4.0
+    assert metrics["kld_loss"] == pytest.approx(0.4)
+    assert policy.training
+
+
+def test_run_validation_logs_total_to_val_namespace():
+    """`_run_validation` logs the total loss under the val/ namespace (the logger
+    applies the prefix) and returns the scalar total for callers. Validation runs
+    only periodically (every val_freq steps), not at step 0."""
     dataset = _ValidationDataset([1.0, 3.0])
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=False)
     policy = _LossPolicy()
+    preprocessor = _IdentityPreprocessor()
+    accelerator = _SingleProcessAccelerator()
+    logger = _FakeValidationLogger()
+
+    loss = _run_validation(
+        policy,
+        dataloader,
+        preprocessor,
+        accelerator,
+        logger,
+        step=10_000,
+        is_main_process=True,
+    )
+
+    assert loss == 2.0
+    assert logger.logged == [({"loss": 2.0}, 10_000, "val")]
+    assert accelerator.wait_count == 1
+    assert policy.forward_states == [(False, False)]
+
+
+def test_run_validation_logs_loss_components():
+    """Components are forwarded to the logger (logged as val/l1_loss, val/kld_loss
+    once WandBLogger applies its mode prefix), alongside the total."""
+    dataset = _ValidationDataset([1.0, 3.0])
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=False)
+    policy = _LossPolicy(loss_dict=True)
     preprocessor = _IdentityPreprocessor()
     accelerator = _SingleProcessAccelerator()
     logger = _FakeValidationLogger()
@@ -161,10 +223,15 @@ def test_run_validation_logs_step_zero_before_training():
         is_main_process=True,
     )
 
+    # the total is still returned for any caller that needs a scalar
     assert loss == 2.0
-    assert logger.logged == [({"loss": 2.0}, 0, "val")]
     assert accelerator.wait_count == 1
-    assert policy.forward_states == [(False, False)]
+    assert len(logger.logged) == 1
+    data, logged_step, mode = logger.logged[0]
+    assert (logged_step, mode) == (0, "val")
+    assert data["loss"] == 2.0
+    assert data["l1_loss"] == 2.0
+    assert data["kld_loss"] == pytest.approx(0.2)
 
 
 def test_validation_dataloader_is_deterministic():
