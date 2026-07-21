@@ -94,6 +94,18 @@ from .relative_action_processor import (
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .umi_relative_ee_processor import (
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
+    absolute_aa_to_relative_rot6d,
+    make_umi_cache_key,
+    relative_rot6d_to_absolute_aa,
+    to_umi_absolute_actions,
+    to_umi_relative_actions,
+    to_umi_relative_state,
+)
 
 # RenderMessagesStep is intentionally NOT re-exported here: it pulls in
 # `lerobot.datasets.language`, which requires the `[dataset]` extra
@@ -169,7 +181,17 @@ __all__ = [
     "TransitionKey",
     "TruncatedProcessorStep",
     "to_absolute_actions",
+    "to_umi_absolute_actions",
+    "to_umi_relative_actions",
+    "to_umi_relative_state",
     "to_relative_actions",
     "UnnormalizerProcessorStep",
+    "UmiAbsoluteActionsStep",
+    "UmiDeriveStateFromActionStep",
+    "UmiRelativeActionsStep",
+    "UmiRelativeStateStep",
     "VanillaObservationProcessorStep",
+    "absolute_aa_to_relative_rot6d",
+    "make_umi_cache_key",
+    "relative_rot6d_to_absolute_aa",
 ]

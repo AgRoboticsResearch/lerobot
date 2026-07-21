@@ -76,6 +76,7 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
+    validation_dataset: DatasetConfig | None = None
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     reward_model: RewardModelConfig | None = None
@@ -101,6 +102,7 @@ class TrainPipelineConfig(HubMixin):
     persistent_workers: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000
+    val_freq: int = 1_000
     log_freq: int = 200
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True

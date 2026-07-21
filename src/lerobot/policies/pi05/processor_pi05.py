@@ -34,7 +34,12 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
     UnnormalizerProcessorStep,
+    make_umi_cache_key,
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -129,17 +134,31 @@ def make_pi05_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
-    relative_step = RelativeActionsProcessorStep(
-        enabled=config.use_relative_actions,
-        exclude_joints=getattr(config, "relative_exclude_joints", []),
-        action_names=getattr(config, "action_feature_names", None),
-    )
+    if config.use_umi_relative_ee:
+        cache_key = make_umi_cache_key()
+        relative_step = UmiRelativeActionsStep(cache_key=cache_key)
+        relative_state_step = UmiRelativeStateStep()
+        derive_state_step = UmiDeriveStateFromActionStep()
+        absolute_step = UmiAbsoluteActionsStep(relative_step=relative_step, cache_key=cache_key)
+    else:
+        relative_step = RelativeActionsProcessorStep(
+            enabled=config.use_relative_actions,
+            exclude_joints=getattr(config, "relative_exclude_joints", []),
+            action_names=getattr(config, "action_feature_names", None),
+        )
+        relative_state_step = None
+        derive_state_step = None
+        absolute_step = AbsoluteActionsProcessorStep(
+            enabled=config.use_relative_actions, relative_step=relative_step
+        )
 
     # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
         AddBatchDimensionProcessorStep(),
+        *([derive_state_step] if derive_state_step is not None else []),
         relative_step,
+        *([relative_state_step] if relative_state_step is not None else []),
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         NormalizerProcessorStep(
@@ -161,7 +180,7 @@ def make_pi05_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        absolute_step,
         DeviceProcessorStep(device="cpu"),
     ]
 

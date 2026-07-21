@@ -160,6 +160,137 @@ def update_policy(
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
+def _make_offline_dataloader(
+    dataset,
+    dataset_config,
+    policy_config,
+    *,
+    num_workers: int,
+    batch_size: int,
+    device: torch.device,
+    shuffle: bool,
+    prefetch_factor: int = 2,
+    persistent_workers: bool = True,
+) -> torch.utils.data.DataLoader:
+    """Create a shuffled training or deterministic validation dataloader."""
+    if hasattr(policy_config, "drop_n_last_frames"):
+        sampler = EpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=dataset.episodes,
+            drop_n_last_frames=policy_config.drop_n_last_frames,
+            shuffle=shuffle,
+        )
+        dataloader_shuffle = False
+    else:
+        sampler = None
+        dataloader_shuffle = shuffle and not dataset_config.streaming
+
+    collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
+    return torch.utils.data.DataLoader(
+        dataset,
+        num_workers=num_workers,
+        batch_size=batch_size,
+        shuffle=dataloader_shuffle,
+        sampler=sampler,
+        pin_memory=device.type == "cuda",
+        drop_last=False,
+        collate_fn=collate_fn,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        persistent_workers=persistent_workers and num_workers > 0,
+    )
+
+
+def _normalize_uint8_cameras(batch: dict[str, Any], camera_keys: list[str]) -> None:
+    for camera_key in camera_keys:
+        if camera_key in batch and batch[camera_key].dtype == torch.uint8:
+            batch[camera_key] = batch[camera_key].to(dtype=torch.float32) / 255.0
+
+
+def _get_batch_size(batch: dict[str, Any]) -> int:
+    for value in batch.values():
+        if isinstance(value, torch.Tensor) and value.ndim > 0:
+            return value.shape[0]
+    raise ValueError("Validation batch does not contain a batched tensor.")
+
+
+def validate_policy(
+    policy: PreTrainedPolicy,
+    dataloader: torch.utils.data.DataLoader,
+    preprocessor,
+    accelerator: "Accelerator",
+    camera_keys: list[str] | None = None,
+) -> dict[str, float]:
+    """Compute sample-weighted validation loss without leaking validation statistics."""
+    was_training = policy.training
+    metric_sums: dict[str, float] = {}
+    total_samples = 0
+
+    policy.eval()
+    preprocessor.reset()
+    try:
+        with torch.no_grad():
+            for batch in dataloader:
+                _normalize_uint8_cameras(batch, camera_keys or [])
+                batch = preprocessor(batch)
+                with accelerator.autocast():
+                    loss, loss_dict = policy.forward(batch)
+
+                batch_size = _get_batch_size(batch)
+                batch_metrics: dict[str, torch.Tensor] = {"loss": loss.detach().float()}
+                for key, value in (loss_dict or {}).items():
+                    if key in batch_metrics:
+                        continue
+                    if isinstance(value, torch.Tensor) and value.numel() == 1:
+                        batch_metrics[key] = value.detach().float().reshape(())
+                    elif isinstance(value, (int, float)):
+                        batch_metrics[key] = torch.tensor(
+                            float(value), device=loss.device, dtype=torch.float32
+                        )
+
+                names = list(batch_metrics)
+                values = torch.stack(
+                    [batch_metrics[name].reshape(1).repeat(batch_size) for name in names], dim=1
+                )
+                gathered = accelerator.gather_for_metrics(values)
+                for name, value in zip(names, gathered.double().sum(dim=0).tolist(), strict=True):
+                    metric_sums[name] = metric_sums.get(name, 0.0) + value
+                total_samples += gathered.shape[0]
+    finally:
+        preprocessor.reset()
+        policy.train(was_training)
+
+    if total_samples == 0:
+        raise ValueError("Validation dataset is empty.")
+    return {name: total / total_samples for name, total in metric_sums.items()}
+
+
+def _run_validation(
+    policy: PreTrainedPolicy,
+    dataloader: torch.utils.data.DataLoader,
+    preprocessor,
+    accelerator: "Accelerator",
+    wandb_logger: WandBLogger | None,
+    *,
+    step: int,
+    is_main_process: bool,
+    camera_keys: list[str] | None = None,
+) -> float:
+    """Run one complete validation pass and log metrics under ``val/``."""
+    if is_main_process:
+        logging.info("Validate policy at step %d", step)
+    metrics = validate_policy(policy, dataloader, preprocessor, accelerator, camera_keys)
+    if is_main_process:
+        logging.info(
+            "Validation at step %d: %s",
+            step,
+            ", ".join(f"{name}={value:.6f}" for name, value in metrics.items()),
+        )
+        if wandb_logger:
+            wandb_logger.log_dict(metrics, step, mode="val")
+    accelerator.wait_for_everyone()
+    return metrics["loss"]
+
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
@@ -232,16 +363,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Dataset loading synchronization: main process downloads first to avoid race conditions
+    # Dataset loading synchronization: main process downloads first to avoid race conditions.
+    validation_enabled = cfg.validation_dataset is not None and cfg.val_freq > 0
+    validation_dataset = None
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
+        if validation_enabled:
+            logging.info("Creating validation dataset")
+            validation_dataset = make_dataset(cfg, dataset_config=cfg.validation_dataset)
 
     accelerator.wait_for_everyone()
 
-    # Now all other processes can safely load the dataset
+    # Now all other processes can safely load the datasets.
     if not is_main_process:
         dataset = make_dataset(cfg)
+        if validation_enabled:
+            validation_dataset = make_dataset(cfg, dataset_config=cfg.validation_dataset)
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
@@ -388,42 +526,39 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
-    # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
-        shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=active_cfg.drop_n_last_frames,
-            shuffle=True,
-        )
-    else:
-        shuffle = True
-        sampler = None
-
-    # Only swap in the language-aware collate when the dataset actually
-    # declares language columns; otherwise stay on PyTorch's default
-    # collate so non-language training runs are unaffected.
-    collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
-    dataloader = torch.utils.data.DataLoader(
+    # Create dataloaders for offline training and optional deterministic validation.
+    dataloader = _make_offline_dataloader(
         dataset,
+        cfg.dataset,
+        active_cfg,
         num_workers=cfg.num_workers,
         batch_size=cfg.batch_size,
-        shuffle=shuffle and not cfg.dataset.streaming,
-        sampler=sampler,
-        pin_memory=device.type == "cuda",
-        drop_last=False,
-        collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
+        device=device,
+        shuffle=True,
+        prefetch_factor=cfg.prefetch_factor,
+        persistent_workers=cfg.persistent_workers,
     )
+    validation_dataloader = None
+    if validation_dataset is not None:
+        validation_dataloader = _make_offline_dataloader(
+            validation_dataset,
+            cfg.validation_dataset,
+            active_cfg,
+            num_workers=cfg.num_workers,
+            batch_size=cfg.batch_size,
+            device=device,
+            shuffle=False,
+            prefetch_factor=cfg.prefetch_factor,
+            persistent_workers=cfg.persistent_workers,
+        )
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
     policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
         policy, optimizer, dataloader, lr_scheduler
     )
+    if validation_dataloader is not None:
+        validation_dataloader = accelerator.prepare(validation_dataloader)
     dl_iter = cycle(dataloader)
 
     policy.train()
@@ -463,9 +598,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        for cam_key in dataset.meta.camera_keys:
-            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
-                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+        _normalize_uint8_cameras(batch, dataset.meta.camera_keys)
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
@@ -489,6 +622,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        is_validation_step = (
+            validation_dataloader is not None and cfg.val_freq > 0 and step % cfg.val_freq == 0
+        )
 
         if is_log_step:
             logging.info(train_tracker)
@@ -502,6 +638,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
+
+        if is_validation_step:
+            _run_validation(
+                policy,
+                validation_dataloader,
+                preprocessor,
+                accelerator,
+                wandb_logger,
+                step=step,
+                is_main_process=is_main_process,
+                camera_keys=validation_dataset.meta.camera_keys,
+            )
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:

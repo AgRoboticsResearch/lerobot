@@ -56,6 +56,10 @@ class PI05Config(PreTrainedConfig):
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
 
+    # The raw dataset action is an absolute 7D [xyz, axis-angle, gripper]
+    # pose. State and UMI-relative rot6d actions are derived by processors.
+    use_umi_relative_ee: bool = False
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
@@ -105,6 +109,11 @@ class PI05Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        if self.use_umi_relative_ee:
+            # Build processors from this config instead of loading the ordinary
+            # processor files that accompany pi05_base.
+            self.use_relative_actions = True
 
         # Validate configuration
         if self.n_action_steps > self.chunk_size:
@@ -168,6 +177,9 @@ class PI05Config(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            # t-1 and t form the two-pose state; t starts the retained chunk.
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

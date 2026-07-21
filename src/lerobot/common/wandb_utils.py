@@ -162,7 +162,7 @@ class WandBLogger:
     def log_dict(
         self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None
     ):
-        if mode not in {"train", "eval"}:
+        if mode not in {"train", "eval", "val"}:
             raise ValueError(mode)
         if step is None and custom_step_key is None:
             raise ValueError("Either step or custom_step_key must be provided.")
@@ -200,7 +200,7 @@ class WandBLogger:
             self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
-        if mode not in {"train", "eval"}:
+        if mode not in {"train", "eval", "val"}:
             raise ValueError(mode)
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
