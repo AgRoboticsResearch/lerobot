@@ -37,10 +37,44 @@ from lerobot.datasets.transforms import ImageTransforms
 train = train_module.train
 
 
+def _configure_relative_ee_training(cfg: TrainPipelineConfig) -> None:
+    """Configure and log relative-EE settings after policy path resolution."""
+    use_relative_actions = getattr(cfg.policy, "use_relative_actions", False)
+    derive_state_from_action = getattr(cfg.policy, "derive_state_from_action", False)
+    prediction_horizon = cfg.policy.horizon if cfg.policy.type == "diffusion" else cfg.policy.chunk_size
+
+    logging.info("=" * 80)
+    logging.info("Training with UMI-style: Processor Pipeline + rot6d (10D)")
+    logging.info("=" * 80)
+    logging.info(f"Dataset: {cfg.dataset.repo_id}")
+    logging.info(f"Policy: {cfg.policy.type}")
+    logging.info(f"prediction_horizon: {prediction_horizon}")
+    logging.info(f"derive_state_from_action: {derive_state_from_action}")
+    logging.info(f"use_relative_actions: {use_relative_actions}")
+    logging.info(f"use_rot6d: {getattr(cfg.policy, 'use_rot6d', False)}")
+    logging.info("")
+    logging.info("Pipeline: DeriveState → RelativeRot6dActions → RelativeRot6dState → Normalize")
+    logging.info("  Input:  7D aa absolute from dataset")
+    logging.info("  Output: 10D rot6d relative to model")
+    logging.info("  State:  20D (2×10D rot6d relative, flattened)")
+    logging.info("=" * 80)
+
+    if use_relative_actions:
+        cfg.policy.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+        cfg.policy.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+        logging.info("Normalization: MIN_MAX (UMI-style)")
+
+
 def _make_dataset_wrapper(cfg: TrainPipelineConfig, dataset_config=None):
     """Create a train or validation dataset for relative rot6d preprocessing."""
     is_validation = dataset_config is not None
     dataset_config = dataset_config or cfg.dataset
+    if not is_validation:
+        # For --policy.path, TrainPipelineConfig resolves cfg.policy inside the
+        # standard train() function. Dataset creation is the first hook that runs
+        # after that resolution, so policy-specific setup belongs here.
+        _configure_relative_ee_training(cfg)
+
     ds_meta = LeRobotDatasetMetadata(
         dataset_config.repo_id,
         root=dataset_config.root,
@@ -135,32 +169,7 @@ factory_module.make_dataset = _make_dataset_wrapper
 
 @parser.wrap()
 def train_with_relative_ee_processor(cfg: TrainPipelineConfig):
-    """Train ACT with UMI-style relative EE actions via processor pipeline."""
-    use_relative_actions = getattr(cfg.policy, "use_relative_actions", False)
-    derive_state_from_action = getattr(cfg.policy, "derive_state_from_action", False)
-    prediction_horizon = cfg.policy.horizon if cfg.policy.type == "diffusion" else cfg.policy.chunk_size
-
-    logging.info("=" * 80)
-    logging.info("Training with UMI-style: Processor Pipeline + rot6d (10D)")
-    logging.info("=" * 80)
-    logging.info(f"Dataset: {cfg.dataset.repo_id}")
-    logging.info(f"Policy: {cfg.policy.type}")
-    logging.info(f"prediction_horizon: {prediction_horizon}")
-    logging.info(f"derive_state_from_action: {derive_state_from_action}")
-    logging.info(f"use_relative_actions: {use_relative_actions}")
-    logging.info(f"use_rot6d: {getattr(cfg.policy, 'use_rot6d', False)}")
-    logging.info("")
-    logging.info("Pipeline: DeriveState → RelativeRot6dActions → RelativeRot6dState → Normalize")
-    logging.info("  Input:  7D aa absolute from dataset")
-    logging.info("  Output: 10D rot6d relative to model")
-    logging.info("  State:  20D (2×10D rot6d relative, flattened)")
-    logging.info("=" * 80)
-
-    if use_relative_actions:
-        cfg.policy.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
-        cfg.policy.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
-        logging.info("Normalization: MIN_MAX (UMI-style)")
-
+    """Train a supported policy with UMI-style relative EE actions via processor pipeline."""
     train(cfg)
 
 

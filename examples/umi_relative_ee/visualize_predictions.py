@@ -29,7 +29,8 @@ Usage (dataset mode — inference):
         --dataset_root /path/to/dataset \
         --episode_indices 0 \
         --inference \
-        --pretrained_path outputs/.../pretrained_model
+        --pretrained_path outputs/.../pretrained_model \
+        --task "pick the strawberry"
 """
 
 import json
@@ -45,13 +46,12 @@ import torch
 import yaml
 
 from lerobot.cameras import CameraConfig
-from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.utils.constants import OBS_STATE
-
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.utils.constants import OBS_STATE
 
 try:
     import pyrealsense2 as rs
@@ -65,6 +65,7 @@ except ImportError:
 
 try:
     import matplotlib
+
     matplotlib.use("TkAgg")
     import matplotlib.pyplot as plt
 except ImportError:
@@ -75,8 +76,14 @@ logger = logging.getLogger(__name__)
 FPS = 30
 
 DEFAULT_URDF_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "sroi-piper",
-    "src", "utils", "piper_urdf", "piper.urdf",
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "sroi-piper",
+    "src",
+    "utils",
+    "piper_urdf",
+    "piper.urdf",
 )
 DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(DEFAULT_URDF_PATH))
 
@@ -95,9 +102,11 @@ def _timed_phase(name: str):
 # Camera config parser (matches deploy script)
 # ---------------------------------------------------------------------------
 
+
 def auto_detect_realsense_serial() -> str | None:
     try:
         import pyrealsense2 as rs2
+
         ctx = rs2.context()
         devices = ctx.query_devices()
         if len(devices) > 0:
@@ -136,11 +145,12 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, CameraConfig]:
 # Camera intrinsics
 # ---------------------------------------------------------------------------
 
+
 def load_camera_matrix_from_file(path: str) -> np.ndarray:
     with open(path) as f:
         info = json.load(f)
     K = np.array(info["K"], dtype=np.float64).reshape(3, 3)
-    logger.info(f"Loaded camera matrix: fx={K[0,0]:.1f} fy={K[1,1]:.1f} cx={K[0,2]:.1f} cy={K[1,2]:.1f}")
+    logger.info(f"Loaded camera matrix: fx={K[0, 0]:.1f} fy={K[1, 1]:.1f} cx={K[0, 2]:.1f} cy={K[1, 2]:.1f}")
     return K
 
 
@@ -159,11 +169,13 @@ def auto_detect_camera_intrinsics(cameras: dict) -> np.ndarray | None:
             try:
                 profile = cam.rs_pipeline.get_active_profile()
                 intrinsics = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-                K = np.array([
-                    [intrinsics.fx, 0, intrinsics.ppx],
-                    [0, intrinsics.fy, intrinsics.ppy],
-                    [0, 0, 1],
-                ])
+                K = np.array(
+                    [
+                        [intrinsics.fx, 0, intrinsics.ppx],
+                        [0, intrinsics.fy, intrinsics.ppy],
+                        [0, 0, 1],
+                    ]
+                )
                 logger.info(f"Auto-detected RealSense intrinsics: fx={intrinsics.fx:.1f}")
                 return K
             except Exception:
@@ -175,6 +187,7 @@ def auto_detect_camera_intrinsics(cameras: dict) -> np.ndarray | None:
 # Kinematics helpers (Piper URDF, ee_link)
 # ---------------------------------------------------------------------------
 
+
 def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
     """Return T_opt_cam (optical→cam) and T_cam_ee (cam→ee) at the neutral pose.
 
@@ -184,6 +197,7 @@ def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
     scan and the stderr warning spam from the previous 3x RobotKinematics approach.
     """
     import placo
+
     flags = placo.Flags.ignore_collisions | placo.Flags.collision_as_visual
     robot = placo.RobotWrapper(str(urdf_path), flags)
     robot.update_kinematics()  # required before get_T_a_b reads frame placements
@@ -196,8 +210,10 @@ def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
 # 3-D projection — everything is relative in UMI
 # ---------------------------------------------------------------------------
 
+
 def aa_pose_to_matrix(pose_7d: np.ndarray) -> np.ndarray:
     from scipy.spatial.transform import Rotation
+
     T = np.eye(4)
     T[:3, :3] = Rotation.from_rotvec(pose_7d[3:6]).as_matrix()
     T[:3, 3] = pose_7d[:3]
@@ -281,34 +297,53 @@ def extract_action_stats(preprocessor) -> dict:
     for step in preprocessor.steps:
         if hasattr(step, "stats") and step.stats and "action" in step.stats:
             return step.stats["action"]
-    raise ValueError("No action stats found in preprocessor")
+    raise ValueError(
+        "No 'action' statistics found in the saved preprocessor. "
+        "Use a trained UMI relative-EE checkpoint, not the unmodified base policy."
+    )
+
+
+def load_policy_and_processors(model_path: str, device: torch.device):
+    """Load a checkpoint-selected policy and its saved relative-EE processors."""
+    policy_config = PreTrainedConfig.from_pretrained(model_path)
+    policy_class = get_policy_class(policy_config.type)
+    policy = policy_class.from_pretrained(model_path, local_files_only=True)
+    policy.to(device)
+    policy.eval()
+    policy.config.device = str(device)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy.config,
+        pretrained_path=model_path,
+        preprocessor_overrides={"device_processor": {"device": str(device)}},
+    )
+    return policy, preprocessor, postprocessor
+
+
+def add_policy_task(batch: dict, policy, task: str | None) -> None:
+    """Add the language task required by SmolVLA; leave other policies unchanged."""
+    if policy.config.type != "smolvla":
+        return
+    if not task:
+        raise ValueError("SmolVLA visualization requires --task (for this dataset: 'pick the strawberry').")
+    batch["task"] = task
 
 
 # ---------------------------------------------------------------------------
 # Camera mode
 # ---------------------------------------------------------------------------
 
+
 def run_camera_mode(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     startup_t0 = time.perf_counter()
 
     logger.info(f"Loading policy from {args.pretrained_path}")
-    with _timed_phase("load policy"):
-        policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
-        policy.eval()
-        policy.config.device = str(device)
-
-    with _timed_phase("build pre/post processors"):
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy,
-            pretrained_path=args.pretrained_path,
-            preprocessor_overrides={"device_processor": {"device": str(device)}},
-        )
+    with _timed_phase("load policy and pre/post processors"):
+        policy, preprocessor, postprocessor = load_policy_and_processors(args.pretrained_path, device)
     logger.info("Policy and processors loaded")
 
     with _timed_phase("extract action stats"):
         action_stats = extract_action_stats(preprocessor)
-        chunk_size = policy.config.chunk_size
 
     with _timed_phase("load kinematic transforms (URDF)"):
         T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
@@ -359,6 +394,7 @@ def run_camera_mode(args):
 
             state_tensor = torch.from_numpy(current_state).unsqueeze(0).to(device)
             batch = {OBS_STATE: state_tensor}
+            add_policy_task(batch, policy, args.task)
             cam_images = {}
 
             for cam_name, camera in cameras.items():
@@ -366,9 +402,7 @@ def run_camera_mode(args):
                 cam_images[cam_name] = img
                 img_float = img.astype(np.float32) / 255.0
                 img_chw = np.transpose(img_float, (2, 0, 1))
-                batch[f"observation.images.{cam_name}"] = (
-                    torch.from_numpy(img_chw).unsqueeze(0).to(device)
-                )
+                batch[f"observation.images.{cam_name}"] = torch.from_numpy(img_chw).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 processed = preprocessor(batch)
@@ -400,7 +434,7 @@ def run_camera_mode(args):
             elapsed = time.perf_counter() - t0
             fps_actual = 1.0 / max(elapsed, 1e-6)
             if step_count % 10 == 0:
-                logger.info(f"Step {step_count}: {elapsed*1000:.0f}ms ({fps_actual:.0f} fps)")
+                logger.info(f"Step {step_count}: {elapsed * 1000:.0f}ms ({fps_actual:.0f} fps)")
             step_count += 1
 
             key = cv2.waitKey(max(1, int(1000 / args.fps - elapsed)))
@@ -411,7 +445,7 @@ def run_camera_mode(args):
         pass
     finally:
         cv2.destroyAllWindows()
-        for cam_name, camera in cameras.items():
+        for camera in cameras.values():
             camera.disconnect()
         logger.info(f"Done after {step_count} steps")
 
@@ -419,6 +453,7 @@ def run_camera_mode(args):
 # ---------------------------------------------------------------------------
 # Dataset mode
 # ---------------------------------------------------------------------------
+
 
 def get_image_from_sample(sample, camera_name="camera"):
     obs = sample[f"observation.images.{camera_name}"]
@@ -455,8 +490,11 @@ def run_dataset_mode(args):
             try:
                 camera_matrix = load_camera_matrix_from_dataset(dataset_root)
             except FileNotFoundError:
-                logger.error("No camera_info. Provide --camera_info_path")
-                raise
+                camera_matrix = None
+                logger.warning(
+                    "No camera intrinsics found. The 3D trajectory will still be rendered, "
+                    "but the camera-image overlay is disabled. Provide --camera_info_path to enable it."
+                )
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
@@ -465,16 +503,8 @@ def run_dataset_mode(args):
     action_stats = None
     if args.inference:
         logger.info(f"Loading policy from {args.pretrained_path}")
-        with _timed_phase("load policy"):
-            policy = ACTPolicy.from_pretrained(args.pretrained_path, local_files_only=True)
-            policy.eval()
-            policy.config.device = str(device)
-        with _timed_phase("build pre/post processors"):
-            preprocessor, postprocessor = make_pre_post_processors(
-                policy_cfg=policy,
-                pretrained_path=args.pretrained_path,
-                preprocessor_overrides={"device_processor": {"device": str(device)}},
-            )
+        with _timed_phase("load policy and pre/post processors"):
+            policy, preprocessor, postprocessor = load_policy_and_processors(args.pretrained_path, device)
         with _timed_phase("extract action stats"):
             action_stats = extract_action_stats(preprocessor)
 
@@ -503,6 +533,7 @@ def run_dataset_mode(args):
         if save_mp4:
             from matplotlib.backends.backend_agg import FigureCanvasAgg
             from matplotlib.figure import Figure as MplFigure
+
             fig_3d = MplFigure(figsize=(10, 8))
             FigureCanvasAgg(fig_3d)
         else:
@@ -518,13 +549,24 @@ def run_dataset_mode(args):
         if traj_gt is not None and len(traj_gt) > 1:
             ax_3d.plot(traj_gt[:, 0], traj_gt[:, 1], traj_gt[:, 2], "r--", lw=2, label="GT")
         if len(traj) > 1:
-            ax_3d.plot(traj[:, 0], traj[:, 1], traj[:, 2], "b-", lw=2, label="Pred" if traj_gt is not None else "Traj")
+            ax_3d.plot(
+                traj[:, 0],
+                traj[:, 1],
+                traj[:, 2],
+                "b-",
+                lw=2,
+                label="Pred" if traj_gt is not None else "Traj",
+            )
             ax_3d.plot([traj[0, 0]], [traj[0, 1]], [traj[0, 2]], "go", ms=6)
             ax_3d.plot([traj[-1, 0]], [traj[-1, 1]], [traj[-1, 2]], "ro", ms=6)
-        ax_3d.set_xlabel("X"); ax_3d.set_ylabel("Y"); ax_3d.set_zlabel("Z")
+        ax_3d.set_xlabel("X")
+        ax_3d.set_ylabel("Y")
+        ax_3d.set_zlabel("Z")
         ax_3d.set_title(f"Ep {ep_idx} F{frame_idx} {label}")
         ax_3d.legend()
-        ax_3d.set_xlim(-0.25, 0.25); ax_3d.set_ylim(-0.25, 0.25); ax_3d.set_zlim(-0.25, 0.25)
+        ax_3d.set_xlim(-0.25, 0.25)
+        ax_3d.set_ylim(-0.25, 0.25)
+        ax_3d.set_zlim(-0.25, 0.25)
         ax_3d.view_init(elev=20, azim=45)
 
     def render_fig():
@@ -550,7 +592,8 @@ def run_dataset_mode(args):
             proj_frames = []
             traj3d_frames = []
 
-            for frame_offset in range(ep_length):
+            num_frames = min(ep_length, args.max_frames) if args.max_frames > 0 else ep_length
+            for frame_offset in range(num_frames):
                 idx = start_idx + frame_offset
                 sample = dataset[idx]
                 img = get_image_from_sample(sample, camera_name)
@@ -574,6 +617,8 @@ def run_dataset_mode(args):
                         OBS_STATE: state_t,
                         f"observation.images.{camera_name}": img_t,
                     }
+                    task = args.task or sample.get("task")
+                    add_policy_task(batch, policy, task)
 
                     with torch.no_grad():
                         processed = preprocessor(batch)
@@ -582,7 +627,9 @@ def run_dataset_mode(args):
                     actions_rel = unnormalize_actions(pred_10d, action_stats)[0].cpu().numpy()
                     T_rel_list = [rot6d_to_matrix(a) for a in actions_rel]
                     traj_3d = relative_actions_to_3d_points(T_rel_list, T_opt_cam, T_cam_ee)
-                    pts_2d = project_points_to_image(traj_3d, camera_matrix)
+                    pts_2d = (
+                        project_points_to_image(traj_3d, camera_matrix) if camera_matrix is not None else None
+                    )
                     gripper_np = actions_rel[:, 9]
 
                     traj_3d_gt = None
@@ -594,7 +641,11 @@ def run_dataset_mode(args):
                         T_ref_inv = np.linalg.inv(aa_pose_to_matrix(gt_ref))
                         gt_rel_list = [T_ref_inv @ aa_pose_to_matrix(a) for a in gt_actions]
                         traj_3d_gt = relative_actions_to_3d_points(gt_rel_list, T_opt_cam, T_cam_ee)
-                        pts_2d_gt = project_points_to_image(traj_3d_gt, camera_matrix)
+                        pts_2d_gt = (
+                            project_points_to_image(traj_3d_gt, camera_matrix)
+                            if camera_matrix is not None
+                            else None
+                        )
                 else:
                     actions_np = sample["action"]
                     if isinstance(actions_np, torch.Tensor):
@@ -605,18 +656,25 @@ def run_dataset_mode(args):
                         actions_np = actions_np[np.newaxis, :]
                     rel_list = [T_ref_inv @ aa_pose_to_matrix(a) for a in actions_np]
                     traj_3d = relative_actions_to_3d_points(rel_list, T_opt_cam, T_cam_ee)
-                    pts_2d = project_points_to_image(traj_3d, camera_matrix)
+                    pts_2d = (
+                        project_points_to_image(traj_3d, camera_matrix) if camera_matrix is not None else None
+                    )
                     gripper_np = actions_np[:, 6]
                     pts_2d_gt = traj_3d_gt = None
 
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 if args.inference:
-                    img_bgr = draw_trajectory_on_image(img_bgr, pts_2d, "pred", gripper_np if args.gripper else None)
+                    if pts_2d is not None:
+                        img_bgr = draw_trajectory_on_image(
+                            img_bgr, pts_2d, "pred", gripper_np if args.gripper else None
+                        )
                     if args.gt and pts_2d_gt is not None:
                         gt_grip = gt_actions[:, 6] if args.gripper else None
                         img_bgr = draw_trajectory_on_image(img_bgr, pts_2d_gt, "gt", gt_grip)
-                else:
-                    img_bgr = draw_trajectory_on_image(img_bgr, pts_2d, "gt", gripper_np if args.gripper else None)
+                elif pts_2d is not None:
+                    img_bgr = draw_trajectory_on_image(
+                        img_bgr, pts_2d, "gt", gripper_np if args.gripper else None
+                    )
 
                 update_3d(traj_3d, frame_offset, ep_idx, mode_label, traj_3d_gt)
 
@@ -659,8 +717,10 @@ def run_dataset_mode(args):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     import argparse
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(description="Visualize UMI-style processor pipeline predictions")
@@ -668,24 +728,42 @@ def main():
     parser.add_argument("--fps", type=int, default=FPS)
     parser.add_argument("--urdf_path", type=str, default=DEFAULT_URDF_PATH)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--task",
+        type=str,
+        default=None,
+        help="Language task required by SmolVLA, for example 'pick the strawberry'",
+    )
     parser.add_argument("--num_steps", type=int, default=0, help="0 = infinite")
     parser.add_argument("--gripper", action="store_true", help="Show gripper state on trajectory")
 
     # Camera mode
-    parser.add_argument("--cameras", type=str, default=None,
-                        help="YAML camera config. serial auto-detected if omitted.")
-    parser.add_argument("--camera_info_path", type=str, default=None,
-                        help="camera_info.json for intrinsics (auto-detected if omitted)")
+    parser.add_argument(
+        "--cameras", type=str, default=None, help="YAML camera config. serial auto-detected if omitted."
+    )
+    parser.add_argument(
+        "--camera_info_path",
+        type=str,
+        default=None,
+        help="camera_info.json for intrinsics (auto-detected if omitted)",
+    )
 
     # State
-    parser.add_argument("--initial_state", type=float, nargs=7, default=None,
-                        help="Initial 7D aa state [x,y,z,wx,wy,wz,gripper]")
-    parser.add_argument("--update_state", action="store_true",
-                        help="Auto-chain: use last prediction as next state")
+    parser.add_argument(
+        "--initial_state",
+        type=float,
+        nargs=7,
+        default=None,
+        help="Initial 7D aa state [x,y,z,wx,wy,wz,gripper]",
+    )
+    parser.add_argument(
+        "--update_state", action="store_true", help="Auto-chain: use last prediction as next state"
+    )
 
     # Dataset mode
     parser.add_argument("--dataset_root", type=str, default=None)
     parser.add_argument("--episode_indices", type=int, nargs="+", default=None)
+    parser.add_argument("--max_frames", type=int, default=0, help="Maximum frames per episode; 0 = all")
     parser.add_argument("--inference", action="store_true")
     parser.add_argument("--gt", action="store_true", help="Overlay GT (with --inference)")
     parser.add_argument("--output_dir", type=str, default="outputs/debug/visualization_umi")

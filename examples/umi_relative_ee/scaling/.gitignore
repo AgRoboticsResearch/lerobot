@@ -1,0 +1,2 @@
+# Ignore generated PDF reports (kept locally, not committed)
+*.pdf
