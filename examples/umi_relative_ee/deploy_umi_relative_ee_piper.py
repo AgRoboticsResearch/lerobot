@@ -65,8 +65,8 @@ SAFE_POSE_DEG = np.array([-0.66, -2.08, 1.8, 1.35, 17.16, 0.0])
 START_POSE_DEG = np.array([-0.55, 79.2, -31.3, -1.59, -45.85, 6.2])
 
 # External DM4310 gripper (MIT mode, radians)
-GRIPPER_OPEN_RAD = -0.139
-GRIPPER_CLOSED_RAD = 0.734
+GRIPPER_OPEN_RAD = 0
+GRIPPER_CLOSED_RAD = -0.91
 
 # Built-in Piper gripper (mm) — typical range
 GRIPPER_OPEN_MM = 0.0
