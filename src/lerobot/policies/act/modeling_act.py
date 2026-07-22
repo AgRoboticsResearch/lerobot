@@ -404,7 +404,9 @@ class ACT(nn.Module):
         # Prepare the latent for input to the transformer encoder.
         # Validation batches include actions too. Run the VAE posterior in eval mode
         # so validation computes the full objective without enabling dropout.
-        if self.config.use_vae and ACTION in batch:
+        # NOTE: the action key is always present in a processed batch (PolicyProcessorPipeline
+        # emits it as None during inference), so we must check the value, not key membership.
+        if self.config.use_vae and batch.get(ACTION) is not None:
             # Prepare the input to the VAE encoder: [cls, *joint_space_configuration, *action_sequence].
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
