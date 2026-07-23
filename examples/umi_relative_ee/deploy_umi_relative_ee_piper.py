@@ -61,8 +61,8 @@ logger = logging.getLogger(__name__)
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 HOME_POSE_DEG = np.array([0.0, 50.60, -50.40, -1.21, 10.00, 0.00])
-SAFE_POSE_DEG = np.array([-0.66, -2.08, 1.8, 1.35, 17.16, 0.0])
-START_POSE_DEG = np.array([-0.55, 79.2, -31.3, -1.59, -45.85, 6.2])
+SAFE_POSE_DEG = np.array([0.0, -2.08, 1.8, 1.35, 17.16, 0.0])
+START_POSE_DEG = np.array([0.0, 79.2, -31.3, 0.0,   -45.85, 0.0])
 
 # External DM4310 gripper (MIT mode, radians)
 GRIPPER_OPEN_RAD = 0
