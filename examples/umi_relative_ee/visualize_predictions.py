@@ -51,7 +51,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import OBS_STATE, ACTION
 
 try:
     import pyrealsense2 as rs
@@ -206,6 +206,43 @@ def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
     return T_opt_cam, T_cam_ee
 
 
+# Hand-eye from the SROI v2 D405 rig config — MATCHES sroi's visualize_traj_video.py
+# (so the projected start point agrees). Copied from that script's load_tip_kin /
+# _load_rigid_transform so there is no runtime dependency on the sroi folder.
+DEFAULT_EXTRINSICS = Path(__file__).resolve().parent / "camera_gripper_extrinsics_sroi_v2_d405.json"
+
+
+def _load_rigid_transform(config: dict, key: str, config_path: Path) -> np.ndarray:  # noqa: ANN001
+    """Copied from sroi visualize_traj_video.py."""
+    try:
+        transform = np.asarray(config[key], dtype=float)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"{config_path}: {key} must be a numeric 4x4 matrix") from error
+    if transform.shape != (4, 4) or not np.isfinite(transform).all():
+        raise ValueError(f"{config_path}: {key} must be a finite 4x4 matrix")
+    if not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0], atol=1e-8):
+        raise ValueError(f"{config_path}: {key} must have homogeneous bottom row [0, 0, 0, 1]")
+    rotation = transform[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5):
+        raise ValueError(f"{config_path}: {key} rotation must be orthonormal")
+    if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-5):
+        raise ValueError(f"{config_path}: {key} rotation determinant must be +1")
+    return transform
+
+
+def load_tip_kin(config_path: Path | str) -> tuple[np.ndarray, np.ndarray]:
+    """Load optical<-camera and camera<-gripper-tip transforms from JSON. (sroi)"""
+    config_path = Path(config_path).resolve()
+    with config_path.open() as config_file:
+        config = json.load(config_file)
+    if not isinstance(config, dict) or config.get("schema_version") != 1:
+        raise ValueError(f"{config_path}: schema_version must be 1")
+    return (
+        _load_rigid_transform(config, "T_optical_camera", config_path),
+        _load_rigid_transform(config, "T_camera_gripper_tip", config_path),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3-D projection — everything is relative in UMI
 # ---------------------------------------------------------------------------
@@ -345,8 +382,8 @@ def run_camera_mode(args):
     with _timed_phase("extract action stats"):
         action_stats = extract_action_stats(preprocessor)
 
-    with _timed_phase("load kinematic transforms (URDF)"):
-        T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
+    with _timed_phase("load hand-eye transforms (D405 JSON)"):
+        T_opt_cam, T_cam_ee = load_tip_kin(args.extrinsics_config)
 
     camera_matrix = None
     if args.camera_info_path:
@@ -479,8 +516,8 @@ def run_dataset_mode(args):
     save_mp4 = args.mp4
     startup_t0 = time.perf_counter()
 
-    with _timed_phase("load kinematic transforms (URDF)"):
-        T_opt_cam, T_cam_ee = get_kinematic_transforms(args.urdf_path)
+    with _timed_phase("load hand-eye transforms (D405 JSON)"):
+        T_opt_cam, T_cam_ee = load_tip_kin(args.extrinsics_config)
 
     if args.camera_info_path:
         with _timed_phase("load camera matrix from file"):
@@ -576,6 +613,7 @@ def run_dataset_mode(args):
         buf = np.asarray(fig_3d.canvas.buffer_rgba())
         return buf[:, :, :3].copy()
 
+    metric_rows = []
     try:
         for ep_idx in args.episode_indices:
             logger.info(f"Processing episode {ep_idx} ({mode_label})")
@@ -596,6 +634,9 @@ def run_dataset_mode(args):
             for frame_offset in range(num_frames):
                 idx = start_idx + frame_offset
                 sample = dataset[idx]
+                action_is_pad = sample.get("action_is_pad")
+                if action_is_pad is not None and bool(torch.as_tensor(action_is_pad).any()):
+                    continue
                 img = get_image_from_sample(sample, camera_name)
 
                 if args.inference:
@@ -622,6 +663,10 @@ def run_dataset_mode(args):
 
                     with torch.no_grad():
                         processed = preprocessor(batch)
+                        # ACT VAE: use the prior when no GT action is present (inference); otherwise the
+                        # None ACTION left by the preprocessor trips the model's posterior branch.
+                        if processed.get(ACTION) is None:
+                            processed.pop(ACTION, None)
                         pred_10d = policy.predict_action_chunk(processed)
 
                     actions_rel = unnormalize_actions(pred_10d, action_stats)[0].cpu().numpy()
@@ -640,6 +685,23 @@ def run_dataset_mode(args):
                         gt_ref = gt_actions[0]
                         T_ref_inv = np.linalg.inv(aa_pose_to_matrix(gt_ref))
                         gt_rel_list = [T_ref_inv @ aa_pose_to_matrix(a) for a in gt_actions]
+                        pred_end = T_rel_list[-1]
+                        gt_end = gt_rel_list[-1]
+                        rot_delta = pred_end[:3, :3].T @ gt_end[:3, :3]
+                        rot_error = float(
+                            np.arccos(np.clip((np.trace(rot_delta) - 1.0) / 2.0, -1.0, 1.0))
+                        )
+                        metric_rows.append(
+                            {
+                                "episode": int(ep_idx),
+                                "frame": int(frame_offset),
+                                "xyz_end_error_m": float(
+                                    np.linalg.norm(pred_end[:3, 3] - gt_end[:3, 3])
+                                ),
+                                "rotation_end_error_rad": rot_error,
+                                "gripper_end_error": float(abs(actions_rel[-1, 9] - gt_actions[-1, 6])),
+                            }
+                        )
                         traj_3d_gt = relative_actions_to_3d_points(gt_rel_list, T_opt_cam, T_cam_ee)
                         pts_2d_gt = (
                             project_points_to_image(traj_3d_gt, camera_matrix)
@@ -710,6 +772,27 @@ def run_dataset_mode(args):
             plt.close(fig_3d)
         cv2.destroyAllWindows()
 
+    if metric_rows and save_mp4:
+        summary = {
+            "num_frames": len(metric_rows),
+            "xyz_end_error_mean_m": float(
+                np.mean([row["xyz_end_error_m"] for row in metric_rows])
+            ),
+            "xyz_end_error_median_m": float(
+                np.median([row["xyz_end_error_m"] for row in metric_rows])
+            ),
+            "rotation_end_error_mean_rad": float(
+                np.mean([row["rotation_end_error_rad"] for row in metric_rows])
+            ),
+            "gripper_end_error_mean": float(
+                np.mean([row["gripper_end_error"] for row in metric_rows])
+            ),
+            "frames": metric_rows,
+        }
+        metrics_path = output_dir / "prediction_metrics.json"
+        metrics_path.write_text(json.dumps(summary, indent=2))
+        logger.info("Saved %s", metrics_path)
+
     logger.info("Done!")
 
 
@@ -727,7 +810,15 @@ def main():
     parser.add_argument("--pretrained_path", type=str, default=None)
     parser.add_argument("--fps", type=int, default=FPS)
     parser.add_argument("--urdf_path", type=str, default=DEFAULT_URDF_PATH)
+    parser.add_argument(
+        "--extrinsics_config",
+        type=str,
+        default=str(DEFAULT_EXTRINSICS),
+        help=f"camera_gripper_extrinsics JSON (default: {DEFAULT_EXTRINSICS}). "
+        "Used for projection instead of the URDF so it matches sroi visualize_traj_video.py.",
+    )
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument(
         "--task",
         type=str,
@@ -771,6 +862,9 @@ def main():
     parser.add_argument("--mp4", action="store_true", help="Save MP4 instead of display")
 
     args = parser.parse_args()
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     if args.cameras:
         if not args.pretrained_path:

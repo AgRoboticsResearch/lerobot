@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "description": "SROI v2 D405 camera-to-gripper-tip transforms for trajectory projection",
+  "transform_convention": "T_a_b maps coordinates from frame b into frame a and represents the pose of b in a",
+  "frames": {
+    "optical": "camera_optical_link",
+    "camera": "camera_link",
+    "tip": "gripper_tip"
+  },
+  "T_optical_camera": [
+    [
+      2.6794896412773997e-08,
+      -0.9999999999999996,
+      5.183267242978961e-17,
+      0.0
+    ],
+    [
+      2.6794896357262843e-08,
+      7.734776252012516e-16,
+      -0.9999999999999998,
+      0.0
+    ],
+    [
+      0.9999999999999993,
+      2.6794896412773968e-08,
+      2.6794896468285145e-08,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_camera_gripper_tip": [
+    [
+      0.8660254,
+      0.0,
+      -0.5,
+      0.145
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.5,
+      0.0,
+      0.8660254,
+      -0.03
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ]
+}
