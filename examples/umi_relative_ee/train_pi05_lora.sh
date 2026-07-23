@@ -8,7 +8,7 @@ DATASET_ROOT="${DATASET_ROOT:-/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_
 VALIDATION_DATASET_REPO_ID="${VALIDATION_DATASET_REPO_ID:-sroi/sroiv2_strawberry_picking_lab_validation}"
 VALIDATION_DATASET_ROOT="${VALIDATION_DATASET_ROOT:-/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation}"
 VAL_FREQ="${VAL_FREQ:-10000}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/train/pi05_lora_4090_umi_relative_ee}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/train/pi05_lora_umi_relative_ee}"
 POLICY_REPO_ID="${POLICY_REPO_ID:-zfff/pi05_lora_umi_relative_ee}"
 
 "${PYTHON_BIN}" examples/umi_relative_ee/train_pi05_lora.py \
@@ -35,7 +35,7 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-zfff/pi05_lora_umi_relative_ee}"
   --peft.method_type=LORA \
   --peft.r=16 \
   --peft.lora_alpha=16 \
-  --batch_size=1 \
+  --batch_size=2 \
   --num_workers=8 \
   --prefetch_factor=2 \
   --steps=50000 \
@@ -43,5 +43,5 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-zfff/pi05_lora_umi_relative_ee}"
   --log_freq=50 \
   --eval_freq=0 \
   --output_dir="${OUTPUT_DIR}" \
-  --job_name=pi05_lora_4090_umi_relative_ee \
+  --job_name=pi05_lora_umi_relative_ee \
   --wandb.enable=true

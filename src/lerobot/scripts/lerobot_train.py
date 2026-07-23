@@ -229,7 +229,12 @@ def validate_policy(
     policy.eval()
     preprocessor.reset()
     try:
-        with torch.no_grad():
+        accelerator_device = getattr(accelerator, "device", torch.device("cpu"))
+        cuda_devices = []
+        if accelerator_device.type == "cuda":
+            cuda_devices = [accelerator_device.index or torch.cuda.current_device()]
+        with torch.random.fork_rng(devices=cuda_devices), torch.no_grad():
+            torch.manual_seed(0)
             for batch in dataloader:
                 _normalize_uint8_cameras(batch, camera_keys or [])
                 batch = preprocessor(batch)

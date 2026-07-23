@@ -1277,18 +1277,38 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
+        action_is_pad = batch.get("action_is_pad")
+        valid = None
+        if action_is_pad is not None:
+            if action_is_pad.shape != losses.shape[:2]:
+                raise ValueError(
+                    "action_is_pad must match the action time dimensions: "
+                    f"got {tuple(action_is_pad.shape)} for losses {tuple(losses.shape)}"
+                )
+            valid = (~action_is_pad.to(device=losses.device, dtype=torch.bool)).to(losses.dtype)
+            losses = losses * valid.unsqueeze(-1)
+            loss_per_dim = losses.sum(dim=(0, 1)) / valid.sum().clamp_min(1)
+        else:
+            loss_per_dim = losses.mean(dim=(0, 1))
+
         loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+            "loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist(),
         }
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            if valid is None:
+                per_sample_loss = losses.mean(dim=(1, 2))
+            else:
+                valid_values = valid.sum(dim=1).clamp_min(1) * original_action_dim
+                per_sample_loss = losses.sum(dim=(1, 2)) / valid_values
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
+            if valid is None:
+                loss = losses.mean()
+            else:
+                valid_values = valid.sum().clamp_min(1) * original_action_dim
+                loss = losses.sum() / valid_values
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 

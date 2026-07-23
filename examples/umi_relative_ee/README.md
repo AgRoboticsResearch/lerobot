@@ -34,7 +34,7 @@ The first run also needs access to Hugging Face to download
 > receives HTTP 403 for that repository.
 
 
-## RTX 4090 baseline
+## Training baseline
 
 The launcher defaults to the dataset recorded in the source UMI notes:
 
@@ -46,7 +46,7 @@ root: /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb
 Run:
 
 ```bash
-bash examples/umi_relative_ee/train_pi05_lora_4090.sh
+bash examples/umi_relative_ee/train_pi05_lora.sh
 ```
 
 To point it elsewhere without editing the file:
@@ -58,12 +58,12 @@ VALIDATION_DATASET_REPO_ID=my_org/my_validation_dataset \
 VALIDATION_DATASET_ROOT=/data/my_validation_dataset \
 OUTPUT_DIR=outputs/train/my_pi05_umi_lora \
 POLICY_REPO_ID=my_org/my_pi05_umi_lora \
-bash examples/umi_relative_ee/train_pi05_lora_4090.sh
+bash examples/umi_relative_ee/train_pi05_lora.sh
 ```
 
-The conservative 24 GB starting point is LoRA rank 16, bf16, gradient
-checkpointing, batch size 1, a 30-step chunk, and no `torch.compile`. After a
-successful first update, try batch size 2; if it OOMs, return to 1. This
+The 24 GB launcher uses LoRA rank 16, bf16, gradient
+checkpointing, batch size 2, a 30-step chunk, and no `torch.compile`. If it
+OOMs, return to batch size 1. This
 trainer does not currently expose gradient accumulation.
 
 The launcher uses 50,000 optimizer steps as an initial run. Prefer 5--10
@@ -116,12 +116,12 @@ the dataset metadata on disk.
 
 ## Resume
 
-Use the standard checkpoint config; do not start the 4090 launcher again with
+Use the standard checkpoint config; do not start the launcher again with
 the same output directory:
 
 ```bash
 /home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/train_pi05_lora.py \
-  --config_path=outputs/train/pi05_lora_4090_umi_relative_ee/checkpoints/last/pretrained_model/train_config.json \
+  --config_path=outputs/train/pi05_lora_umi_relative_ee/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
 
