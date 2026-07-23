@@ -155,10 +155,17 @@ def load_camera_matrix_from_file(path: str) -> np.ndarray:
 
 
 def load_camera_matrix_from_dataset(dataset_root: str) -> np.ndarray:
-    path = Path(dataset_root) / "meta" / "camera_info.json"
-    if not path.exists():
-        raise FileNotFoundError(f"camera_info.json not found at {path}")
-    return load_camera_matrix_from_file(path)
+    root = Path(dataset_root)
+    legacy_path = root / "meta" / "camera_info.json"
+    candidates = [legacy_path, *sorted(root.glob("meta/camera_info/**/camera_info_color.json"))]
+    for path in candidates:
+        if path.exists():
+            logger.info("Using camera intrinsics from %s", path)
+            return load_camera_matrix_from_file(path)
+    raise FileNotFoundError(
+        f"No camera intrinsics found under {root / 'meta'}; expected camera_info.json or "
+        "camera_info/**/camera_info_color.json"
+    )
 
 
 def auto_detect_camera_intrinsics(cameras: dict) -> np.ndarray | None:
@@ -282,10 +289,11 @@ def relative_actions_to_3d_points(
 
 
 def project_points_to_image(points_3d: np.ndarray, K: np.ndarray) -> np.ndarray:
-    z = points_3d[:, 2:3]
-    z = np.where(np.abs(z) < 1e-6, 1e-6, z)
+    z = points_3d[:, 2]
     pts = (K @ points_3d.T).T
-    return pts[:, :2] / z
+    points_2d = pts[:, :2] / z[:, None]
+    points_2d[z <= 1e-3] = np.nan
+    return points_2d
 
 
 def draw_trajectory_on_image(
@@ -300,15 +308,17 @@ def draw_trajectory_on_image(
         return img_draw
 
     if cmap == "gt":
-        colors = [(0, int(255 * (1 - i / max(1, n - 1))), 255) for i in range(max(1, n - 1))]
+        colors = [(255, 255, 0)] * max(1, n - 1)  # cyan in BGR
     else:
         colors = [
-            (int(255 * i / max(1, n - 1)), int(255 * (1 - i / max(1, n - 1))), 0)
+            (0, int(255 * (1 - i / max(1, n - 2))), int(255 * i / max(1, n - 2)))
             for i in range(max(1, n - 1))
         ]
 
     h, w = img.shape[:2]
     for i in range(len(points_2d) - 1):
+        if not (np.isfinite(points_2d[i]).all() and np.isfinite(points_2d[i + 1]).all()):
+            continue
         pt1 = tuple(points_2d[i].astype(int))
         pt2 = tuple(points_2d[i + 1].astype(int))
         if 0 <= pt1[0] < w and 0 <= pt1[1] < h and 0 <= pt2[0] < w and 0 <= pt2[1] < h:
@@ -318,6 +328,8 @@ def draw_trajectory_on_image(
                 cv2.drawMarker(img_draw, pt1, color, cv2.MARKER_CROSS, markerSize=6, thickness=2)
 
     for pt, col in [(points_2d[0], (0, 255, 0)), (points_2d[-1], (0, 0, 255))]:
+        if not np.isfinite(pt).all():
+            continue
         p = tuple(pt.astype(int))
         if 0 <= p[0] < w and 0 <= p[1] < h:
             cv2.circle(img_draw, p, 5, col, -1)
@@ -449,10 +461,18 @@ def run_camera_mode(args):
             actions_rel = actions_rel[0] if actions_rel.ndim == 3 else actions_rel
 
             if args.update_state:
+                from scipy.spatial.transform import Rotation
+
                 T_ref = aa_pose_to_matrix(current_state)
                 T_rel_last = rot6d_to_matrix(actions_rel[-1])
                 T_abs_last = T_ref @ T_rel_last
-                current_state = np.concatenate([T_abs_last[:3, 3], [0, 0, 0], [actions_rel[-1, 9]]])
+                current_state = np.concatenate(
+                    [
+                        T_abs_last[:3, 3],
+                        Rotation.from_matrix(T_abs_last[:3, :3]).as_rotvec(),
+                        [actions_rel[-1, 9]],
+                    ]
+                ).astype(np.float32)
 
             T_rel_list = [rot6d_to_matrix(a) for a in actions_rel]
             traj_3d = relative_actions_to_3d_points(T_rel_list, T_opt_cam, T_cam_ee)
