@@ -25,6 +25,7 @@ done < "$paths"
 for required in \
   examples/umi_relative_ee/scaling/SCALING_REPORT.pdf \
   examples/umi_relative_ee/prediction_visualization.md \
+  docs/legacy/fei-v5.0/prediction_visualization.md \
   docs/legacy/fei-v5.0/pi05_umi_README.md; do
   if [[ ! -e "$repo_root/$required" ]]; then
     echo "missing required v5/working-tree document: $required" >&2
@@ -40,5 +41,11 @@ for archived in AGENTS.md CLAUDE.md; do
   fi
 done
 
+prediction_archive_checksum=$(sha256sum "$repo_root/docs/legacy/fei-v5.0/prediction_visualization.md" | awk '{print $1}')
+if [[ "$prediction_archive_checksum" != "4c2fcf66a101e762bad12744a25d263b0791aadf6ace8136dd5c7cb3a5f1e5a8" ]]; then
+  echo "verbatim archive differs: v5 prediction_visualization.md" >&2
+  exit 1
+fi
+
 count=$(wc -l < "$paths")
-echo "Verified $count tracked fei documents/assets plus PDF, v5 visualization note, and v5 README archive."
+echo "Verified $count tracked fei documents/assets plus PDF, active+archived v5 visualization note, and v5 README archive."

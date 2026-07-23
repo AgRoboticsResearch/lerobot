@@ -33,7 +33,7 @@ This manifest proves that every documentation file and attached asset added on `
 | `traj_execution_test/PLAN.md` | `traj_execution_test/PLAN.md` | `fei@cbf41c1e` | `d28747d712265d58dc13930af0585dfe43770fa6e336b71fd745d342fa7812af` | tooling |
 | `traj_execution_test/test_x_axis.csv` | `traj_execution_test/test_x_axis.csv` | `fei@cbf41c1e` | `c58b24b4f25d99ba8b854d8f627f1e43d2fc304336e65fcf37e9d6671d668566` | asset |
 | `examples/umi_relative_ee/scaling/SCALING_REPORT.pdf` | `examples/umi_relative_ee/scaling/SCALING_REPORT.pdf` | `fei` ignored working-tree asset | `4e6bfdee8797ccc24aa59a8713a86c1ed9c1885748cbdc582434b149a9a40f1f` | asset |
-| `examples/umi_relative_ee/prediction_visualization.md` | `examples/umi_relative_ee/prediction_visualization.md` | `fei-v5.0` untracked working-tree document | `4c2fcf66a101e762bad12744a25d263b0791aadf6ace8136dd5c7cb3a5f1e5a8` | active |
+| `examples/umi_relative_ee/prediction_visualization.md` | `examples/umi_relative_ee/prediction_visualization.md; docs/legacy/fei-v5.0/prediction_visualization.md` | `fei-v5.0` untracked working-tree document | `4c2fcf66a101e762bad12744a25d263b0791aadf6ace8136dd5c7cb3a5f1e5a8` | active+historical-verbatim |
 | `examples/umi_relative_ee/README.md` | `docs/legacy/fei-v5.0/pi05_umi_README.md` | `fei-v5.0@4c5453bb` | `6c3dcc97cb34879a19e62c657cbaa799a403ab1988bdbdcad21eb374e574a282` | historical-verbatim; content also integrated into active README |
 
 ## Verification
