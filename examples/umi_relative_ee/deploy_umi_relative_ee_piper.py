@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-r"""
+r"""    
 Deploy ACT policy trained with UMI-style processor pipeline on Piper 6-DOF arm.
 
 Uses synchronous control (no subprocess), same pattern as deploy_relative_ee_processor_so101.py.
@@ -74,7 +74,7 @@ GRIPPER_CLOSED_MM = 55.0
 
 DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "sroi-piper",
-    "src", "utils", "piper_urdf", "piper.urdf",
+    "src", "utils", "piper_urdf", "piper_sroiv2.urdf",
 )))
 DEFAULT_PIPER_SRC_PATH = os.path.normpath(os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "sroi-piper", "src",

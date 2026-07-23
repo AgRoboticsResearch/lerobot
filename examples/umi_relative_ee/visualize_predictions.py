@@ -83,7 +83,7 @@ DEFAULT_URDF_PATH = os.path.join(
     "src",
     "utils",
     "piper_urdf",
-    "piper.urdf",
+    "piper_sroiv2.urdf",
 )
 DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(DEFAULT_URDF_PATH))
 
