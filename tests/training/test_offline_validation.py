@@ -306,6 +306,7 @@ def test_umi_validation_does_not_recompute_relative_stats(monkeypatch):
         use_relative_actions=True,
         derive_state_from_action=False,
         relative_exclude_joints=["gripper"],
+        normalization_mapping={},
     )
     cfg = SimpleNamespace(
         dataset=DatasetConfig(repo_id="train/repo"),

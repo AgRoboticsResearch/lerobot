@@ -212,7 +212,12 @@ def validate_policy(
     policy.eval()
     preprocessor.reset()
     try:
-        with torch.no_grad():
+        accelerator_device = getattr(accelerator, "device", torch.device("cpu"))
+        cuda_devices = []
+        if accelerator_device.type == "cuda":
+            cuda_devices = [accelerator_device.index or torch.cuda.current_device()]
+        with torch.random.fork_rng(devices=cuda_devices), torch.no_grad():
+            torch.manual_seed(0)
             for batch in dataloader:
                 batch = preprocessor(batch)
                 with accelerator.autocast():
@@ -243,7 +248,7 @@ def validate_policy(
                 )
                 gathered = accelerator.gather_for_metrics(vals)
                 sums = gathered.double().sum(dim=0)
-                for name, value in zip(names, sums.tolist()):
+                for name, value in zip(names, sums.tolist(), strict=True):
                     metric_sums[name] = metric_sums.get(name, 0.0) + value
                 total_samples += gathered.shape[0]
     finally:

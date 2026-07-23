@@ -375,28 +375,36 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_id_pad")
+        actions_is_pad = batch.get("action_is_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        loss_dict["losses_after_forward"] = losses.clone()
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
+        loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
 
-        # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
+        loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            # Return per-sample losses (B,) by averaging over valid (time, action) entries
+            if actions_is_pad is None:
+                per_sample_loss = losses.mean(dim=(1, 2))
+            else:
+                num_valid = ((~actions_is_pad).sum(dim=1) * losses.shape[-1]).clamp_min(1)
+                per_sample_loss = losses.sum(dim=(1, 2)) / num_valid
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
+            # Default: return scalar mean loss over valid (time, action) entries
+            if actions_is_pad is None:
+                loss = losses.mean()
+            else:
+                num_valid = ((~actions_is_pad).sum() * losses.shape[-1]).clamp_min(1)
+                loss = losses.sum() / num_valid
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
