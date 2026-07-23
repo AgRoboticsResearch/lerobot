@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 r"""
-Visualize pi0.5 LoRA (UMI relative-EE) predictions on the validation dataset.
+Visualize ACT, SmolVLA, or π0.5 UMI relative-EE predictions on a recorded dataset.
 
-Builds on the sibling ``lerobot/examples/umi_relative_ee/visualize_predictions.py``,
-adapted for pi0.5's UMI processor (state derived from ``action[t-1:t+1]``,
-language-conditioned via PaliGemma) and for LoRA checkpoints.
+The policy is loaded through its saved unified or legacy-compatible UMI
+processor. LoRA adapters are detected automatically. The state is derived from
+``action[t-1:t+1]``; a task string is supplied for language-conditioned models.
 
 Mode: **open-loop dataset inference**. For each frame of a validation episode we
 feed the model the GT observation (image + the two-pose state derived from the
@@ -15,18 +15,16 @@ to relative rot6d actions, and render a per-frame **panel-composite** video:
   - right: predicted-vs-GT 3D trajectory (chunk-start frame) and per-dim
            action curves (xyz / rotation-magnitude) over the chunk.
 
-Why not draw the trajectory directly on the camera pixels (like the reference)?
-That projection needs the static hand-eye transforms ``T_opt_cam`` / ``T_cam_ee``,
-which the reference pulls from a Piper URDF via ``placo``. Neither the URDF nor
-``placo`` is available here, and the dataset's ``camera_info`` is intrinsics-only.
-So the default is the panel-composite (no transforms needed).
+The panel-composite needs no camera calibration. Pass ``--project`` to also draw
+the predicted and ground-truth gripper-tip trajectories on the camera image
+using the supplied hand-eye calibration and dataset camera intrinsics.
 
 Usage:
     python examples/umi_relative_ee/visualize_predictions.py \
-        --pretrained_path outputs/train/pi05_lora_umi_relative_ee/checkpoints/050000/pretrained_model \
+        --pretrained_path outputs/train/my_umi_policy/checkpoints/last/pretrained_model \
         --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
         --episode_indices 0 1 2 \
-        --output_dir outputs/debug/viz_pi05_umi
+        --output_dir outputs/debug/viz_umi
 """
 
 import argparse
@@ -97,11 +95,24 @@ def rot_angle_from_matrix(R: np.ndarray) -> float:
     return float(np.arccos(cos))
 
 
-def unnormalize_actions(tensor: torch.Tensor, stats: dict) -> torch.Tensor:
-    """Inverse of pi0.5's bounded [-1, 1] q01/q99 normalization."""
-    q01 = torch.as_tensor(stats["q01"], device=tensor.device, dtype=tensor.dtype)
-    q99 = torch.as_tensor(stats["q99"], device=tensor.device, dtype=tensor.dtype)
-    return tensor * (q99 - q01) / 2 + (q99 + q01) / 2
+def unnormalize_actions(tensor: torch.Tensor, stats: dict, mode) -> torch.Tensor:
+    """Invert normalization without applying the absolute-EE postprocessor."""
+    mode_name = getattr(mode, "value", str(mode)).lower()
+
+    def stat(name: str) -> torch.Tensor:
+        return torch.as_tensor(stats[name], device=tensor.device, dtype=tensor.dtype)
+
+    if "quantile" in mode_name:
+        low, high = stat("q01"), stat("q99")
+        return (tensor + 1.0) * (high - low) / 2.0 + low
+    if "min_max" in mode_name:
+        low, high = stat("min"), stat("max")
+        return (tensor + 1.0) * (high - low) / 2.0 + low
+    if "mean_std" in mode_name:
+        return tensor * stat("std") + stat("mean")
+    if "identity" in mode_name:
+        return tensor
+    raise ValueError(f"Unsupported action normalization mode: {mode!r}")
 
 
 def extract_action_stats(preprocessor) -> dict:
@@ -314,12 +325,14 @@ def draw_traj_on_image(img_rgb, pts2d, mode="pred"):
 
 def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes):
     ax_img, ax_3d, ax_curves = axes
-    ax_img.clear(); ax_3d.clear(); ax_curves.clear()
+    ax_img.clear()
+    ax_3d.clear()
+    ax_curves.clear()
 
     ax_img.imshow(img_rgb)
     ax_img.set_title(
         f"ep {info['ep']}  frame {info['frame']}  task='{info['task']}'\n"
-        f"end xyz err {info['xyz_err']*1000:.1f}mm  end rot err {np.degrees(info['rot_err']):.1f}deg  "
+        f"end xyz err {info['xyz_err'] * 1000:.1f}mm  end rot err {np.degrees(info['rot_err']):.1f}deg  "
         f"grip pred={info['grip_pred']:.2f} gt={info['grip_gt']:.2f}",
         fontsize=8,
     )
@@ -331,9 +344,13 @@ def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes)
     if len(pred_traj) > 1:
         ax_3d.plot(pred_traj[:, 0], pred_traj[:, 1], pred_traj[:, 2], "b-", lw=2, label="Pred")
         ax_3d.scatter([pred_traj[-1, 0]], [pred_traj[-1, 1]], [pred_traj[-1, 2]], c="b", s=30)
-    ax_3d.set_xlabel("x"); ax_3d.set_ylabel("y"); ax_3d.set_zlabel("z")
+    ax_3d.set_xlabel("x")
+    ax_3d.set_ylabel("y")
+    ax_3d.set_zlabel("z")
     lim = 0.15
-    ax_3d.set_xlim(-lim, lim); ax_3d.set_ylim(-lim, lim); ax_3d.set_zlim(-lim, lim)
+    ax_3d.set_xlim(-lim, lim)
+    ax_3d.set_ylim(-lim, lim)
+    ax_3d.set_zlim(-lim, lim)
     try:
         ax_3d.set_box_aspect((1, 1, 1))
     except Exception:
@@ -365,24 +382,41 @@ def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--pretrained_path", required=True)
     parser.add_argument("--dataset_root", required=True)
     parser.add_argument("--repo_id", default=None)
     parser.add_argument("--episode_indices", type=int, nargs="+", required=True)
-    parser.add_argument("--output_dir", default="outputs/debug/viz_pi05_umi")
+    parser.add_argument("--output_dir", default="outputs/debug/viz_umi")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--task", default=DEFAULT_TASK)
     parser.add_argument("--fps", type=int, default=None)
     parser.add_argument("--no_gt", action="store_true")
     parser.add_argument("--first_frame_debug", action="store_true")
-    parser.add_argument("--project", action="store_true",
-                        help="Draw predicted/GT gripper-tip trajectories on the camera image (needs hand-eye + K).")
-    parser.add_argument("--extrinsics_config", default=DEFAULT_EXTRINSICS,
-                        help=f"camera_gripper_extrinsics JSON (default: {DEFAULT_EXTRINSICS})")
-    parser.add_argument("--camera_info_path", default=None,
-                        help="camera_info_color.json for intrinsics K (auto-found under dataset meta/ if omitted)")
+    parser.add_argument(
+        "--max_frames_per_episode",
+        type=int,
+        default=0,
+        help="Stop rendering each episode after this many valid frames (0 means all).",
+    )
+    parser.add_argument(
+        "--project",
+        action="store_true",
+        help="Draw predicted/GT gripper-tip trajectories on the camera image (needs hand-eye + K).",
+    )
+    parser.add_argument(
+        "--extrinsics_config",
+        default=DEFAULT_EXTRINSICS,
+        help=f"camera_gripper_extrinsics JSON (default: {DEFAULT_EXTRINSICS})",
+    )
+    parser.add_argument(
+        "--camera_info_path",
+        default=None,
+        help="camera_info_color.json for intrinsics K (auto-found under dataset meta/ if omitted)",
+    )
     args = parser.parse_args()
 
     if iio is None:
@@ -397,16 +431,26 @@ def main():
     logger.info("Loading policy + processors from %s", args.pretrained_path)
     policy, preprocessor, policy_config = load_policy_and_processors(args.pretrained_path, device)
     action_stats = extract_action_stats(preprocessor)
+    action_norm_mode = policy_config.normalization_mapping["ACTION"]
     chunk = policy_config.chunk_size
-    logger.info("policy=%s chunk=%d use_umi_relative_ee=%s", policy_config.type, chunk, policy_config.use_umi_relative_ee)
-    logger.info("action stats min=%s max=%s", np.round(action_stats["min"], 3), np.round(action_stats["max"], 3))
+    logger.info(
+        "policy=%s chunk=%d use_umi_relative_ee=%s",
+        policy_config.type,
+        chunk,
+        getattr(policy_config, "use_umi_relative_ee", False),
+    )
+    logger.info("action normalization=%s", action_norm_mode)
 
     meta = LeRobotDatasetMetadata(repo_id, root=args.dataset_root)
     delta_ts = resolve_delta_timestamps(policy_config, meta)
     logger.info("delta_timestamps keys=%s", {k: (len(v) if v else v) for k, v in (delta_ts or {}).items()})
     episodes = [e for e in args.episode_indices if e < meta.total_episodes]
     dataset = LeRobotDataset(
-        repo_id=repo_id, root=args.dataset_root, delta_timestamps=delta_ts, return_uint8=True, episodes=episodes
+        repo_id=repo_id,
+        root=args.dataset_root,
+        delta_timestamps=delta_ts,
+        return_uint8=True,
+        episodes=episodes,
     )
     fps = args.fps or meta.fps
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0, collate_fn=lerobot_collate_fn)
@@ -421,8 +465,13 @@ def main():
         K = load_K(cam_info)
         if K is None:
             parser.error(f"could not load intrinsics K from {cam_info}")
-        logger.info("projection on: extrinsics=%s K fx=%.1f cx=%.1f cy=%.1f",
-                    args.extrinsics_config, K[0, 0], K[0, 2], K[1, 2])
+        logger.info(
+            "projection on: extrinsics=%s K fx=%.1f cx=%.1f cy=%.1f",
+            args.extrinsics_config,
+            K[0, 0],
+            K[0, 2],
+            K[1, 2],
+        )
 
     out_dir = Path(args.output_dir) / repo_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -453,7 +502,10 @@ def main():
         if ep_idx != cur_ep:
             flush(cur_ep)
             cur_ep = ep_idx
-            t0 = time.perf_counter(); n_done = 0
+            t0 = time.perf_counter()
+            n_done = 0
+        if args.max_frames_per_episode and n_done >= args.max_frames_per_episode:
+            continue
 
         # skip frames whose [t-1, t, ..., t+chunk-1] window is partially padded
         is_pad = batch.get("action_is_pad")
@@ -479,12 +531,16 @@ def main():
         preprocessor.reset()
         with torch.no_grad():
             processed = preprocessor(batch)
+            if policy_config.type == "act":
+                processed.pop("action", None)
             if args.first_frame_debug and n_done == 0:
-                logger.info("processed shapes: %s",
-                            {k: tuple(v.shape) for k, v in processed.items() if torch.is_tensor(v)})
+                logger.info(
+                    "processed shapes: %s",
+                    {k: tuple(v.shape) for k, v in processed.items() if torch.is_tensor(v)},
+                )
             pred = policy.predict_action_chunk(processed)
 
-        pred_rel = unnormalize_actions(pred, action_stats)[0].cpu().numpy()
+        pred_rel = unnormalize_actions(pred, action_stats, action_norm_mode)[0].cpu().numpy()
         pred_traj = rel_actions_to_traj(pred_rel)
 
         pred_end = pred_traj[-1]
@@ -510,16 +566,25 @@ def main():
                 img_rgb = draw_traj_on_image(img_rgb, np.column_stack([gpx, gpy]), "gt")
 
         info = {
-            "ep": ep_idx, "frame": frame_idx, "task": args.task,
-            "xyz_err": xyz_err, "rot_err": rot_err,
-            "grip_pred": float(pred_rel[-1, 9]), "grip_gt": float(gt_chunk[-1, 6]),
+            "ep": ep_idx,
+            "frame": frame_idx,
+            "task": args.task,
+            "xyz_err": xyz_err,
+            "rot_err": rot_err,
+            "grip_pred": float(pred_rel[-1, 9]),
+            "grip_gt": float(gt_chunk[-1, 6]),
         }
         error_rows.append(info.copy())
         frames.append(render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes))
 
         n_done += 1
         if n_done % 25 == 0:
-            logger.info("  ep %d: %d frames (%.0fms/frame)", ep_idx, n_done, 1000 * (time.perf_counter() - t0) / n_done)
+            logger.info(
+                "  ep %d: %d frames (%.0fms/frame)",
+                ep_idx,
+                n_done,
+                1000 * (time.perf_counter() - t0) / n_done,
+            )
 
     flush(cur_ep)
     if error_rows:
@@ -536,7 +601,9 @@ def main():
         }
         metrics_path = out_dir / "prediction_metrics.json"
         metrics_path.write_text(json.dumps(summary, indent=2))
-        logger.info("Metrics: %s", json.dumps({key: value for key, value in summary.items() if key != "frames"}))
+        logger.info(
+            "Metrics: %s", json.dumps({key: value for key, value in summary.items() if key != "frames"})
+        )
         logger.info("Saved %s", metrics_path)
     logger.info("Done.")
 

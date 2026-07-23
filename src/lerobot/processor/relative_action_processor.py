@@ -25,6 +25,22 @@ from lerobot.utils.constants import OBS_STATE
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .pipeline import ProcessorStep, ProcessorStepRegistry
+from .umi_relative_ee_processor import (
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
+    absolute_aa_to_relative_rot6d,
+    axis_angle_to_matrix,
+    make_umi_cache_key,
+    matrix_to_axis_angle,
+    matrix_to_rot6d,
+    relative_rot6d_to_absolute_aa,
+    rot6d_to_matrix,
+    to_umi_absolute_actions,
+    to_umi_relative_actions,
+    to_umi_relative_state,
+)
 
 # Re-export for backward compatibility
 __all__ = [
@@ -209,3 +225,105 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+# Legacy UMI processor API -------------------------------------------------
+#
+# Existing ACT and SmolVLA checkpoints serialize these registry names. New
+# pipelines use umi_relative_ee_processor directly; the compatibility layer
+# intentionally delegates to the same math so old and new checkpoints cannot
+# drift in representation.
+
+_axis_angle_to_matrix = axis_angle_to_matrix
+_matrix_to_axis_angle = matrix_to_axis_angle
+_matrix_to_rot6d = matrix_to_rot6d
+_rot6d_to_matrix = rot6d_to_matrix
+_pose_se3_relative_aa_to_rot6d = absolute_aa_to_relative_rot6d
+_pose_se3_absolute_rot6d_to_aa = relative_rot6d_to_absolute_aa
+make_relative_ee_cache_key = make_umi_cache_key
+
+
+def to_relative_actions_rot6d(
+    actions: Tensor, state: Tensor, mask: Sequence[bool] | None = None
+) -> Tensor:
+    """Legacy alias for the canonical fixed-base UMI action transform."""
+    del mask
+    return to_umi_relative_actions(actions, state)
+
+
+def to_absolute_actions_rot6d(
+    actions: Tensor, state: Tensor, mask: Sequence[bool] | None = None
+) -> Tensor:
+    """Legacy alias for the canonical fixed-base UMI inverse transform."""
+    del mask
+    return to_umi_absolute_actions(actions, state)
+
+
+def to_relative_state_rot6d(
+    state: Tensor, mask: Sequence[bool] | None = None
+) -> Tensor:
+    """Legacy alias for the canonical two-pose UMI state transform."""
+    del mask
+    return to_umi_relative_state(state)
+
+
+@ProcessorStepRegistry.register("derive_state_from_action_rot6d")
+@dataclass
+class DeriveStateFromActionStep(UmiDeriveStateFromActionStep):
+    """Legacy registry alias for UmiDeriveStateFromActionStep."""
+
+
+@ProcessorStepRegistry.register("relative_rot6d_actions_processor")
+@dataclass
+class RelativeRot6dActionsProcessorStep(UmiRelativeActionsStep):
+    """Legacy registry alias accepting the old serialized configuration."""
+
+    exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    action_names: list[str] | None = None
+
+    def get_config(self) -> dict[str, Any]:
+        config = super().get_config()
+        config.update(
+            {
+                "exclude_joints": self.exclude_joints,
+                "action_names": self.action_names,
+            }
+        )
+        return config
+
+
+@ProcessorStepRegistry.register("relative_rot6d_state_processor")
+@dataclass
+class RelativeRot6dStateProcessorStep(UmiRelativeStateStep):
+    """Legacy registry alias accepting the old serialized configuration."""
+
+    exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    state_names: list[str] | None = None
+
+    def get_config(self) -> dict[str, Any]:
+        config = super().get_config()
+        config.update(
+            {
+                "exclude_joints": self.exclude_joints,
+                "state_names": self.state_names,
+            }
+        )
+        return config
+
+
+@ProcessorStepRegistry.register("absolute_rot6d_actions_processor")
+@dataclass
+class AbsoluteRot6dActionsProcessorStep(UmiAbsoluteActionsStep):
+    """Legacy registry alias for UmiAbsoluteActionsStep."""
+
+
+__all__ += [
+    "AbsoluteRot6dActionsProcessorStep",
+    "DeriveStateFromActionStep",
+    "RelativeRot6dActionsProcessorStep",
+    "RelativeRot6dStateProcessorStep",
+    "make_relative_ee_cache_key",
+    "to_absolute_actions_rot6d",
+    "to_relative_actions_rot6d",
+    "to_relative_state_rot6d",
+]

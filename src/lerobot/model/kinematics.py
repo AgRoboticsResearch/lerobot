@@ -101,6 +101,7 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        reset_state: bool = True,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -110,17 +111,21 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            reset_state: Reset joints to current_joint_pos before solving. Set to False
+                to continue from the solver's existing state.
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
 
-        # Convert current joint positions to radians for initial guess
-        current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
+        if reset_state:
+            # Convert current joint positions to radians for initial guess
+            current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
 
-        # Set current joint positions as initial guess
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, current_joint_rad[i])
+            # Set current joint positions as initial guess
+            for i, joint_name in enumerate(self.joint_names):
+                self.robot.set_joint(joint_name, current_joint_rad[i])
+            self.robot.update_kinematics()
 
         # Update the target pose for the frame task
         self.tip_frame.T_world_frame = desired_ee_pose

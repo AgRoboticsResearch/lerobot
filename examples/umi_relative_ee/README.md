@@ -1,7 +1,6 @@
-# π0.5 LoRA on UMI-style relative EE data
+# Unified UMI-style relative EE training
 
-This setup fine-tunes `lerobot/pi05_base` on the same dataset contract used by
-the adjacent `../lerobot/examples/umi_relative_ee` pipeline:
+This directory is the maintained entrypoint for ACT, SmolVLA, and π0.5 on one shared dataset contract:
 
 - on disk, `action` is absolute 7D
   `[x, y, z, axis_angle_x, axis_angle_y, axis_angle_z, gripper]`;
@@ -14,6 +13,23 @@ the adjacent `../lerobot/examples/umi_relative_ee` pipeline:
 
 The SE(3) transforms are saved in each checkpoint's preprocessor and
 postprocessor. The raw dataset and its raw 7D statistics are not modified.
+
+## Unified entrypoints
+
+All three policies use `--policy.use_umi_relative_ee=true` with the standard
+`lerobot-train` command. `train_umi_relative_ee.py`,
+`train_relative_ee_processor.py`, and `train_pi05_lora.py` are thin compatible
+wrappers around that same trainer. ACT and SmolVLA use MIN_MAX normalization;
+π0.5 uses QUANTILES. Existing ACT and SmolVLA checkpoints with the legacy
+serialized processor names load directly.
+
+- ACT and shared processor design: `umi_style_ee_processor_pipeline.md`
+- SmolVLA runbook: `smolvla_relative_ee_training.md`
+- π0.5 commands: the sections below and `train_pi05_lora.sh`
+- Unified prediction visualization: `prediction_visualization.md`
+- Migration manifest and checksums: `../../docs/umi_migration_manifest.md`
+- Historical-tool smoke results: `../../docs/umi_legacy_tool_smoke.md`
+- Historical compatibility review: `2026-07-10_umi_relative_ee_policy_compatibility.md`
 
 ## Install
 

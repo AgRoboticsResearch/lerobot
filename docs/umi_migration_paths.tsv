@@ -1,0 +1,28 @@
+AGENTS.md	docs/legacy/fei-branch/instructions/AGENTS.md	historical-verbatim
+CLAUDE.md	docs/legacy/fei-branch/instructions/CLAUDE.md	historical-verbatim
+CLAUDE_EE_TO_JOINT_CONVERT.md	CLAUDE_EE_TO_JOINT_CONVERT.md	active
+.claude/agents/codebase-explorer.md	.claude/agents/codebase-explorer.md; docs/legacy/fei-branch/instructions/codebase-explorer.md	active+historical
+.github/copilot-instructions.md	.github/copilot-instructions.md; docs/legacy/fei-branch/instructions/copilot-instructions.md	active+historical
+calibration/oscar_so101_follower.json	calibration/oscar_so101_follower.json	asset
+conversation_summary/2025-01-15_act_action_chunking.md	conversation_summary/2025-01-15_act_action_chunking.md	historical
+conversation_summary/2025-01-20_rot6d_umi_convention_fix.md	conversation_summary/2025-01-20_rot6d_umi_convention_fix.md	historical
+conversation_summary/2025-01-24_relative_ee_fps_fix.md	conversation_summary/2025-01-24_relative_ee_fps_fix.md	historical
+conversation_summary/2025-01-26_umi_temporal_batching.md	conversation_summary/2025-01-26_umi_temporal_batching.md	historical
+conversation_summary/2025-01-28_ee_to_umi_converter.md	conversation_summary/2025-01-28_ee_to_umi_converter.md	historical
+ee_vs_joints/experiment_log.md	ee_vs_joints/experiment_log.md	historical
+examples/so101/README.md	examples/so101/README.md	tooling
+examples/so101_relative_ee/deploy_relative_ee_so101.md	examples/so101_relative_ee/deploy_relative_ee_so101.md	tooling
+examples/umi_relative_ee/2026-07-10_umi_relative_ee_policy_compatibility.md	examples/umi_relative_ee/2026-07-10_umi_relative_ee_policy_compatibility.md	historical
+examples/umi_relative_ee/camera_gripper_extrinsics_sroi_v2_d405.json	examples/umi_relative_ee/camera_gripper_extrinsics_sroi_v2_d405.json	asset
+examples/umi_relative_ee/scaling/EXPERIMENT.md	examples/umi_relative_ee/scaling/EXPERIMENT.md	historical
+examples/umi_relative_ee/scaling/SCALING_REPORT.md	examples/umi_relative_ee/scaling/SCALING_REPORT.md	historical
+examples/umi_relative_ee/scaling/fig1_scaling.png	examples/umi_relative_ee/scaling/fig1_scaling.png	asset
+examples/umi_relative_ee/scaling/fig2_loss_components.png	examples/umi_relative_ee/scaling/fig2_loss_components.png	asset
+examples/umi_relative_ee/smolvla_relative_ee_training.md	examples/umi_relative_ee/smolvla_relative_ee_training.md	historical+linked
+examples/umi_relative_ee/umi_style_ee_processor_pipeline.md	examples/umi_relative_ee/umi_style_ee_processor_pipeline.md	historical+linked
+examples/umi_relative_ee/visualize_predictions_act_smolvla.md	examples/umi_relative_ee/visualize_predictions_act_smolvla.md	historical+linked
+placo_sim/README.md	placo_sim/README.md	tooling
+traj_execution_test/eetrajs/README.md	traj_execution_test/eetrajs/README.md	tooling
+traj_execution_test/OSC_CONTROL.md	traj_execution_test/OSC_CONTROL.md	tooling
+traj_execution_test/PLAN.md	traj_execution_test/PLAN.md	tooling
+traj_execution_test/test_x_axis.csv	traj_execution_test/test_x_axis.csv	asset

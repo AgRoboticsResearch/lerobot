@@ -31,10 +31,16 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    UmiAbsoluteActionsStep,
+    UmiRelativeActionsStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
     transition_to_policy_action,
+)
+from lerobot.processor.relative_action_processor import (
+    AbsoluteRot6dActionsProcessorStep,
+    RelativeRot6dActionsProcessorStep,
 )
 from lerobot.types import PolicyAction
 from lerobot.utils.constants import (
@@ -72,11 +78,23 @@ def _reconnect_relative_absolute_steps(
     That reference is not serializable, so we re-establish it here after loading.
     """
     relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
+    if relative_step is not None:
+        for step in postprocessor.steps:
+            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+                step.relative_step = relative_step
+
+    umi_relative_step = next(
+        (
+            step
+            for step in preprocessor.steps
+            if isinstance(step, (UmiRelativeActionsStep, RelativeRot6dActionsProcessorStep))
+        ),
+        None,
+    )
+    if umi_relative_step is not None:
+        for step in postprocessor.steps:
+            if isinstance(step, (UmiAbsoluteActionsStep, AbsoluteRot6dActionsProcessorStep)):
+                step.relative_step = umi_relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:

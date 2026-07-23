@@ -1,0 +1,6 @@
+checkpoints/
+wandb/
+*.log
+outputs/
+output/
+*_LOG.TXT

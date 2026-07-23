@@ -29,6 +29,16 @@ class SmolVLAConfig(PreTrainedConfig):
     chunk_size: int = 50
     n_action_steps: int = 50
 
+    # Canonical UMI-style relative end-effector mode shared with ACT and π0.5.
+    use_umi_relative_ee: bool = False
+
+    # Deprecated aliases retained for direct loading of existing checkpoints.
+    derive_state_from_action: bool = False
+    use_relative_actions: bool = False
+    pose_dim: int = 0
+    use_rot6d: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -110,6 +120,27 @@ class SmolVLAConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        legacy_umi = (
+            self.derive_state_from_action
+            and self.use_relative_actions
+            and self.pose_dim == 6
+            and self.use_rot6d
+        )
+        self.use_umi_relative_ee = self.use_umi_relative_ee or legacy_umi
+        if self.use_umi_relative_ee:
+            if self.n_obs_steps != 1:
+                raise ValueError("SmolVLA UMI relative-EE mode requires n_obs_steps=1.")
+            if self.max_state_dim < 20 or self.max_action_dim < 10:
+                raise ValueError(
+                    "SmolVLA UMI relative-EE mode requires max_state_dim>=20 and max_action_dim>=10."
+                )
+            self.derive_state_from_action = True
+            self.use_relative_actions = True
+            self.pose_dim = 6
+            self.use_rot6d = True
+            self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+            self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
@@ -152,6 +183,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

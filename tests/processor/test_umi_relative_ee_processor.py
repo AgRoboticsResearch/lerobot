@@ -2,9 +2,12 @@ import json
 
 import torch
 
-from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.act import ACTConfig, make_act_pre_post_processors
 from lerobot.policies.pi05 import PI05Config, make_pi05_pre_post_processors
+from lerobot.policies.smolvla import SmolVLAConfig, make_smolvla_pre_post_processors
 from lerobot.processor import (
+    ProcessorStepRegistry,
     UmiAbsoluteActionsStep,
     UmiDeriveStateFromActionStep,
     UmiRelativeActionsStep,
@@ -81,3 +84,65 @@ def test_pi05_umi_config_and_serialized_processor_steps(tmp_path, monkeypatch):
     post_names = [step.get("registry_name") for step in post_config["steps"]]
     assert "umi_relative_actions" in pre_names
     assert "umi_absolute_actions" in post_names
+
+
+def test_act_and_smolvla_share_canonical_umi_steps(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.processor.tokenizer_processor.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: object(),
+    )
+    features_in = {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(20,))}
+    features_out = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(10,))}
+    stats = {
+        OBS_STATE: {"min": torch.full((20,), -1.0), "max": torch.full((20,), 1.0)},
+        ACTION: {"min": torch.full((10,), -1.0), "max": torch.full((10,), 1.0)},
+    }
+
+    act = ACTConfig(
+        use_umi_relative_ee=True,
+        chunk_size=4,
+        n_action_steps=4,
+        device="cpu",
+        input_features=features_in,
+        output_features=features_out,
+    )
+    smolvla = SmolVLAConfig(
+        use_umi_relative_ee=True,
+        chunk_size=4,
+        n_action_steps=4,
+        device="cpu",
+        input_features=features_in,
+        output_features=features_out,
+    )
+
+    assert act.action_delta_indices == [-1, 0, 1, 2, 3]
+    assert smolvla.action_delta_indices == [-1, 0, 1, 2, 3]
+    assert act.normalization_mapping["ACTION"] is NormalizationMode.MIN_MAX
+    assert smolvla.normalization_mapping["STATE"] is NormalizationMode.MIN_MAX
+
+    for preprocessor, postprocessor in (
+        make_act_pre_post_processors(act, stats),
+        make_smolvla_pre_post_processors(smolvla, stats),
+    ):
+        assert any(isinstance(step, UmiDeriveStateFromActionStep) for step in preprocessor.steps)
+        assert any(isinstance(step, UmiRelativeActionsStep) for step in preprocessor.steps)
+        assert any(isinstance(step, UmiRelativeStateStep) for step in preprocessor.steps)
+        assert any(isinstance(step, UmiAbsoluteActionsStep) for step in postprocessor.steps)
+
+
+def test_legacy_config_aliases_and_processor_names_remain_loadable():
+    config = ACTConfig(
+        derive_state_from_action=True,
+        use_relative_actions=True,
+        pose_dim=6,
+        use_rot6d=True,
+    )
+    assert config.use_umi_relative_ee
+
+    for registry_name in (
+        "derive_state_from_action_rot6d",
+        "relative_rot6d_actions_processor",
+        "relative_rot6d_state_processor",
+        "absolute_rot6d_actions_processor",
+    ):
+        assert ProcessorStepRegistry.get(registry_name) is not None

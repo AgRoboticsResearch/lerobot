@@ -24,7 +24,12 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
     UnnormalizerProcessorStep,
+    make_umi_cache_key,
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -55,10 +60,22 @@ def make_act_pre_post_processors(
         pre-processor pipeline and the post-processor pipeline.
     """
 
+    cache_key = make_umi_cache_key()
+    relative_step = UmiRelativeActionsStep(cache_key=cache_key)
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        *(
+            [
+                UmiDeriveStateFromActionStep(),
+                relative_step,
+                UmiRelativeStateStep(),
+            ]
+            if config.use_umi_relative_ee
+            else []
+        ),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -69,6 +86,11 @@ def make_act_pre_post_processors(
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        *(
+            [UmiAbsoluteActionsStep(cache_key=cache_key, relative_step=relative_step)]
+            if config.use_umi_relative_ee
+            else []
         ),
         DeviceProcessorStep(device="cpu"),
     ]

@@ -85,6 +85,24 @@ class ACTConfig(PreTrainedConfig):
     chunk_size: int = 100
     n_action_steps: int = 100
 
+    # UMI-style relative end-effector training. The raw dataset action is an
+    # absolute 7D [xyz, axis-angle, gripper] pose; processors derive a 20D
+    # two-pose state and 10D relative rot6d action.
+    use_umi_relative_ee: bool = False
+
+    # Deprecated fields retained so existing processor-based ACT checkpoints
+    # can be decoded without rewriting train_config.json.
+    obs_state_horizon: int = 2
+    obs_down_sample_steps: int = 1
+    disable_temporal_wrapper: bool = True
+    use_joint_obs: bool = False
+    ee_target_frame: str = ""
+    derive_state_from_action: bool = False
+    use_relative_actions: bool = False
+    pose_dim: int = 0
+    use_rot6d: bool = False
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -131,6 +149,28 @@ class ACTConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        legacy_umi = (
+            self.derive_state_from_action
+            and self.use_relative_actions
+            and self.pose_dim == 6
+            and self.use_rot6d
+        )
+        self.use_umi_relative_ee = self.use_umi_relative_ee or legacy_umi
+        if self.use_umi_relative_ee:
+            if not self.disable_temporal_wrapper:
+                raise ValueError(
+                    "Temporal RelativeEEDataset ACT checkpoints are historical only. "
+                    "UMI processor mode requires disable_temporal_wrapper=true."
+                )
+            if self.use_joint_obs:
+                raise ValueError("UMI processor mode derives state from absolute EE actions.")
+            self.derive_state_from_action = True
+            self.use_relative_actions = True
+            self.pose_dim = 6
+            self.use_rot6d = True
+            self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+            self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
@@ -169,6 +209,8 @@ class ACTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            return [-1] + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

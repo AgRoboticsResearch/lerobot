@@ -22,12 +22,13 @@ from lerobot.configs import DatasetConfig, PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, OBS_STATE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
+from .umi_relative_ee_stats import compute_umi_relative_ee_stats
 
 
 def resolve_delta_timestamps(
@@ -80,7 +81,17 @@ def make_dataset(
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
+    is_validation = dataset_config is not None
     dataset_config = dataset_config or cfg.dataset
+    trainable_config = cfg.trainable_config
+    use_umi_relative_ee = bool(getattr(trainable_config, "use_umi_relative_ee", False))
+    if use_umi_relative_ee and trainable_config.type not in {"act", "smolvla", "pi05"}:
+        raise ValueError(
+            "UMI relative-EE training is supported for policy.type=act, smolvla, or pi05."
+        )
+    if use_umi_relative_ee and dataset_config.streaming:
+        raise ValueError("UMI relative-EE statistics require a non-streaming dataset.")
+
     image_transforms = (
         ImageTransforms(dataset_config.image_transforms) if dataset_config.image_transforms.enable else None
     )
@@ -89,7 +100,15 @@ def make_dataset(
         ds_meta = LeRobotDatasetMetadata(
             dataset_config.repo_id, root=dataset_config.root, revision=dataset_config.revision
         )
-        delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
+        if use_umi_relative_ee:
+            raw_action = ds_meta.features.get(ACTION)
+            raw_shape = None if raw_action is None else tuple(raw_action["shape"])
+            if raw_shape != (7,):
+                raise ValueError(
+                    "UMI relative EE requires raw absolute action shape [7] "
+                    f"[xyz, axis-angle, gripper], got {raw_shape}."
+                )
+        delta_timestamps = resolve_delta_timestamps(trainable_config, ds_meta)
         if not dataset_config.streaming:
             dataset = LeRobotDataset(
                 dataset_config.repo_id,
@@ -128,8 +147,42 @@ def make_dataset(
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
 
+    if use_umi_relative_ee:
+        if not is_validation:
+            dataset.meta.stats.update(
+                compute_umi_relative_ee_stats(dataset.hf_dataset, trainable_config.chunk_size)
+            )
+        dataset.meta.info.features[ACTION] = {
+            "dtype": "float32",
+            "shape": [10],
+            "names": [
+                "dx",
+                "dy",
+                "dz",
+                "rot6d_0",
+                "rot6d_1",
+                "rot6d_2",
+                "rot6d_3",
+                "rot6d_4",
+                "rot6d_5",
+                "gripper",
+            ],
+        }
+        dataset.meta.info.features[OBS_STATE] = {
+            "dtype": "float32",
+            "shape": [20],
+            "names": [f"umi_relative_state_{index}" for index in range(20)],
+        }
+        logging.info(
+            "Prepared %s UMI relative-EE dataset for %s: raw action 7D -> model action 10D, "
+            "derived state 20D",
+            "validation" if is_validation else "training",
+            trainable_config.type,
+        )
+
     if dataset_config.use_imagenet_stats:
         for key in dataset.meta.camera_keys:
+            dataset.meta.stats.setdefault(key, {})
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
