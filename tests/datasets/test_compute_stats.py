@@ -366,6 +366,26 @@ def test_running_quantile_stats_multiple_batch_updates():
     np.testing.assert_allclose(running_stats._mean, expected_mean, atol=1e-10)
 
 
+def test_running_quantile_stats_preserves_small_float32_variance_near_one():
+    """Regression test for rot6d diagonal values whose mean is close to one."""
+    data = np.concatenate(
+        [
+            np.ones((500, 1), dtype=np.float32),
+            np.full((500, 1), 1.0 - 1e-5, dtype=np.float32),
+        ]
+    )
+
+    running_stats = RunningQuantileStats()
+    running_stats.update(data[:500])
+    running_stats.update(data[500:])
+
+    expected_std = np.std(data, axis=0, dtype=np.float64)
+    stats = running_stats.get_statistics()
+
+    assert expected_std[0] > 0
+    np.testing.assert_allclose(stats["std"], expected_std, rtol=1e-10, atol=1e-12)
+
+
 def test_running_quantile_stats_get_statistics_basic():
     """Test getting basic statistics without quantiles."""
     np.random.seed(42)

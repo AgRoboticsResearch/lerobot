@@ -40,7 +40,7 @@ class RunningQuantileStats:
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
         self._count = 0
         self._mean = None
-        self._mean_of_squares = None
+        self._m2 = None
         self._min = None
         self._max = None
         self._histograms = None
@@ -60,10 +60,12 @@ class RunningQuantileStats:
         """
         batch = batch.reshape(-1, batch.shape[-1])
         num_elements, vector_length = batch.shape
+        batch_mean = np.mean(batch, axis=0, dtype=np.float64)
+        batch_m2 = np.var(batch, axis=0, dtype=np.float64) * num_elements
 
         if self._count == 0:
-            self._mean = np.mean(batch, axis=0)
-            self._mean_of_squares = np.mean(batch**2, axis=0)
+            self._mean = batch_mean
+            self._m2 = batch_m2
             self._min = np.min(batch, axis=0)
             self._max = np.max(batch, axis=0)
             self._histograms = [np.zeros(self._num_quantile_bins) for _ in range(vector_length)]
@@ -85,17 +87,17 @@ class RunningQuantileStats:
             if max_changed or min_changed:
                 self._adjust_histograms()
 
+            # Combine this batch with the accumulated population variance using
+            # the parallel form of Welford's algorithm. Keeping these
+            # accumulators in float64 avoids catastrophic cancellation for
+            # float32 features close to a nonzero constant (for example, the
+            # diagonal entries of a relative rot6d matrix near identity).
+            total_count = self._count + num_elements
+            mean_delta = batch_mean - self._mean
+            self._mean += mean_delta * (num_elements / total_count)
+            self._m2 += batch_m2 + mean_delta**2 * (self._count * num_elements / total_count)
+
         self._count += num_elements
-
-        batch_mean = np.mean(batch, axis=0)
-        batch_mean_of_squares = np.mean(batch**2, axis=0)
-
-        # Update running mean and mean of squares
-        self._mean += (batch_mean - self._mean) * (num_elements / self._count)
-        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (
-            num_elements / self._count
-        )
-
         self._update_histograms(batch)
 
     def get_statistics(self) -> dict[str, np.ndarray]:
@@ -110,8 +112,7 @@ class RunningQuantileStats:
         if self._count < 2:
             raise ValueError("Cannot compute statistics for less than 2 vectors.")
 
-        variance = self._mean_of_squares - self._mean**2
-
+        variance = self._m2 / self._count
         stddev = np.sqrt(np.maximum(0, variance))
 
         stats = {
