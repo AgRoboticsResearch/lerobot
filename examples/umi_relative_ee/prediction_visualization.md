@@ -6,6 +6,9 @@ camera image. This document describes the shared method implemented by
 `visualize_predictions.py`. The preserved policy-specific notes remain in
 `visualize_predictions_act_smolvla.md` and `../../docs/legacy/fei-v5.0/pi05_umi_README.md`.
 
+For raw unnormalized 9D pose plots and geodesic SO(3) rotation-error analysis,
+see `debug_rotation_visualization.md`.
+
 ## What it produces
 Per dataset episode, an MP4 where each frame overlays the **predicted** and **GT**
 gripper-tip trajectory on the camera image (predicted = green→red gradient, GT =
