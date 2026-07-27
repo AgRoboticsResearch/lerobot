@@ -44,8 +44,33 @@ SmolVLA (needs `--task`):
   --output_dir outputs/debug/viz_smolvla
 ```
 
+ACT trained on the 1125-episode dataset (1M-step checkpoint):
+```bash
+/home/zfei/anaconda3/envs/py310/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --episode_indices 0 1 2 --inference \
+  --pretrained_path outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30_sroi_v2_masked_1125train_100val/checkpoints/1000000/pretrained_model \
+  --gt --gripper --mp4 \
+  --camera_info_path /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation/meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_color.json \
+  --output_dir outputs/debug/viz_act_1125_ckpt_1m_validation
+```
+
+This command was verified on validation episodes 0, 1, and 2. It rendered 164
+valid frames and produced all six expected H.264 videos (one projected-camera
+video and one 3D video per episode). The open-loop, chunk-end errors aggregated
+over those frames were:
+
+| metric | value |
+|--------|-------|
+| Mean translation error | 0.02887 m |
+| Median translation error | 0.02662 m |
+| Mean rotation error | 0.06110 rad |
+| Mean gripper error | 0.23945 |
+
 Output (per episode): `<output_dir>/<repo_id>/proj_inference_episode_<N>.mp4`
 (camera + projected trajectory) and `traj3d_inference_episode_<N>.mp4` (3D).
+When `--gt` is enabled, aggregate and per-frame errors are also written to
+`<output_dir>/<repo_id>/prediction_metrics.json`.
 
 ## Fixes applied to this script (vs upstream)
 - **ACT VAE prior**: at inference the preprocessor left `ACTION=None`, which sent
