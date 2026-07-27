@@ -34,7 +34,7 @@ from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
@@ -44,7 +44,7 @@ from lerobot.policies.factory import (
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
@@ -346,6 +346,40 @@ def test_multikey_construction(multikey: bool):
     assert action_condition, (
         f"Discrepancy detected. Action feature is {config.action_feature} but policy expects {output_features[ACTION]}"
     )
+
+
+def test_act_vae_eval_forward_uses_target_actions():
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        chunk_size=3,
+        n_action_steps=3,
+        dim_model=32,
+        n_heads=4,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        latent_dim=4,
+        n_vae_encoder_layers=1,
+        pretrained_backbone_weights=None,
+    )
+    policy = ACTPolicy(config)
+    batch = {
+        OBS_STATE: torch.randn(2, 3),
+        OBS_ENV_STATE: torch.randn(2, 2),
+        ACTION: torch.randn(2, 3, 2),
+        "action_is_pad": torch.zeros(2, 3, dtype=torch.bool),
+    }
+
+    policy.eval()
+    with torch.no_grad():
+        loss, loss_dict = policy.forward(batch)
+
+    assert torch.isfinite(loss)
+    assert loss_dict["kld_loss"] >= 0
 
 
 @pytest.mark.parametrize(
