@@ -69,7 +69,11 @@ This avoids treating repeated end-of-episode padding as real motion.
 
 ## Outputs
 
-The output directory contains:
+Figures and the CSV are written to `<output_dir>/<repo_id>/` — the same layout
+`visualize_predictions.py` uses for its projected-trajectory MP4s and
+`prediction_metrics.json`. Run both scripts with the same output directory to
+collect the video, metrics, rotation summary/raw-9D PNGs, and CSV in one folder
+(e.g. `outputs/debug/viz_act_…/<repo_id>/`). That directory contains:
 
 ### `rotation_gt_vs_prediction_summary.png`
 
@@ -136,32 +140,50 @@ outputs/train/ee_vs_joints/umi_unified_ee_action_chunk30_sroi_v2_masked_1125trai
 
 ### Training episodes 0, 1, and 2
 
+Video and rotation outputs are co-located by passing the same directory to both
+scripts (`visualize_predictions.py` takes `--output_dir`; the rotation script
+takes `--output-dir`). Everything lands under `<OUT>/<repo_id>/`:
+
 ```bash
+CKPT=outputs/train/ee_vs_joints/umi_unified_ee_action_chunk30_sroi_v2_masked_1125train_100val/checkpoints/1100000/pretrained_model
+DS=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb_1125
+OUT=outputs/debug/viz_act_unified_ckpt_1p1m_train_ep0_1_2
+
+# projected-trajectory MP4 + prediction_metrics.json
+/home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path "$CKPT" --dataset_root "$DS" --episode_indices 0 1 2 --project \
+  --output_dir "$OUT"
+
+# raw-9D + SO(3) rotation diagnostics, into the same folder
 /home/zfei/anaconda3/envs/py312/bin/python \
   examples/umi_relative_ee/generate_rotation_comparison.py \
   --visualizer examples/umi_relative_ee/visualize_predictions.py \
-  --checkpoint outputs/train/ee_vs_joints/umi_unified_ee_action_chunk30_sroi_v2_masked_1125train_100val/checkpoints/1100000/pretrained_model \
-  --dataset-root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb_1125 \
-  --episodes 0 1 2 \
-  --output-dir outputs/debug/rotation_act_unified_ckpt_1p1m_train_ep0_1_2 \
-  --device cuda
+  --checkpoint "$CKPT" --dataset-root "$DS" --episodes 0 1 2 \
+  --output-dir "$OUT" --device cuda
 ```
 
 ### Validation episodes 0, 1, and 2
 
+Same as above with the validation dataset and a different `OUT`:
+
 ```bash
+CKPT=outputs/train/ee_vs_joints/umi_unified_ee_action_chunk30_sroi_v2_masked_1125train_100val/checkpoints/1100000/pretrained_model
+DS=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation
+OUT=outputs/debug/viz_act_unified_ckpt_1p1m_validation_ep0_1_2
+
+/home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path "$CKPT" --dataset_root "$DS" --episode_indices 0 1 2 --project \
+  --output_dir "$OUT"
+
 /home/zfei/anaconda3/envs/py312/bin/python \
   examples/umi_relative_ee/generate_rotation_comparison.py \
   --visualizer examples/umi_relative_ee/visualize_predictions.py \
-  --checkpoint outputs/train/ee_vs_joints/umi_unified_ee_action_chunk30_sroi_v2_masked_1125train_100val/checkpoints/1100000/pretrained_model \
-  --dataset-root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
-  --episodes 0 1 2 \
-  --output-dir outputs/debug/rotation_act_unified_ckpt_1p1m_validation_ep0_1_2 \
-  --device cuda
+  --checkpoint "$CKPT" --dataset-root "$DS" --episodes 0 1 2 \
+  --output-dir "$OUT" --device cuda
 ```
 
-Change `--episodes` to inspect other episodes. `--device cpu` is supported but
-will be slower.
+Change `--episodes` / `--episode_indices` to inspect other episodes. `--device cpu`
+is supported but will be slower.
 
 Camera intrinsics and the D405 hand-eye calibration are not required. Those are
 only needed when projecting trajectories onto camera images.

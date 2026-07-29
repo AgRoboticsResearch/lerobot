@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""Generate raw 9D and SO(3) GT-vs-prediction figures for a UMI policy."""
+"""Generate raw 9D and SO(3) GT-vs-prediction figures for a UMI policy.
+
+Outputs are written under ``<output_dir>/<repo_id>/`` — the same layout
+``visualize_predictions.py`` uses for its projected-trajectory MP4s and
+prediction metrics — so running both scripts with the same ``--output_dir``
+co-locates the video, metrics, rotation PNGs, and CSV in one folder.
+"""
 
 from __future__ import annotations
 
@@ -228,11 +234,14 @@ def main() -> None:
     if not records:
         raise RuntimeError("No valid dataset frames were found")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = args.output_dir / "raw_9d_gt_vs_prediction.csv"
+    # Mirror visualize_predictions.py: namespace by repo_id so that pointing
+    # both scripts at the same --output_dir co-locates video + rotation outputs.
+    out_dir = args.output_dir / repo_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "raw_9d_gt_vs_prediction.csv"
     save_raw_csv(csv_path, records)
-    summary_path = plot_rotation_summary(args.output_dir, records)
-    raw_paths = plot_raw9_representative(args.output_dir, records)
+    summary_path = plot_rotation_summary(out_dir, records)
+    raw_paths = plot_raw9_representative(out_dir, records)
     print(f"Saved {summary_path}")
     for path in raw_paths:
         print(f"Saved {path}")

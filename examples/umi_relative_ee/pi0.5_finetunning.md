@@ -552,7 +552,114 @@ The PEFT wrapper freezes non-targeted base weights and trains the inserted LoRA
 parameters. Always inspect the printed trainable-parameter count before
 starting the full run.
 
-### Checkpoint contents
+### 12.1 Public π0.5 fine-tuning recipes
+
+There is not yet one community-standard π0.5 recipe. Published commands also
+mix two materially different implementations:
+
+- OpenPI's JAX LoRA inserts adapters into attention and feed-forward layers in
+  both the PaliGemma VLM and the Gemma action expert.
+- LeRobot PEFT, as configured by this workspace, adapts only action-expert
+  `q_proj`/`v_proj` attention projections and the named action/state
+  projections listed above.
+
+Consequently, an OpenPI `rank=16/32` run is much broader than this workspace's
+single-rank adapter, and its memory use and capacity are not directly
+comparable.
+
+Publicly documented configurations include:
+
+| Source | Fine-tuning scope | Rank | Batch | Learning-rate schedule | Steps |
+|---|---|---:|---:|---|---:|
+| [Official OpenPI LIBERO config](https://github.com/Physical-Intelligence/openpi/blob/main/src/openpi/training/config.py) | Full model | N/A | 256 | peak `5e-5`, warmup 10k | 30k |
+| [OpenPI community π0.5 LoRA config](https://github.com/Physical-Intelligence/openpi/issues/672) | VLM attention/FFN plus expert attention/FFN | VLM 16, expert 32 | 32 | peak `5e-5`, warmup 10k | 30k |
+| [Real Franka jar task](https://huggingface.co/IDEAS-Lab-Northwestern/pi05-real-jar-60-droid-refined-lora) | OpenPI dual adapter, 60 demonstrations | VLM 16, expert 32 | 4 | Not reported | 20k |
+| [Simulated multitask picking](https://huggingface.co/IDEAS-Lab-Northwestern/pi05-sim-pnp-multitask-3cam-libero-lora) | OpenPI dual adapter | VLM 16, expert 32 | 4 | `2.5e-5` to `2.5e-6`, warmup 1k | 50k + 30k |
+| [LeRobot SO-101 sock task](https://huggingface.co/RyuRobot/pi05_sock_in_bowl_lora_July_10_2026) | Same target-module pattern as this workspace | 32 | 32 | `2.5e-4` to `2.5e-5`, warmup 1k | 15k |
+| [Public LeRobot rank-16 run](https://huggingface.co/Tna001/pi05_lora_r16_lr3e4/blob/main/train_config.json) | LeRobot PEFT | 16 | 16 | `3e-4` to `2.5e-6`, warmup 500 | 20k |
+
+Additional official reference points:
+
+- The [LeRobot π0.5 guide](https://huggingface.co/docs/lerobot/pi05) shows full
+  fine-tuning for 3k steps with batch 32, bfloat16, and gradient checkpointing.
+- The [LeRobot LIBERO reproduction](https://huggingface.co/docs/lerobot/libero)
+  starts from `pi05_libero` and trains for another 6k steps with global batch
+  256 on eight H100 GPUs.
+- OpenPI estimates more than 22.5 GB for its broader JAX LoRA recipe and more
+  than 70 GB for full fine-tuning. These estimates do not apply directly to
+  this workspace's narrower adapter; see the
+  [OpenPI README](https://github.com/Physical-Intelligence/openpi).
+
+The public native-LeRobot rank-32 adapter is particularly useful for
+comparison. Its
+[saved adapter configuration](https://huggingface.co/RyuRobot/pi05_sock_in_bowl_lora_July_10_2026/blob/main/adapter_config.json)
+uses the same target regular expression as this workspace. The accompanying
+model card reports about 2.5M trainable parameters. The adapter uses `r=32`,
+`alpha=8`, so its LoRA scale is
+`alpha / rank = 0.25`. The model card does not yet report real-robot evaluation,
+so treat it as a reproducible training example rather than evidence that those
+hyperparameters are optimal.
+
+Hugging Face Discord history is login-gated and was not publicly indexed when
+this comparison was prepared. Do not cite an alleged Discord consensus without
+a stable public message or an independently reproducible configuration.
+
+### 12.2 Interpretation for the UMI strawberry task
+
+The baseline in this guide uses:
+
+```text
+rank = 16
+alpha = 16
+LoRA scale = 1
+trainable parameters ~= 1.29M
+peak learning rate = 1e-4
+```
+
+These values are inside the range of public LeRobot experiments:
+
+- Rank 16 and rank 32 are both in active use.
+- Batch 4 is normal for single-GPU LoRA and does not imply that batching is
+  broken merely because VRAM changes little.
+- Public peak learning rates range from roughly `2.5e-5` to `3e-4`; `1e-4` is
+  not an obvious outlier.
+- Published runs commonly use 15k-80k steps. The 500k-step command in this
+  workspace is unusually long and must be justified by dataset size,
+  effective epochs, validation, and physical evaluation rather than copied as
+  a universal default.
+
+Use a controlled capacity ablation before broadening the adapter:
+
+```bash
+--peft.r=32 \
+--peft.lora_alpha=32
+```
+
+Keeping `alpha / rank = 1` isolates the effect of doubling adapter rank. Keep
+the seed, batch size, dataset, optimizer, and validation schedule fixed, and
+start from `lerobot/pi05_base` in a new output directory. Compare checkpoints
+at 10k, 25k, 50k, and 100k before extending the run. If batch size changes,
+compare examples or effective epochs rather than raw step counts.
+
+Interpret the ablation as follows:
+
+- Better training and validation performance suggests rank 16 was limiting
+  capacity.
+- Better training loss without better validation or robot success indicates
+  overfitting, not a need for still higher rank.
+- No meaningful improvement suggests that rank is not the bottleneck. Check
+  normalization, UMI transforms, data diversity, camera/domain shift, and
+  gripper timing next.
+- If failures are primarily visual or semantic, raising the rank of the same
+  action-side targets cannot adapt the frozen vision/VLM representation.
+  Broader expert FFN or selected VLM targets are then a more meaningful
+  experiment than immediately trying rank 64.
+
+Always select the final checkpoint using held-out validation visualization and
+closed-loop picking success. Training loss alone is insufficient for comparing
+LoRA capacity.
+
+### 12.3 Checkpoint contents
 
 A PEFT checkpoint stores:
 

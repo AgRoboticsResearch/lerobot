@@ -7,7 +7,9 @@ camera image. This document describes the shared method implemented by
 `visualize_predictions_act_smolvla.md` and `../../docs/legacy/fei-v5.0/pi05_umi_README.md`.
 
 For raw unnormalized 9D pose plots and geodesic SO(3) rotation-error analysis,
-see `debug_rotation_visualization.md`.
+see `debug_rotation_visualization.md`. Both scripts write under
+`<output_dir>/<repo_id>/`, so passing the same output directory to each
+co-locates the video, metrics, rotation PNGs, and CSV in one folder.
 
 ## What it produces
 Per dataset episode, an MP4 where each frame overlays the **predicted** and **GT**
@@ -104,12 +106,26 @@ predictions are expected to track GT more tightly (the model saw them).
   headroom (~5–6 GB for eval; check `nvidia-smi` first to avoid OOM-ing the run).
 
 ## Quick reference (commands)
-π0.5 on validation (unified worktree, py312):
+π0.5 on validation (unified worktree, py312). Video and rotation diagnostics are
+co-located by passing the same directory to both scripts (`visualize_predictions.py`
+takes `--output_dir`; the rotation script takes `--output-dir`); everything lands
+under `<OUT>/<repo_id>/`:
 ```bash
+# projected-trajectory video + prediction_metrics.json
 /home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
   --pretrained_path outputs/train/pi05_lora_umi_relative_ee/checkpoints/040000/pretrained_model \
   --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
-  --episode_indices 0 1 2 --project
+  --episode_indices 0 1 2 --project \
+  --output_dir outputs/debug/viz_pi05
+
+# raw-9D + SO(3) rotation diagnostics, into the same folder
+/home/zfei/anaconda3/envs/py312/bin/python \
+  examples/umi_relative_ee/generate_rotation_comparison.py \
+  --visualizer examples/umi_relative_ee/visualize_predictions.py \
+  --checkpoint outputs/train/pi05_lora_umi_relative_ee/checkpoints/040000/pretrained_model \
+  --dataset-root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --episodes 0 1 2 \
+  --output-dir outputs/debug/viz_pi05
 ```
 SmolVLA on validation (same CLI and environment):
 ```bash

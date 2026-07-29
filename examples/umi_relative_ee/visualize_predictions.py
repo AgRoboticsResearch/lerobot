@@ -417,6 +417,12 @@ def main():
         default=None,
         help="camera_info_color.json for intrinsics K (auto-found under dataset meta/ if omitted)",
     )
+    parser.add_argument(
+        "--num_steps",
+        type=int,
+        default=None,
+        help="Override flow-matching inference denoising steps (SmolVLA); default uses the policy config.",
+    )
     args = parser.parse_args()
 
     if iio is None:
@@ -430,6 +436,11 @@ def main():
 
     logger.info("Loading policy + processors from %s", args.pretrained_path)
     policy, preprocessor, policy_config = load_policy_and_processors(args.pretrained_path, device)
+    if args.num_steps is not None:
+        policy_config.num_steps = args.num_steps
+        if hasattr(policy, "model") and getattr(policy.model, "config", None) is not None:
+            policy.model.config.num_steps = args.num_steps
+        logger.info("overrode flow-matching num_steps -> %d", args.num_steps)
     action_stats = extract_action_stats(preprocessor)
     action_norm_mode = policy_config.normalization_mapping["ACTION"]
     chunk = policy_config.chunk_size
