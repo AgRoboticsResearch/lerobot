@@ -144,6 +144,22 @@ class ActionQueue:
                 return None
             return self.queue[self.last_index :].clone()
 
+    def get_left_over_snapshot(self) -> tuple[int, Tensor | None, Tensor | None]:
+        """Snapshot the consumption index and both leftover representations.
+
+        RTC inference needs both representations to re-anchor relative actions.
+        Returning them under one lock prevents the control thread from advancing
+        ``last_index`` between any of the reads.
+
+        Returns:
+            ``(action_index, original_left_over, processed_left_over)``. A
+            leftover is ``None`` when its backing queue is not initialized.
+        """
+        with self.lock:
+            original = None if self.original_queue is None else self.original_queue[self.last_index :].clone()
+            processed = None if self.queue is None else self.queue[self.last_index :].clone()
+            return self.last_index, original, processed
+
     def merge(
         self,
         original_actions: Tensor,

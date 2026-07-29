@@ -27,6 +27,7 @@ serialized processor names load directly.
 - SmolVLA runbook: `smolvla_relative_ee_training.md`
 - π0.5 commands: the sections below and `train_pi05_lora.sh`
 - Unified prediction visualization: `prediction_visualization.md`
+- Pi0.5 and SmolVLA RTC deployment: `rtc.md`
 - Migration manifest and checksums: `../../docs/umi_migration_manifest.md`
 - Historical-tool smoke results: `../../docs/umi_legacy_tool_smoke.md`
 - Historical compatibility review: `2026-07-10_umi_relative_ee_policy_compatibility.md`

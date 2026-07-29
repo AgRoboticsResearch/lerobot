@@ -269,6 +269,28 @@ def test_get_left_over_returns_empty_after_exhaustion(action_queue_rtc_enabled, 
     assert leftover.shape == (0, 6)
 
 
+def test_get_left_over_snapshot_is_atomic(action_queue_rtc_enabled, sample_actions):
+    """The index and both representations should come from one queue snapshot."""
+    action_queue_rtc_enabled.merge(sample_actions["original"], sample_actions["processed"], real_delay=0)
+
+    for _ in range(3):
+        action_queue_rtc_enabled.get()
+
+    action_index, original_left_over, processed_left_over = action_queue_rtc_enabled.get_left_over_snapshot()
+
+    assert action_index == 3
+    assert original_left_over is not None
+    assert processed_left_over is not None
+    torch.testing.assert_close(original_left_over, sample_actions["original"][3:])
+    torch.testing.assert_close(processed_left_over, sample_actions["processed"][3:])
+
+    # Returned tensors are snapshots, not aliases of the queue storage.
+    original_left_over[0].zero_()
+    _, refreshed_original, _ = action_queue_rtc_enabled.get_left_over_snapshot()
+    assert refreshed_original is not None
+    torch.testing.assert_close(refreshed_original[0], sample_actions["original"][3])
+
+
 # merge() with RTC enabled tests
 
 
