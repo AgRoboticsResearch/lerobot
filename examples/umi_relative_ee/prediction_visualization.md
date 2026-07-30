@@ -3,7 +3,8 @@
 How the open-loop prediction videos are produced for the strawberry-picking
 models, so the predicted gripper motion can be compared to ground truth on the
 camera image. This document describes the shared method implemented by
-`visualize_predictions.py`. The preserved policy-specific notes remain in
+`visualize_predictions.py` and doubles as its **run guide** (commands, flags,
+output paths). The preserved policy-specific notes remain in
 `visualize_predictions_act_smolvla.md` and `../../docs/legacy/fei-v5.0/pi05_umi_README.md`.
 
 For raw unnormalized 9D pose plots and geodesic SO(3) rotation-error analysis,
@@ -16,6 +17,11 @@ Per dataset episode, an MP4 where each frame overlays the **predicted** and **GT
 gripper-tip trajectory on the camera image (predicted = green→red gradient, GT =
 cyan/yellow), plus a 3D trajectory panel. Used to qualitatively check a model's
 predictions on validation or training data.
+
+Output path: `<output_dir>/<repo_id>/pred_episode_<N>.mp4` (default
+`outputs/debug/viz_umi`; override with `--output_dir`). Pass `--project` to also
+draw the predicted (green→red) and GT (cyan) gripper-tip trajectories on the
+camera image; omit it for the panel composite only (no calibration needed).
 
 ## Why open-loop (no environment)
 UMI-style data has no robot/sim env to roll out in. So instead of a closed-loop
@@ -65,7 +71,10 @@ script — **no dependency on the `sroi_rosbag_utilities` folder**):
 | `examples/umi_relative_ee/visualize_predictions.py` (py312) | ACT, SmolVLA, π0.5/LoRA | `pred_episode_<N>.mp4` | panel composite (camera + 3D + per-dim curves); on-image projection with `--project` |
 
 The script includes the SROI projection helpers (`load_tip_kin`, `project_future`,
-`_green_red_gradient`) and the D405 JSON locally.
+`_green_red_gradient`) and the D405 JSON locally. **LoRA adapters are detected
+automatically** (if `adapter_config.json` is present it loads the base named there
+and applies the adapter), so the same command works for full-fine-tuned ACT /
+SmolVLA and for π0.5 LoRA.
 
 ## Model-specific notes
 - **π0.5 (LoRA)**: load via `PeftConfig` → `from_pretrained(base, config=policy_config)`
@@ -74,11 +83,15 @@ The script includes the SROI projection helpers (`load_tip_kin`, `project_future
   `observation.images.camera`. Drive inference through the **dataloader +
   `lerobot_collate_fn`** path (a hand-built batch dict doesn't survive the
   processor's transition mapping; `validate_policy` is the template). Task
-  `"pick the strawberry"` is injected for PaliGemma.
+  `"pick the strawberry"` is injected for PaliGemma. Point `--pretrained_path`
+  at the LoRA adapter dir; the base model named in `adapter_config.json` is loaded
+  automatically — no extra flags.
 - **ACT**: at inference, pop the `None` ACTION the preprocessor leaves
   (`if processed.get(ACTION) is None: processed.pop(ACTION, None)`), else the VAE
-  runs the posterior branch and crashes — inference must use the prior.
-- **SmolVLA**: needs `--task "pick the strawberry"`.
+  runs the posterior branch and crashes — inference must use the prior. No `--task`
+  needed; best-val checkpoint usually fits tightest.
+- **SmolVLA**: needs `--task "pick the strawberry"` (the default, so you can
+  usually omit it). PaliGemma-tokenized internally.
 
 ## Checkpoints
 - **π0.5** — `outputs/train/pi05_lora_umi_relative_ee/checkpoints/`: loss-fix rerun
@@ -88,7 +101,8 @@ The script includes the SROI projection helpers (`load_tip_kin`, `project_future
 - **ACT** — `outputs/train/ee_vs_joints/umi_processor_ee_action_chunk30_sroi_v2_masked_1012train_100val/checkpoints/`:
   best `0200000` (~180k), final `2500000`.
 
-Use **best-val** for the tightest predictions; **final** for the fully-trained view.
+Use **best-val** for the tightest predictions; **final** for the fully-trained view
+(both overfit late).
 
 ## Validation vs train data
 - Validation: `/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation` (100 ep).
@@ -97,15 +111,45 @@ Use **best-val** for the tightest predictions; **final** for the fully-trained v
 Swap `--dataset_root` (and `--camera_info_path` when auto-discovery is unavailable). Train
 predictions are expected to track GT more tightly (the model saw them).
 
+## Overfit / training-episode check
+To confirm the pipeline can fit a specific episode (e.g. after a one-episode
+overfit run), point `--dataset_root` at the **training** set and select that
+episode. A correct overfit reproduces the GT trajectory near-perfectly (predicted
+overlays GT):
+```bash
+/home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path outputs/train/smolvla_one_ep_debug/checkpoints/050000/pretrained_model \
+  --dataset_root /path/to/sroiv2_strawberry_picking_lab_1000onesb_1125 \
+  --episode_indices 0 --project
+```
+
 ## Requirements
 - **Intrinsics K**: any `camera_info_color.json` under the dataset's
   `meta/camera_info/` (D405 is fixed-calibration, so any episode's file works).
 - **Hand-eye**: `camera_gripper_extrinsics_sroi_v2_d405.json` next to the script.
-- **Environment**: use the unified worktree's py312 environment for all three policies.
+- **Environment**: any lerobot env with the policy plus `imageio` / `matplotlib` /
+  `cv2`. Locally: `/home/zfei/anaconda3/envs/py312/bin/python`. On kiwi: the unified
+  checkout's `.venv/bin/python` (run `uv pip install matplotlib imageio
+  imageio-ffmpeg` if missing — `cv2`/`av` come from the `dataset`/`av-dep` extras).
 - Running the viz while a training job is active is fine as long as there's GPU
   headroom (~5–6 GB for eval; check `nvidia-smi` first to avoid OOM-ing the run).
 
 ## Quick reference (commands)
+Minimal run — panel composite only (no calibration needed):
+```bash
+/home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path <CKPT>/pretrained_model \
+  --dataset_root <DATASET_ROOT> \
+  --episode_indices 0 1 2
+```
+Panel composite **+ on-image trajectory projection** (`--project`):
+```bash
+/home/zfei/anaconda3/envs/py312/bin/python examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path <CKPT>/pretrained_model \
+  --dataset_root <DATASET_ROOT> \
+  --episode_indices 0 1 2 --project
+```
+
 π0.5 on validation (unified worktree, py312). Video and rotation diagnostics are
 co-located by passing the same directory to both scripts (`visualize_predictions.py`
 takes `--output_dir`; the rotation script takes `--output-dir`); everything lands
@@ -138,3 +182,8 @@ SmolVLA on validation (same CLI and environment):
   --output_dir outputs/debug/viz_smolvla
 ```
 (ACT uses the same command with an ACT checkpoint; `--task` is harmless and may be omitted.)
+
+## Options
+`--no_gt`, `--task`, `--fps`, `--device`, `--seed`, `--repo_id`, `--output_dir`,
+`--extrinsics_config`, `--camera_info_path`, `--max_frames_per_episode`,
+`--first_frame_debug`, `--project`.
