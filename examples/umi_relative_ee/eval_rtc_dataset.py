@@ -93,6 +93,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execution_horizon", type=int, default=10)
     parser.add_argument("--max_guidance_weight", type=float, default=10.0)
     parser.add_argument("--num_steps", type=int, default=None)
+    parser.add_argument(
+        "--legacy_full_action_noise",
+        action="store_true",
+        help="Disable padded-dimension masking for legacy flow-policy inference reproduction.",
+    )
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--task", default="pick the strawberry")
     parser.add_argument("--device", default="cuda")
@@ -111,7 +116,12 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def load_policy_and_processors(model_path: str, device: torch.device, num_steps: int | None):
+def load_policy_and_processors(
+    model_path: str,
+    device: torch.device,
+    num_steps: int | None,
+    legacy_full_action_noise: bool = False,
+):
     """Load a full checkpoint or a PEFT adapter and its saved processors."""
     policy_config = PreTrainedConfig.from_pretrained(model_path)
     if policy_config.type not in {"pi05", "smolvla"}:
@@ -121,6 +131,7 @@ def load_policy_and_processors(model_path: str, device: torch.device, num_steps:
         )
     if not getattr(policy_config, "use_umi_relative_ee", False):
         raise ValueError(f"{model_path} is not configured for UMI relative-EE actions")
+    policy_config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
 
     if num_steps is not None:
         step_field = "num_inference_steps" if policy_config.type in {"pi0", "pi05"} else "num_steps"
@@ -150,6 +161,7 @@ def load_policy_and_processors(model_path: str, device: torch.device, num_steps:
         preprocessor_overrides={"device_processor": {"device": str(device)}},
     )
     core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
+    core_policy.config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
     return policy, core_policy, preprocessor, postprocessor, policy_config
 
 
@@ -585,7 +597,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     policy, core_policy, preprocessor, postprocessor, policy_config = load_policy_and_processors(
-        model_path, device, args.num_steps
+        model_path, device, args.num_steps, args.legacy_full_action_noise
     )
     logger.info(
         "Loaded %s on %s (chunk=%d, steps=%s)",
@@ -593,6 +605,12 @@ def main() -> None:
         device,
         policy_config.chunk_size,
         getattr(policy_config, "num_inference_steps", getattr(policy_config, "num_steps", None)),
+    )
+    logger.info(
+        "Flow action dimensions: active=%d, model=%d, padded masking=%s",
+        policy_config.action_feature.shape[0],
+        policy_config.max_action_dim,
+        policy_config.mask_padded_action_dims_at_inference,
     )
     if args.execution_horizon > policy_config.chunk_size:
         raise ValueError("execution_horizon must not exceed policy chunk_size")
@@ -670,6 +688,12 @@ def main() -> None:
         "checkpoint": model_path,
         "dataset_root": str(dataset_root),
         "device": str(device),
+        "action_dimension_inference": {
+            "active_action_dim": policy_config.action_feature.shape[0],
+            "model_action_dim": policy_config.max_action_dim,
+            "mask_padded_action_dims": policy_config.mask_padded_action_dims_at_inference,
+            "legacy_full_action_noise": args.legacy_full_action_noise,
+        },
         "videos": video_paths,
         "rtc": {
             "inference_delay": args.inference_delay,

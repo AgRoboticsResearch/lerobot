@@ -25,19 +25,67 @@ near-constant diagonal bands and gives those dims the largest loss weight
 
 ## Metrics & decision criterion
 
-- **Primary**: episode-balanced chunk-end rotation error (degrees) on **all 100
-  episodes** of `sroiv2_strawberry_picking_lab_validation`, absolute pose space,
-  post-hoc via the policy-neutral `eval_open_loop_dataset.py`. The evaluator uses
-  10 evenly spaced, non-padded query frames per episode by default (1,000 samples
-  total) and works with ACT, SmolVLA, and π0.5. Compare to the baseline at matched
-  steps using exactly the same episode/sample/seed settings.
-- **Decision**: H1 supported if Arm B's rotation error is meaningfully lower (≥~20%
-  relative, beyond seed noise). Else H0.
+The hypothesis is about **jumpiness (within-chunk smoothness)**, not endpoint accuracy
+— and the two are independent. On a 5-episode spot check SmolVLA had the *better*
+chunk-end rotation error (4.4° vs ACT 5.8°) yet its within-chunk rotation
+acceleration proxy was **~47× larger** (`rot_jerk_deg` 1.9 vs 0.04). So an
+endpoint metric ranks the jittery model higher and is blind to the thing we're
+testing. **Within-chunk smoothness is the decision metric; accuracy is secondary.**
+
+- **Primary (decision)**: `summary.episode_balanced.rot_jerk_deg` — legacy key for
+  the mean within-chunk rotation **second-difference/acceleration proxy** of one
+  predicted chunk (**no** open-loop/cross-frame accumulation), lower = smoother.
+  `within_chunk_jerk()` also reports the legacy `gt_rot_jerk_deg` key as a
+  real-motion reference. Compare identity vs baseline **within the same policy**
+  at matched steps. Cross-policy smoothness is descriptive, but cannot decide
+  whether normalization caused the difference because the decoders differ.
+- **Decision**: H1 supported if Arm B's `rot_jerk_deg` is meaningfully lower than the
+  same policy's baseline at matched steps (≥~20% relative, beyond seed noise). Else H0.
+- **Secondary (accuracy)**: `episode_balanced.rotation_end_deg` (chunk-end, 30-ahead)
+  and `rotation_chunk_mean_deg` — does identity-rot6d also keep/improve endpoint accuracy.
 - ⚠ `val/loss` is **not** comparable across arms (different action normalization →
-  different MSE scale). Read rotation error in degrees.
-- **Secondary**: RTC metrics from `eval_rtc_dataset.py` for SmolVLA and π0.5 only.
-  RTC is a deployment/overlap analysis and is not the normalization A/B's primary
-  metric. ACT does not implement RTC.
+  different MSE scale).
+- **Tertiary**: RTC metrics from `eval_rtc_dataset.py` for SmolVLA and π0.5 only
+  (deployment/overlap; ACT has no RTC).
+
+### SmolVLA padding/noise confound discovered during jitter review
+
+The follow-up implementation audit found a separate source of flow-policy
+within-chunk jitter; see
+[`within_chunk_jitter_analysis.md`](./within_chunk_jitter_analysis.md).
+SmolVLA pads this 10-D UMI action to 32 dimensions and samples noise in all 32,
+but its training wrapper computes loss only on the ten real dimensions. The
+22 random, unsupervised coordinates enter the shared action projection and
+measurably perturb the real outputs.
+
+This does **not** invalidate the identity-normalization hypothesis, but it changes
+how results must be attributed:
+
+- identity vs scaled rot6d remains a valid normalization A/B only when both
+  checkpoints used the same action-padding loss/noise formulation;
+- ACT vs SmolVLA smoothness is not evidence for or against rotation
+  normalization because their decoder mechanisms differ;
+- comparisons against older SmolVLA baselines must record whether they were
+  trained before or after the real-DoF loss crop was introduced;
+- SmolVLA padding/noise ablations must hold normalization and checkpoint fixed.
+
+OpenPI's reference implementation uses a coherent full-width formulation:
+zero-pad targets to 32, sample 32-D noise, and supervise all 32 flow outputs so
+the padded coordinates learn to terminate at zero. A coherent masked alternative
+would sample and integrate noise only in the ten real dimensions while forcing
+the remaining coordinates to zero. Current SmolVLA mixes the two designs.
+
+The inference confound is now controlled by default: SmolVLA, π0, and π0.5 mask
+coordinates beyond the checkpoint's real action width throughout the flow ODE,
+including inside RTC. This works with existing checkpoints and does not require
+retraining. Training still uses the historical real-DoF loss with full-width
+noise, so future retraining results must continue to report their training
+padding objective. Do not claim that identity rot6d alone caused or fixed the
+flow-policy jitter.
+
+Both evaluators write `action_dimension_inference` into the JSON report. Use the
+default masked mode for primary results. Add `--legacy_full_action_noise` only
+for a checkpoint-fixed diagnostic A/B against the pre-fix sampler.
 
 ## Phase 0 — stats distortion on real data (GPU-free)
 
@@ -147,8 +195,14 @@ PYTHONPATH=src python examples/umi_relative_ee/eval_open_loop_dataset.py \
 Omitting `--episode_indices` intentionally selects every episode in the dataset.
 For this validation dataset the report must show `"dataset_total_episodes": 100`,
 `"summary.num_episodes": 100`, and normally `"summary.num_samples": 1000`.
-The decision value is `"summary.episode_balanced.rotation_end_deg"`. The output
-also records chunk-mean rotation, XYZ, gripper, per-episode, and per-sample metrics.
+The decision value is `"summary.episode_balanced.rot_jerk_deg"` (legacy key for
+the within-chunk rotation acceleration proxy, lower = smoother; see Metrics).
+The output also records `rotation_end_deg` / `rotation_chunk_mean_deg` (secondary
+accuracy), XYZ, gripper, the legacy `gt_*_jerk` real-motion-reference keys,
+per-episode, per-sample, and padded-action inference-mode metadata. Flow policies
+use masked padded dimensions by default; no retraining is needed to evaluate an
+existing checkpoint. To reproduce the historical sampler, add
+`--legacy_full_action_noise` and label that result as legacy.
 
 Optional RTC evaluation for SmolVLA/π0.5 deployment behavior (not ACT, and not the
 primary A/B metric):
@@ -163,16 +217,16 @@ PYTHONPATH=src python examples/umi_relative_ee/eval_rtc_dataset.py \
   --output_dir=outputs/debug/rtc_identity_<policy>_<step>
 ```
 
-### Full-validation identity-arm results (2026-07-31)
+### Full-validation identity-arm accuracy results (2026-07-31)
 
 GPU evaluation with `eval_open_loop_dataset.py`, all 100 validation episodes,
 10 evenly spaced valid queries per episode (1,000 queries), seed 1000. Values are
 episode-balanced; centimetres below are converted from the report's metres.
 
-| Policy | Ckpt | rot chunk mean | **rot chunk end (primary)** | xyz chunk mean | xyz chunk end | gripper chunk/end |
+| Policy | Ckpt | rot chunk mean | rot chunk end (secondary) | xyz chunk mean | xyz chunk end | gripper chunk/end |
 | --- | --- | --- | --- | --- | --- | --- |
-| ACT | 0300000 | 2.793° | **4.857°** | 1.48 cm | 2.30 cm | 0.096 / 0.141 |
-| SmolVLA | 0200000 | 2.958° | **5.059°** | 1.53 cm | 2.73 cm | 0.108 / 0.172 |
+| ACT | 0300000 | 2.793° | 4.857° | 1.48 cm | 2.30 cm | 0.096 / 0.141 |
+| SmolVLA | 0200000 | 2.958° | 5.059° | 1.53 cm | 2.73 cm | 0.108 / 0.172 |
 
 Reports:
 
@@ -189,12 +243,13 @@ Hourly session cron checks the three runs and updates the live status below; fla
 crashes; runs the post-hoc eval and records results once all three finish.
 
 ### Live status
-_Checked by babysit cron (bb9bbebd). 2026-07-31 ~10:35._
-- ACT — RUNNING, identity active (1302). ~398.7K / 2.5M (16%); val 0.0353 @390K (flat). no errors.
-- SmolVLA — RUNNING, identity active (1302). ~226K / 2.5M (9%); val 0.0270 @220K (flat). no errors.
-- π0.5 — RUNNING, identity active (1302, r16). ~100K / 500K (20%); val 0.0254 @90K (improving). no errors. 100k checkpoint saved → auto-viz cron fills the viz table.
+_Checked by babysit cron (e9f9fe49). 2026-07-31 ~14:45._
+- ACT — RUNNING, identity active (1302). ~518.6K / 2.5M (21%); val 0.0357 @510K (flat). no errors.
+- SmolVLA — RUNNING, identity active (1302). ~295K / 2.5M (12%); val 0.0271 @290K (flat ~0.027). no errors.
+- π0.5 — RUNNING, identity active (1302, r16). ~130.4K / 500K (26%); val 0.0260 @130K (recovered; best 0.0254 @90K). no errors.
 GPU 16.1 / 24 GB, 100% util. (val/loss is within-arm health only — not comparable to
-the scaled-rot6d baseline arm; decision metric is post-hoc rotation error.)
+the scaled-rot6d baseline arm; the decision metric is the post-hoc within-chunk
+rotation acceleration proxy.)
 
 ### Visualizations (open-loop prediction, validation eps 0–2)
 
@@ -205,8 +260,8 @@ episodes). Task `"pick the strawberry"`, D405 rig `--project`.
 | Policy | Ckpt | rot end-err | xyz end-err | gripper err | output dir |
 | --- | --- | --- | --- | --- | --- |
 | ACT | 0400000 | **5.8°** (0.101 rad) ↑from 5.2°@200k | 2.9 cm | 0.238 | `outputs/debug/viz_act_identity_1302_0400000/…/pred_episode_{0,1,2}.mp4` |
-| SmolVLA | 0200000 | **4.3°** (0.076 rad) ↓from 4.5°@100k | 3.6 cm | 0.242 | `outputs/debug/viz_smolvla_identity_1302_0200000/…/pred_episode_{0,1,2}.mp4` |
-| π0.5 | 100000 | n/a — viz deferred | n/a | n/a | ckpt saved; ~8 GB needed, OOMs alongside the 3 trainings → auto-cron `4287b752` runs it when ≥10 GB free |
+| SmolVLA | 0200000 | **4.3°** masked (4.3° unmasked) | 3.6 cm | 0.241 | `…/viz_smolvla_identity_1302_0200000_masked/…` (unmasked: `…_0200000`) |
+| π0.5 | 100000 | **4.8°** masked (5.3° unmasked, −9%) | 4.4 cm | 0.268 | `…/viz_pi05_identity_1302_100000_masked/…` (unmasked: `…/viz_pi05_identity_1302`) |
 
 These are **early** checkpoints on a 3-episode sample — directional only, not the
 policy-neutral full-validation result (that is `eval_open_loop_dataset.py`; its reports

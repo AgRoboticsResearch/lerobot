@@ -48,6 +48,7 @@ else:
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.flow_matching import get_active_action_dim, integrate_flow_matching
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -830,43 +831,26 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
-        dt = -1.0 / num_steps
+        def denoise_step_partial_call(input_x_t, current_timestep):
+            return self.denoise_step(
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                x_t=input_x_t,
+                timestep=current_timestep,
+            )
 
-        x_t = noise
-        for step in range(num_steps):
-            time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    x_t=input_x_t,
-                    timestep=current_timestep,
-                )
-
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
-                )
-            else:
-                v_t = denoise_step_partial_call(x_t)
-
-            x_t = x_t + dt * v_t
-
-            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-        return x_t
+        return integrate_flow_matching(
+            noise,
+            num_steps,
+            denoise_step_partial_call,
+            active_action_dim=get_active_action_dim(self.config),
+            mask_padded_dims=self.config.mask_padded_action_dims_at_inference,
+            rtc_processor=self.rtc_processor,
+            rtc_enabled=self._rtc_enabled(),
+            inference_delay=kwargs.get("inference_delay"),
+            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+            execution_horizon=kwargs.get("execution_horizon"),
+        )
 
     def denoise_step(
         self,

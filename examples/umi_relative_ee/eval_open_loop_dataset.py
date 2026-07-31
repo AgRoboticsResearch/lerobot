@@ -58,6 +58,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--num_steps", type=int, default=None)
+    parser.add_argument(
+        "--legacy_full_action_noise",
+        action="store_true",
+        help="Disable padded-dimension masking for legacy flow-policy inference reproduction.",
+    )
     parser.add_argument("--output_dir", default="outputs/debug/open_loop_eval")
     return parser.parse_args()
 
@@ -102,10 +107,17 @@ def choose_query_indices(
     return selected
 
 
-def load_policy_and_processors(model_path: str, device: torch.device):
+def load_policy_and_processors(
+    model_path: str,
+    device: torch.device,
+    legacy_full_action_noise: bool = False,
+):
     policy_config = PreTrainedConfig.from_pretrained(model_path)
     if not getattr(policy_config, "use_umi_relative_ee", False):
         raise ValueError(f"{model_path} is not a UMI relative-EE checkpoint")
+
+    if policy_config.type in {"smolvla", "pi0", "pi05"}:
+        policy_config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
 
     if (Path(model_path) / "adapter_config.json").exists():
         from peft import PeftConfig, PeftModel
@@ -120,6 +132,10 @@ def load_policy_and_processors(model_path: str, device: torch.device):
     else:
         policy_class = get_policy_class(policy_config.type)
         policy = policy_class.from_pretrained(model_path, local_files_only=True)
+
+    core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
+    if policy_config.type in {"smolvla", "pi0", "pi05"}:
+        core_policy.config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
 
     policy.to(device).eval()
     policy_config.device = str(device)
@@ -139,6 +155,36 @@ def rotation_error_deg(predicted: torch.Tensor, target: torch.Tensor) -> torch.T
     return torch.rad2deg(torch.acos(cosine))
 
 
+def _so3_angle_deg(matrix: torch.Tensor) -> torch.Tensor:
+    """Geodesic angle (degrees) of a (..., 3, 3) rotation-matrix batch."""
+    cosine = ((matrix.diagonal(dim1=-2, dim2=-1).sum(-1) - 1) / 2).clamp(-1.0, 1.0)
+    return torch.rad2deg(torch.acos(cosine))
+
+
+def within_chunk_jerk(poses: torch.Tensor) -> dict[str, float]:
+    """Within-chunk smoothness of a single predicted or GT chunk.
+
+    This is the "jitter" metric: how much the per-step motion *changes* across the
+    chunk (the second difference, a.k.a. jerk). It is computed on one prediction in
+    isolation (no cross-frame/open-loop accumulation). ~0 means a smooth,
+    near-constant-velocity trajectory; large values mean the predicted action
+    oscillates within the chunk — the wiggle seen in the video, which the endpoint
+    accuracy metrics (``rotation_end_deg`` etc.) cannot see.
+
+    ``poses`` is ``[steps, 7]`` absolute ``[xyz, axis-angle, gripper]``.
+    Returns rotation jerk (deg) and xyz jerk (m).
+    """
+    steps = poses.shape[0]
+    if steps < 3:
+        return {"rot_jerk_deg": 0.0, "xyz_jerk_m": 0.0}
+    rot = axis_angle_to_matrix(poses[:, 3:6])  # [steps, 3, 3]
+    step_rot = rot[:-1].transpose(-2, -1) @ rot[1:]  # inter-step rotation
+    rot_jerk = _so3_angle_deg(step_rot[:-1].transpose(-2, -1) @ step_rot[1:]).mean()
+    step_xyz = poses[1:, :3] - poses[:-1, :3]  # inter-step position delta
+    xyz_jerk = (step_xyz[1:] - step_xyz[:-1]).norm(dim=-1).mean()
+    return {"rot_jerk_deg": float(rot_jerk), "xyz_jerk_m": float(xyz_jerk)}
+
+
 def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
     if not samples:
         raise ValueError("No samples were evaluated")
@@ -150,18 +196,18 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
         "xyz_end_m",
         "gripper_chunk_mean",
         "gripper_end",
+        "rot_jerk_deg",
+        "xyz_jerk_m",
+        "gt_rot_jerk_deg",
+        "gt_xyz_jerk_m",
     )
     episode_samples: dict[int, list[dict[str, float]]] = defaultdict(list)
     for sample in samples:
         episode_samples[int(sample["episode_index"])].append(sample)
 
-    frame_weighted = {
-        name: float(np.mean([sample[name] for sample in samples])) for name in metric_names
-    }
+    frame_weighted = {name: float(np.mean([sample[name] for sample in samples])) for name in metric_names}
     episode_means = {
-        episode: {
-            name: float(np.mean([sample[name] for sample in rows])) for name in metric_names
-        }
+        episode: {name: float(np.mean([sample[name] for sample in rows])) for name in metric_names}
         for episode, rows in episode_samples.items()
     }
     episode_balanced = {
@@ -170,7 +216,7 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
     return {
         "num_episodes": len(episode_samples),
         "num_samples": len(samples),
-        "primary_metric": "episode_balanced.rotation_end_deg",
+        "primary_metric": "episode_balanced.rot_jerk_deg",
         "episode_balanced": episode_balanced,
         "sample_weighted": frame_weighted,
         "per_episode": episode_means,
@@ -188,31 +234,21 @@ def main() -> None:
     dataset_root = Path(args.dataset_root).resolve()
     repo_id = args.repo_id or f"local/{dataset_root.name}"
     policy, preprocessor, postprocessor, policy_config = load_policy_and_processors(
-        model_path, device
+        model_path, device, args.legacy_full_action_noise
     )
     if args.num_steps is not None:
-        step_field = (
-            "num_inference_steps" if policy_config.type in {"pi0", "pi05"} else "num_steps"
-        )
+        step_field = "num_inference_steps" if policy_config.type in {"pi0", "pi05"} else "num_steps"
         setattr(policy_config, step_field, args.num_steps)
         core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
         setattr(core_policy.config, step_field, args.num_steps)
 
     metadata = LeRobotDatasetMetadata(repo_id, root=dataset_root)
     episode_indices = (
-        list(range(metadata.total_episodes))
-        if args.episode_indices is None
-        else args.episode_indices
+        list(range(metadata.total_episodes)) if args.episode_indices is None else args.episode_indices
     )
-    invalid = [
-        episode
-        for episode in episode_indices
-        if episode < 0 or episode >= metadata.total_episodes
-    ]
+    invalid = [episode for episode in episode_indices if episode < 0 or episode >= metadata.total_episodes]
     if invalid:
-        raise ValueError(
-            f"Episode indices out of range for {metadata.total_episodes} episodes: {invalid}"
-        )
+        raise ValueError(f"Episode indices out of range for {metadata.total_episodes} episodes: {invalid}")
     if metadata.episodes is None:
         raise RuntimeError("Dataset metadata does not contain episode records")
     query_indices = choose_query_indices(
@@ -237,6 +273,13 @@ def main() -> None:
         metadata.total_episodes,
         len(query_indices),
     )
+    if policy_config.type in {"smolvla", "pi0", "pi05"}:
+        logger.info(
+            "Flow action dimensions: active=%d, model=%d, padded masking=%s",
+            policy_config.action_feature.shape[0],
+            policy_config.max_action_dim,
+            policy_config.mask_padded_action_dims_at_inference,
+        )
 
     samples: list[dict[str, float]] = []
     for sample_index, (dataset_index, episode_index, frame_index) in enumerate(query_indices):
@@ -270,10 +313,10 @@ def main() -> None:
         predicted = predicted[:steps]
         ground_truth = ground_truth[:steps].cpu()
         rotation_error = rotation_error_deg(predicted, ground_truth)
-        xyz_error = torch.linalg.vector_norm(
-            predicted[:, :3] - ground_truth[:, :3], dim=-1
-        )
+        xyz_error = torch.linalg.vector_norm(predicted[:, :3] - ground_truth[:, :3], dim=-1)
         gripper_error = (predicted[:, 6] - ground_truth[:, 6]).abs()
+        pred_jerk = within_chunk_jerk(predicted)
+        gt_jerk = within_chunk_jerk(ground_truth)
         samples.append(
             {
                 "episode_index": episode_index,
@@ -284,6 +327,10 @@ def main() -> None:
                 "xyz_end_m": float(xyz_error[-1]),
                 "gripper_chunk_mean": float(gripper_error.mean()),
                 "gripper_end": float(gripper_error[-1]),
+                "rot_jerk_deg": pred_jerk["rot_jerk_deg"],
+                "xyz_jerk_m": pred_jerk["xyz_jerk_m"],
+                "gt_rot_jerk_deg": gt_jerk["rot_jerk_deg"],
+                "gt_xyz_jerk_m": gt_jerk["xyz_jerk_m"],
             }
         )
         if (sample_index + 1) % 50 == 0 or sample_index + 1 == len(query_indices):
@@ -297,6 +344,14 @@ def main() -> None:
         "requested_episode_indices": episode_indices,
         "samples_per_episode": args.samples_per_episode,
         "seed": args.seed,
+        "action_dimension_inference": {
+            "active_action_dim": policy_config.action_feature.shape[0],
+            "model_action_dim": getattr(
+                policy_config, "max_action_dim", policy_config.action_feature.shape[0]
+            ),
+            "mask_padded_action_dims": getattr(policy_config, "mask_padded_action_dims_at_inference", None),
+            "legacy_full_action_noise": args.legacy_full_action_noise,
+        },
         "summary": summarize(samples),
         "samples": samples,
     }

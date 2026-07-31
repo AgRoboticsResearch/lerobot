@@ -54,6 +54,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32
+    # Keep unused fixed-width action coordinates at zero during flow-matching inference.
+    # Disable only to reproduce checkpoints' legacy full-width-noise behavior.
+    mask_padded_action_dims_at_inference: bool = True
 
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (512, 512)

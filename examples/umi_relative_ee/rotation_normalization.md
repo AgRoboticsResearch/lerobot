@@ -130,10 +130,24 @@ run without code edits.
 
 Decision criterion: compare matched checkpoints with the policy-neutral
 `eval_open_loop_dataset.py` on all 100 validation episodes (10 evenly spaced valid
-queries per episode). The primary value is the episode-balanced absolute-pose
-chunk-end rotation error in degrees. A meaningful reduction (target: at least 20%
-relative, beyond seed noise) supports the hypothesis; otherwise rule it out. RTC
-evaluation remains a separate SmolVLA/π0.5 deployment metric and does not support ACT.
+queries per episode). The primary value is the episode-balanced within-chunk
+rotation second-difference/acceleration proxy (currently stored under the legacy
+key `rot_jerk_deg`); chunk-end rotation error is secondary accuracy. A meaningful
+smoothness reduction (target: at least 20% relative, beyond seed noise) supports
+the jumpiness hypothesis, provided the paired checkpoints used the same action
+padding/noise objective. RTC evaluation remains a separate SmolVLA/π0.5 deployment
+metric and does not support ACT.
+
+The padding/noise qualification matters because a later implementation audit
+found that SmolVLA historically sampled an unconstrained 32-D latent for a 10-D
+UMI action but trained loss only on the ten real dimensions. See
+[`within_chunk_jitter_analysis.md`](./within_chunk_jitter_analysis.md) for the
+OpenPI comparison, GPU ablations, and the two coherent fixed-width formulations.
+Inference now masks the 22 unused coordinates throughout the flow ODE by default
+for SmolVLA, π0, and π0.5, including the velocity exposed to RTC. This applies to
+existing checkpoints without retraining. Use `--legacy_full_action_noise` in the
+UMI evaluators only for historical reproduction; training-side padding
+objectives remain a deferred retraining A/B.
 
 ### Long-term form
 
