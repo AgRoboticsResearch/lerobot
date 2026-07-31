@@ -29,6 +29,7 @@ serialized processor names load directly.
 - Unified prediction visualization: `prediction_visualization.md`
 - Policy-neutral ACT/SmolVLA/π0.5 dataset metrics: `eval_open_loop_dataset.py`
 - Pi0.5 and SmolVLA RTC deployment: `rtc.md`
+- Piper async server/client deployment: `ASYNC_INFERENCE.md`
 - Rotation normalization analysis (UMI identity vs. our per-dim scaling; jumpiness hypothesis + A/B test): `rotation_normalization.md`
 - Migration manifest and checksums: `../../docs/umi_migration_manifest.md`
 - Historical-tool smoke results: `../../docs/umi_legacy_tool_smoke.md`
