@@ -68,7 +68,9 @@ from .xvla.configuration_xvla import XVLAConfig
 
 
 def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+    policy_cfg: PreTrainedConfig | None = None,
 ) -> None:
     """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
 
@@ -95,6 +97,8 @@ def _reconnect_relative_absolute_steps(
         for step in postprocessor.steps:
             if isinstance(step, (UmiAbsoluteActionsStep, AbsoluteRot6dActionsProcessorStep)):
                 step.relative_step = umi_relative_step
+                if policy_cfg is not None:
+                    step.set_single_action_reference_steps(policy_cfg.n_action_steps)
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -321,7 +325,7 @@ def make_pre_post_processors(
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
         )
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        _reconnect_relative_absolute_steps(preprocessor, postprocessor, policy_cfg)
         return preprocessor, postprocessor
 
     # Create a new processor based on policy type

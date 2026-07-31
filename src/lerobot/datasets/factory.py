@@ -150,7 +150,11 @@ def make_dataset(
     if use_umi_relative_ee:
         if not is_validation:
             dataset.meta.stats.update(
-                compute_umi_relative_ee_stats(dataset.hf_dataset, trainable_config.chunk_size)
+                compute_umi_relative_ee_stats(
+                    dataset.hf_dataset,
+                    trainable_config.chunk_size,
+                    identity_rot6d=bool(getattr(trainable_config, "umi_rot6d_identity_norm", False)),
+                )
             )
         dataset.meta.info.features[ACTION] = {
             "dtype": "float32",

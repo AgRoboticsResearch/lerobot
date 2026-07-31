@@ -59,6 +59,11 @@ class PI05Config(PreTrainedConfig):
     # The raw dataset action is an absolute 7D [xyz, axis-angle, gripper]
     # pose. State and UMI-relative rot6d actions are derived by processors.
     use_umi_relative_ee: bool = False
+    # Leave the 6D-rotation action/state components unnormalized (identity stats)
+    # instead of per-dim QUANTILES scaling, matching canonical UMI. π0.5's quantile
+    # normalizer was designed for joint-space actions, so scaling rot6d is off-label.
+    # A/B test for rotation jumpiness. See examples/umi_relative_ee/rotation_normalization.md.
+    umi_rot6d_identity_norm: bool = False
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None

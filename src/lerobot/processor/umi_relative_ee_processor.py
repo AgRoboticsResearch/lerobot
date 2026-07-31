@@ -271,6 +271,46 @@ class UmiAbsoluteActionsStep(ProcessorStep):
     enabled: bool = True
     cache_key: str = "umi_relative_ee"
     relative_step: UmiRelativeActionsStep | None = field(default=None, repr=False)
+    single_action_reference_steps: int = 1
+    _single_action_reference: Tensor | None = field(default=None, init=False, repr=False)
+    _single_action_steps_remaining: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.single_action_reference_steps < 1:
+            raise ValueError("single_action_reference_steps must be at least 1")
+
+    def set_single_action_reference_steps(self, steps: int) -> None:
+        """Set how many queued single actions share one chunk-start reference."""
+        if steps < 1:
+            raise ValueError("single_action_reference_steps must be at least 1")
+        self.single_action_reference_steps = steps
+        self._clear_single_action_reference()
+
+    def _clear_single_action_reference(self) -> None:
+        self._single_action_reference = None
+        self._single_action_steps_remaining = 0
+
+    def _reference_for_action(self, action: Tensor, current_state: Tensor) -> Tensor:
+        # predict_action_chunk returns [batch, time, action_dim] and is
+        # postprocessed immediately, so it always uses the latest observation.
+        # select_action returns [batch, action_dim] one item at a time; all items
+        # in its internal queue must instead retain the frame that generated the
+        # chunk, even though preprocessing refreshes current_state every tick.
+        if action.ndim >= 3 or self.single_action_reference_steps == 1:
+            self._clear_single_action_reference()
+            return current_state
+
+        if self._single_action_steps_remaining == 0:
+            self._single_action_reference = current_state.detach().clone()
+            self._single_action_steps_remaining = self.single_action_reference_steps
+
+        if self._single_action_reference is None:  # Defensive invariant for type checkers.
+            raise RuntimeError("UMI single-action reference was not initialized")
+        reference = self._single_action_reference
+        self._single_action_steps_remaining -= 1
+        if self._single_action_steps_remaining == 0:
+            self._single_action_reference = None
+        return reference
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
@@ -283,15 +323,21 @@ class UmiAbsoluteActionsStep(ProcessorStep):
         action = transition.get(TransitionKey.ACTION)
         if action is None:
             return transition
+        state = self._reference_for_action(action, state)
         result = deepcopy(transition)
         result[TransitionKey.ACTION] = to_umi_absolute_actions(action, state)
         return result
 
     def reset(self) -> None:
+        self._clear_single_action_reference()
         _STATE_CACHE.pop(self.cache_key, None)
 
     def get_config(self) -> dict[str, Any]:
-        return {"enabled": self.enabled, "cache_key": self.cache_key}
+        return {
+            "enabled": self.enabled,
+            "cache_key": self.cache_key,
+            "single_action_reference_steps": self.single_action_reference_steps,
+        }
 
     def transform_features(self, features):
         return features

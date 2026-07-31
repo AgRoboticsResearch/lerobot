@@ -42,6 +42,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
 
 try:
     import imageio.v3 as iio  # noqa: E402
@@ -303,7 +304,7 @@ def draw_traj_on_image(img_rgb, pts2d, mode="pred"):
         return img
     segs = np.stack([pts2d[:-1], pts2d[1:]], axis=1)
     colors = _green_red_gradient(len(segs)) if mode == "pred" else [(0.0, 1.0, 1.0)] * len(segs)
-    thick = 2 if mode == "pred" else 3
+    thick = 6 if mode == "pred" else 4
     for (p1, p2), c in zip(segs, colors):
         if not (np.isfinite(p1).all() and np.isfinite(p2).all()):
             continue
@@ -323,30 +324,53 @@ def draw_traj_on_image(img_rgb, pts2d, mode="pred"):
 # ---------------------------------------------------------------------------
 
 
-def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes):
-    ax_img, ax_3d, ax_curves = axes
-    ax_img.clear()
-    ax_3d.clear()
-    ax_curves.clear()
+def _plot_dim(ax, xs, pred, gt, title):
+    """One per-dimension panel: Pred (solid) vs GT (dashed), auto-scaled y-axis."""
+    ax.clear()
+    ax.plot(xs, pred, "-", color="tab:blue", lw=1.6, label="Pred")
+    if gt is not None:
+        ax.plot(xs, gt, "--", color="tab:orange", lw=1.6, label="GT")
+    ax.set_title(title, fontsize=7)
+    ax.set_xlabel("chunk step", fontsize=6)
+    ax.tick_params(labelsize=6)
+    ax.margins(y=0.15)
+    ax.grid(True, alpha=0.3, linewidth=0.5)
 
+
+def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes):
+    ax_img, ax_3d, ax_x, ax_y, ax_z, ax_rot = axes
+    for ax in axes:
+        ax.clear()
+
+    # --- big RGB view: per-frame HUD + GT/Pred legend ---
     ax_img.imshow(img_rgb)
     ax_img.set_title(
-        f"ep {info['ep']}  frame {info['frame']}  task='{info['task']}'\n"
-        f"end xyz err {info['xyz_err'] * 1000:.1f}mm  end rot err {np.degrees(info['rot_err']):.1f}deg  "
+        f"ep {info['ep']}  frame {info['frame']}  task='{info['task']}'    "
+        f"end xyz err {info['xyz_err'] * 1000:.1f}mm   end rot err {np.degrees(info['rot_err']):.1f}deg   "
         f"grip pred={info['grip_pred']:.2f} gt={info['grip_gt']:.2f}",
         fontsize=8,
     )
     ax_img.axis("off")
+    legend_handles = [
+        Line2D([0], [0], color=(0.0, 1.0, 0.0), lw=3, marker="o", ms=5, label="Pred (green→red)"),
+        Line2D(
+            [0], [0], color=(0.0, 1.0, 1.0), lw=3, marker="o", ms=5,
+            markerfacecolor=(1.0, 0.0, 1.0), label="GT (cyan)",
+        ),
+    ]
+    ax_img.legend(handles=legend_handles, loc="lower right", fontsize=7, framealpha=0.85)
 
+    # --- relative EE trajectory (chunk-start frame) ---
     if gt_traj is not None and len(gt_traj) > 1:
-        ax_3d.plot(gt_traj[:, 0], gt_traj[:, 1], gt_traj[:, 2], "r--", lw=2, label="GT")
-        ax_3d.scatter([gt_traj[-1, 0]], [gt_traj[-1, 1]], [gt_traj[-1, 2]], c="r", s=30)
+        ax_3d.plot(gt_traj[:, 0], gt_traj[:, 1], gt_traj[:, 2], "--", color=(0.0, 1.0, 1.0), lw=2, label="GT")
+        ax_3d.scatter([gt_traj[-1, 0]], [gt_traj[-1, 1]], [gt_traj[-1, 2]], c=(0.0, 1.0, 1.0), s=25)
     if len(pred_traj) > 1:
-        ax_3d.plot(pred_traj[:, 0], pred_traj[:, 1], pred_traj[:, 2], "b-", lw=2, label="Pred")
-        ax_3d.scatter([pred_traj[-1, 0]], [pred_traj[-1, 1]], [pred_traj[-1, 2]], c="b", s=30)
-    ax_3d.set_xlabel("x")
-    ax_3d.set_ylabel("y")
-    ax_3d.set_zlabel("z")
+        ax_3d.plot(pred_traj[:, 0], pred_traj[:, 1], pred_traj[:, 2], "-", color=(0.0, 1.0, 0.0), lw=2, label="Pred")
+        ax_3d.scatter([pred_traj[-1, 0]], [pred_traj[-1, 1]], [pred_traj[-1, 2]], c=(0.0, 1.0, 0.0), s=25)
+    ax_3d.set_xlabel("x", fontsize=6)
+    ax_3d.set_ylabel("y", fontsize=6)
+    ax_3d.set_zlabel("z", fontsize=6)
+    ax_3d.tick_params(labelsize=6)
     lim = 0.15
     ax_3d.set_xlim(-lim, lim)
     ax_3d.set_ylim(-lim, lim)
@@ -356,20 +380,19 @@ def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes)
     except Exception:
         pass
     ax_3d.view_init(elev=20, azim=45)
-    ax_3d.legend(fontsize=7, loc="upper right")
     ax_3d.set_title("Relative EE trajectory (chunk)", fontsize=8)
+    ax_3d.legend(fontsize=6, loc="upper right")
 
+    # --- per-dimension GT vs Pred (proper auto-scaled axes) ---
     xs = np.arange(len(pred_rel))
-    ax_curves.plot(xs, pred_rel[:, 0], "b-", label="px")
-    ax_curves.plot(xs, pred_rel[:, 1], "g-", label="py")
-    ax_curves.plot(xs, pred_rel[:, 2], "c-", label="pz")
-    ax_curves.plot(xs, pred_rel_angles(pred_rel), "m-", label="pred rot|.|")
-    if len(gt_ang):
-        ax_curves.plot(np.arange(len(gt_ang)), gt_ang, "r--", label="gt rot|.|")
-    ax_curves.set_ylim(-0.12, 0.12)
-    ax_curves.legend(fontsize=6, ncol=3, loc="upper right")
-    ax_curves.set_title("Per-target relative action", fontsize=8)
-    ax_curves.set_xlabel("chunk step", fontsize=7)
+    gt_pos = gt_traj[1:] if (gt_traj is not None and len(gt_traj) > 1) else None
+    pred_ang_deg = np.degrees(pred_rel_angles(pred_rel))
+    gt_ang_deg = np.degrees(gt_ang) if len(gt_ang) else None
+    _plot_dim(ax_x, xs, pred_rel[:, 0] * 1000, (gt_pos[:, 0] * 1000 if gt_pos is not None else None), "x (mm)")
+    _plot_dim(ax_y, xs, pred_rel[:, 1] * 1000, (gt_pos[:, 1] * 1000 if gt_pos is not None else None), "y (mm)")
+    _plot_dim(ax_z, xs, pred_rel[:, 2] * 1000, (gt_pos[:, 2] * 1000 if gt_pos is not None else None), "z (mm)")
+    _plot_dim(ax_rot, xs, pred_ang_deg, gt_ang_deg, "rot |.| (deg)")
+    ax_rot.legend(fontsize=6, loc="upper right")  # shared Pred/GT key
 
     fig.canvas.draw()
     buf = np.asarray(fig.canvas.buffer_rgba())
@@ -487,8 +510,32 @@ def main():
     out_dir = Path(args.output_dir) / repo_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    fig = plt.figure(figsize=(13, 5))
-    axes = (fig.add_subplot(1, 3, 1), fig.add_subplot(1, 3, 2, projection="3d"), fig.add_subplot(1, 3, 3))
+    fig = plt.figure(figsize=(15, 8))
+    gs_outer = fig.add_gridspec(
+        1, 2, width_ratios=[1.7, 1.0], wspace=0.08,
+        left=0.02, right=0.98, top=0.93, bottom=0.04,
+    )
+    ax_img = fig.add_subplot(gs_outer[0, 0])
+    gs_right = gs_outer[0, 1].subgridspec(2, 1, height_ratios=[1.0, 1.2], hspace=0.35)
+    ax_3d = fig.add_subplot(gs_right[0], projection="3d")
+    gs_curves = gs_right[1].subgridspec(2, 2, hspace=0.65, wspace=0.30)
+    axes = (
+        ax_img,
+        ax_3d,
+        fig.add_subplot(gs_curves[0, 0]),
+        fig.add_subplot(gs_curves[0, 1]),
+        fig.add_subplot(gs_curves[1, 0]),
+        fig.add_subplot(gs_curves[1, 1]),
+    )
+    # static policy / checkpoint / dataset banner
+    _pp = Path(args.pretrained_path)
+    _ckpt = _pp.parent.name
+    _run = _pp.parents[2].name if len(_pp.parents) > 2 else _ckpt
+    fig.suptitle(
+        f"{policy_config.type.upper()}    ·    ckpt {_ckpt}    ·    {_run}    ·    dataset: {repo_id}",
+        fontsize=12,
+        y=0.99,
+    )
 
     cur_ep = None
     frames = []

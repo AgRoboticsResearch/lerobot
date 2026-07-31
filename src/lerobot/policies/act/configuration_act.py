@@ -89,6 +89,10 @@ class ACTConfig(PreTrainedConfig):
     # absolute 7D [xyz, axis-angle, gripper] pose; processors derive a 20D
     # two-pose state and 10D relative rot6d action.
     use_umi_relative_ee: bool = False
+    # Leave the 6D-rotation action/state components unnormalized (identity stats)
+    # instead of per-dim MIN_MAX scaling, matching canonical UMI. A/B test for
+    # rotation jumpiness. See examples/umi_relative_ee/rotation_normalization.md.
+    umi_rot6d_identity_norm: bool = False
 
     # Deprecated fields retained so existing processor-based ACT checkpoints
     # can be decoded without rewriting train_config.json.

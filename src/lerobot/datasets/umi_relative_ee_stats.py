@@ -51,7 +51,53 @@ def _valid_query_starts(episode_indices: np.ndarray, query_length: int) -> np.nd
     return np.concatenate(starts) if starts else np.empty(0, dtype=np.int64)
 
 
-def compute_umi_relative_ee_stats(hf_dataset, chunk_size: int) -> dict[str, dict[str, np.ndarray]]:
+# rot6d lives at action dims [3:9] within [pos(3), rot6d(6), gripper(1)]. The derived
+# 20D state stacks two such poses, so rot6d repeats at [3:9] and [13:19].
+_ROT6D_ACTION_SLICES: tuple[slice, ...] = (slice(3, 9),)
+_ROT6D_STATE_SLICES: tuple[slice, ...] = (slice(3, 9), slice(13, 19))
+
+# Statistics that make every NormalizationMode a no-op on a dimension: MIN_MAX needs
+# min=-1/max=1; QUANTILES/QUANTILE10 need q01=q10=-1, q90=q99=1; MEAN_STD needs
+# mean=0/std=1. (q50 and count are unused by the normalizer.)
+_IDENTITY_ROT6D_STATS: dict[str, float] = {
+    "mean": 0.0,
+    "std": 1.0,
+    "min": -1.0,
+    "max": 1.0,
+    "q01": -1.0,
+    "q10": -1.0,
+    "q90": 1.0,
+    "q99": 1.0,
+}
+
+
+def _force_identity_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -> None:
+    """Overwrite rot6d statistics in place so normalization leaves rotation unchanged.
+
+    rot6d entries are rotation-matrix rows already bounded in [-1, 1]. Scaling them
+    with per-dimension min/max or quantiles distorts their coupled geometry and, for
+    near-identity relative rotations, over-weights the near-constant diagonal
+    components. Forcing identity makes the normalizer a no-op on rotation, matching
+    canonical UMI. See ``examples/umi_relative_ee/rotation_normalization.md``.
+    """
+    for key, slices in (
+        (ACTION, _ROT6D_ACTION_SLICES),
+        ("observation.state", _ROT6D_STATE_SLICES),
+    ):
+        feature_stats = stats.get(key)
+        if not feature_stats:
+            continue
+        for stat_name, value in _IDENTITY_ROT6D_STATS.items():
+            array = feature_stats.get(stat_name)
+            if array is None:
+                continue
+            for sl in slices:
+                array[sl] = value
+
+
+def compute_umi_relative_ee_stats(
+    hf_dataset, chunk_size: int, identity_rot6d: bool = False
+) -> dict[str, dict[str, np.ndarray]]:
     """Compute stats for the exact tensors produced by the UMI processors.
 
     The second queried action is the chunk base and first retained target. This
@@ -90,7 +136,14 @@ def compute_umi_relative_ee_stats(hf_dataset, chunk_size: int) -> dict[str, dict
         relative_state = _absolute_aa_to_relative_rot6d(state_base, state_pair).reshape(-1, 20)
         state_stats.update(relative_state)
 
-    return {
+    stats = {
         ACTION: action_stats.get_statistics(),
         "observation.state": state_stats.get_statistics(),
     }
+    if identity_rot6d:
+        _force_identity_rot6d_stats(stats)
+        logger.info(
+            "UMI relative-EE: rot6d action/state stats forced to identity "
+            "(rotation left unnormalized)"
+        )
+    return stats

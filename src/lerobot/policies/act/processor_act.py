@@ -88,7 +88,13 @@ def make_act_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         *(
-            [UmiAbsoluteActionsStep(cache_key=cache_key, relative_step=relative_step)]
+            [
+                UmiAbsoluteActionsStep(
+                    cache_key=cache_key,
+                    relative_step=relative_step,
+                    single_action_reference_steps=config.n_action_steps,
+                )
+            ]
             if config.use_umi_relative_ee
             else []
         ),

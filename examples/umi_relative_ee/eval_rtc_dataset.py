@@ -114,6 +114,11 @@ def set_seed(seed: int) -> None:
 def load_policy_and_processors(model_path: str, device: torch.device, num_steps: int | None):
     """Load a full checkpoint or a PEFT adapter and its saved processors."""
     policy_config = PreTrainedConfig.from_pretrained(model_path)
+    if policy_config.type not in {"pi05", "smolvla"}:
+        raise ValueError(
+            "RTC dataset evaluation supports policy.type=pi05 or smolvla; "
+            f"got {policy_config.type!r}. Use eval_open_loop_dataset.py for ACT."
+        )
     if not getattr(policy_config, "use_umi_relative_ee", False):
         raise ValueError(f"{model_path} is not configured for UMI relative-EE actions")
 

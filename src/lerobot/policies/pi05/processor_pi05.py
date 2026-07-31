@@ -139,7 +139,11 @@ def make_pi05_pre_post_processors(
         relative_step = UmiRelativeActionsStep(cache_key=cache_key)
         relative_state_step = UmiRelativeStateStep()
         derive_state_step = UmiDeriveStateFromActionStep()
-        absolute_step = UmiAbsoluteActionsStep(relative_step=relative_step, cache_key=cache_key)
+        absolute_step = UmiAbsoluteActionsStep(
+            relative_step=relative_step,
+            cache_key=cache_key,
+            single_action_reference_steps=config.n_action_steps,
+        )
     else:
         relative_step = RelativeActionsProcessorStep(
             enabled=config.use_relative_actions,
