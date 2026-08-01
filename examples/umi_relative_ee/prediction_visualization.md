@@ -186,4 +186,19 @@ SmolVLA on validation (same CLI and environment):
 ## Options
 `--no_gt`, `--task`, `--fps`, `--device`, `--seed`, `--repo_id`, `--output_dir`,
 `--extrinsics_config`, `--camera_info_path`, `--max_frames_per_episode`,
-`--first_frame_debug`, `--project`.
+`--first_frame_debug`, `--project`, `--num_steps`, `--zero_noise`.
+
+## Zero-noise decoding (`--zero_noise`)
+Flow policies (SmolVLA, π0.5) normally seed the flow integrator with a random
+Gaussian latent. `--zero_noise` feeds an **all-zero latent** instead — the
+"zero all dims" arm of the within-chunk-jitter audit
+([`within_chunk_jitter_analysis.md`](./within_chunk_jitter_analysis.md)), which
+collapses SmolVLA's rotation-jitter proxy from ~1.9° to ~0.085° and improves its
+rotation endpoint from ~4.4° to ~2.6°. It is ignored for non-flow policies (ACT).
+The latent shape is derived from the checkpoint config
+(`(1, chunk_size, max_action_dim)`). The production sampler integrates the
+complete latent width; zero-noise remains a diagnostic only. Diagnostics
+retain `--legacy_full_action_noise` for report compatibility, but it no longer
+changes SmolVLA/π0.5 inference. See the historical
+[`run_jerk_ab.sh`](./run_jerk_ab.sh) and the
+zero-noise video runner [`run_zero_noise_vis.sh`](./run_zero_noise_vis.sh).

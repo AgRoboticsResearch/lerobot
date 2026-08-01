@@ -39,9 +39,9 @@ class PI05Config(PreTrainedConfig):
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
     max_action_dim: int = 32
-    # Keep unused fixed-width action coordinates at zero during flow-matching inference.
-    # Disable only to reproduce checkpoints' legacy full-width-noise behavior.
-    mask_padded_action_dims_at_inference: bool = True
+    # Deprecated compatibility field; saved True values load but are ignored.
+    # π0.5 always uses OpenPI full-width flow.
+    mask_padded_action_dims_at_inference: bool = False
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10

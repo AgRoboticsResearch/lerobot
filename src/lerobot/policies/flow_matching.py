@@ -14,13 +14,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared flow-matching inference helpers."""
+"""Shared flow-matching training and inference helpers."""
 
 from collections.abc import Callable
 from typing import Any
 
 import torch
 from torch import Tensor
+
+
+def reduce_flow_matching_loss(
+    losses: Tensor,
+    action_is_pad: Tensor | None = None,
+    reduction: str = "mean",
+) -> tuple[Tensor, Tensor]:
+    """Reduce a full-width OpenPI flow-matching loss.
+
+    The losses tensor must contain every model action coordinate, including
+    coordinates that zero-pad a robot's real action vector to the model's fixed
+    width. Those padded coordinates are supervised: their clean target is zero,
+    so their flow target teaches the model to transport Gaussian noise to zero.
+
+    action_is_pad masks only invalid timesteps at episode boundaries. It must
+    never be used to mask fixed-width action coordinates.
+
+    Returns the requested scalar/per-sample reduction and a per-dimension mean
+    over valid timesteps for logging.
+    """
+    if losses.ndim != 3:
+        raise ValueError(f"losses must have shape (batch, time, action_dim), got {tuple(losses.shape)}.")
+    if reduction not in {"mean", "none"}:
+        raise ValueError(f"reduction must be 'mean' or 'none', got {reduction!r}.")
+
+    if action_is_pad is None:
+        loss_per_dim = losses.mean(dim=(0, 1))
+        if reduction == "none":
+            return losses.mean(dim=(1, 2)), loss_per_dim
+        return losses.mean(), loss_per_dim
+
+    if action_is_pad.shape != losses.shape[:2]:
+        raise ValueError(
+            "action_is_pad must match the loss batch and time dimensions: "
+            f"got {tuple(action_is_pad.shape)} for losses {tuple(losses.shape)}."
+        )
+
+    valid = (~action_is_pad.to(device=losses.device, dtype=torch.bool)).to(losses.dtype)
+    valid_losses = losses * valid.unsqueeze(-1)
+    loss_per_dim = valid_losses.sum(dim=(0, 1)) / valid.sum().clamp_min(1)
+
+    if reduction == "none":
+        valid_values = valid.sum(dim=1).clamp_min(1) * losses.shape[-1]
+        return valid_losses.sum(dim=(1, 2)) / valid_values, loss_per_dim
+
+    valid_values = valid.sum().clamp_min(1) * losses.shape[-1]
+    return valid_losses.sum() / valid_values, loss_per_dim
 
 
 def get_active_action_dim(config: Any) -> int:

@@ -48,7 +48,11 @@ else:
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.flow_matching import get_active_action_dim, integrate_flow_matching
+from lerobot.policies.flow_matching import (
+    get_active_action_dim,
+    integrate_flow_matching,
+    reduce_flow_matching_loss,
+)
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -844,7 +848,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             num_steps,
             denoise_step_partial_call,
             active_action_dim=get_active_action_dim(self.config),
-            mask_padded_dims=self.config.mask_padded_action_dims_at_inference,
+            mask_padded_dims=False,
             rtc_processor=self.rtc_processor,
             rtc_enabled=self._rtc_enabled(),
             inference_delay=kwargs.get("inference_delay"),
@@ -1257,44 +1261,23 @@ class PI05Policy(PreTrainedPolicy):
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
 
-        # Truncate losses to actual action dimensions
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        losses = losses[:, :, :original_action_dim]
-
         action_is_pad = batch.get("action_is_pad")
-        valid = None
-        if action_is_pad is not None:
-            if action_is_pad.shape != losses.shape[:2]:
-                raise ValueError(
-                    "action_is_pad must match the action time dimensions: "
-                    f"got {tuple(action_is_pad.shape)} for losses {tuple(losses.shape)}"
-                )
-            valid = (~action_is_pad.to(device=losses.device, dtype=torch.bool)).to(losses.dtype)
-            losses = losses * valid.unsqueeze(-1)
-            loss_per_dim = losses.sum(dim=(0, 1)) / valid.sum().clamp_min(1)
-        else:
-            loss_per_dim = losses.mean(dim=(0, 1))
+        loss, loss_per_dim = reduce_flow_matching_loss(losses, action_is_pad, reduction)
 
+        active_action_dim = get_active_action_dim(self.config)
+        padded_loss = (
+            loss_per_dim[active_action_dim:].mean()
+            if active_action_dim < losses.shape[-1]
+            else loss_per_dim.new_zeros(())
+        )
         loss_dict = {
+            "loss": loss.mean().item(),
             "loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist(),
+            "flow_loss_real_dims": loss_per_dim[:active_action_dim].mean().item(),
+            "flow_loss_padded_dims": padded_loss.item(),
         }
 
-        if reduction == "none":
-            if valid is None:
-                per_sample_loss = losses.mean(dim=(1, 2))
-            else:
-                valid_values = valid.sum(dim=1).clamp_min(1) * original_action_dim
-                per_sample_loss = losses.sum(dim=(1, 2)) / valid_values
-            loss_dict["loss"] = per_sample_loss.mean().item()
-            return per_sample_loss, loss_dict
-        else:
-            if valid is None:
-                loss = losses.mean()
-            else:
-                valid_values = valid.sum().clamp_min(1) * original_action_dim
-                loss = losses.sum() / valid_values
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+        return loss, loss_dict
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""

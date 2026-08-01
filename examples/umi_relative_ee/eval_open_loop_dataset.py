@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--legacy_full_action_noise",
         action="store_true",
-        help="Disable padded-dimension masking for legacy flow-policy inference reproduction.",
+        help="Deprecated for SmolVLA/π0.5; disables padded masking only for legacy π0 evaluation.",
     )
     parser.add_argument("--output_dir", default="outputs/debug/open_loop_eval")
     return parser.parse_args()
@@ -116,7 +116,9 @@ def load_policy_and_processors(
     if not getattr(policy_config, "use_umi_relative_ee", False):
         raise ValueError(f"{model_path} is not a UMI relative-EE checkpoint")
 
-    if policy_config.type in {"smolvla", "pi0", "pi05"}:
+    if policy_config.type in {"smolvla", "pi05"}:
+        policy_config.mask_padded_action_dims_at_inference = False
+    elif policy_config.type == "pi0":
         policy_config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
 
     if (Path(model_path) / "adapter_config.json").exists():
@@ -134,7 +136,9 @@ def load_policy_and_processors(
         policy = policy_class.from_pretrained(model_path, local_files_only=True)
 
     core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
-    if policy_config.type in {"smolvla", "pi0", "pi05"}:
+    if policy_config.type in {"smolvla", "pi05"}:
+        core_policy.config.mask_padded_action_dims_at_inference = False
+    elif policy_config.type == "pi0":
         core_policy.config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
 
     policy.to(device).eval()

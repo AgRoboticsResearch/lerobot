@@ -25,6 +25,7 @@ serialized processor names load directly.
 
 - ACT and shared processor design: `umi_style_ee_processor_pipeline.md`
 - SmolVLA runbook: `smolvla_relative_ee_training.md`
+- Shared SmolVLA/π0.5 OpenPI flow contract: `OPENPI_FULL_WIDTH_FLOW_MATCHING.md`
 - π0.5 commands: the sections below and `train_pi05_lora.sh`
 - Unified prediction visualization: `prediction_visualization.md`
 - Policy-neutral ACT/SmolVLA/π0.5 dataset metrics: `eval_open_loop_dataset.py`

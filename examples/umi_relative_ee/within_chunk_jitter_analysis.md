@@ -2,6 +2,10 @@
 
 > **Status:** inference fix implemented after mathematical audit, updated 2026-07-31.
 > Companion to [`rot6d_identity_norm_experiment.md`](./rot6d_identity_norm_experiment.md).
+>
+> **Superseded runtime:** the masked-inference experiment documented below is
+> historical. SmolVLA and π0.5 now follow the full-width OpenPI contract in
+> [`OPENPI_FULL_WIDTH_FLOW_MATCHING.md`](./OPENPI_FULL_WIDTH_FLOW_MATCHING.md).
 
 ## TL;DR
 
@@ -37,14 +41,14 @@ from **4.42° to 2.59°**. This is strong diagnostic evidence, not yet a deploym
 recommendation by itself; the implemented masked-subspace inference path still
 needs the full 100-episode evaluation and real rollouts.
 
-The inference fix now applies by default to SmolVLA, π0, and π0.5 whenever the
-real action dimension is smaller than `max_action_dim`. It requires **no
-retraining**: existing checkpoints start with zero noise in padded coordinates,
-see zero padded velocity inside RTC, and clamp those coordinates to zero after
-every Euler step. Set
-`mask_padded_action_dims_at_inference=false` on the policy config, or pass
-`--legacy_full_action_noise` to the UMI evaluators, only to reproduce the old
-full-width-noise behavior. Training remains unchanged and is a separate later A/B.
+The production fix now follows OpenPI for SmolVLA and π0.5: normalized actions
+are zero-padded to the 32D model width, training supervises all 32 flow
+coordinates, and inference integrates full-width Gaussian noise without
+dimension masking. The old config field remains loadable but is ignored by
+those two policies. Existing mixed-formulation checkpoints can run with the new
+sampler, but retraining is required to supervise their padded outputs. π0 keeps
+its existing behavior. The UMI evaluator's `--legacy_full_action_noise` flag is
+therefore a compatibility no-op for SmolVLA and π0.5.
 
 ## Metric terminology and limitations
 

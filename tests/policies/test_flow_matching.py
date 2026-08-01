@@ -23,15 +23,21 @@ from lerobot.policies.flow_matching import (
     get_active_action_dim,
     integrate_flow_matching,
     mask_padded_action_dims,
+    reduce_flow_matching_loss,
 )
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 
-@pytest.mark.parametrize("config_class", [SmolVLAConfig, PI0Config, PI05Config])
-def test_flow_policy_configs_mask_padded_action_dims_by_default(config_class):
+@pytest.mark.parametrize("config_class", [SmolVLAConfig, PI05Config])
+def test_openpi_flow_policy_configs_do_not_mask_padded_action_dims(config_class):
     field = config_class.__dataclass_fields__["mask_padded_action_dims_at_inference"]
+    assert field.default is False
+
+
+def test_pi0_keeps_legacy_masked_inference_default():
+    field = PI0Config.__dataclass_fields__["mask_padded_action_dims_at_inference"]
     assert field.default is True
 
 
@@ -41,6 +47,46 @@ def test_get_active_action_dim_uses_action_feature():
         max_action_dim=32,
     )
     assert get_active_action_dim(config) == 10
+
+
+def test_full_width_loss_includes_padded_coordinates_and_masks_only_timesteps():
+    losses = torch.zeros(2, 3, 4)
+    losses[0, 0] = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    losses[0, 1] = torch.tensor([5.0, 6.0, 7.0, 8.0])
+    losses[0, 2] = 1000.0
+    losses[1, 0] = torch.tensor([9.0, 10.0, 11.0, 12.0])
+    losses[1, 1:] = 1000.0
+    action_is_pad = torch.tensor([[False, False, True], [False, True, True]])
+
+    loss, loss_per_dim = reduce_flow_matching_loss(losses, action_is_pad)
+    per_sample_loss, per_sample_dims = reduce_flow_matching_loss(losses, action_is_pad, reduction="none")
+
+    torch.testing.assert_close(loss, torch.tensor(6.5))
+    torch.testing.assert_close(loss_per_dim, torch.tensor([5.0, 6.0, 7.0, 8.0]))
+    torch.testing.assert_close(per_sample_loss, torch.tensor([4.5, 10.5]))
+    torch.testing.assert_close(per_sample_dims, loss_per_dim)
+
+
+def test_full_width_loss_without_temporal_padding():
+    losses = torch.arange(1, 17, dtype=torch.float32).reshape(2, 2, 4)
+
+    loss, loss_per_dim = reduce_flow_matching_loss(losses)
+
+    torch.testing.assert_close(loss, losses.mean())
+    torch.testing.assert_close(loss_per_dim, losses.mean(dim=(0, 1)))
+
+
+@pytest.mark.parametrize(
+    ("losses", "action_is_pad", "reduction"),
+    [
+        (torch.zeros(2, 3), None, "mean"),
+        (torch.zeros(2, 3, 4), torch.zeros(2, 2, dtype=torch.bool), "mean"),
+        (torch.zeros(2, 3, 4), None, "sum"),
+    ],
+)
+def test_full_width_loss_validates_inputs(losses, action_is_pad, reduction):
+    with pytest.raises(ValueError):
+        reduce_flow_matching_loss(losses, action_is_pad, reduction)
 
 
 def test_mask_padded_action_dims_is_out_of_place():
@@ -87,7 +133,7 @@ def test_masked_flow_is_invariant_to_padded_input_noise():
     )
 
 
-def test_legacy_flow_preserves_full_width_euler_integration():
+def test_openpi_flow_preserves_full_width_euler_integration():
     noise = torch.randn(2, 4, 8)
 
     def denoiser(x_t, time):

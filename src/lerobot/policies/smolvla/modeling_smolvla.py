@@ -60,7 +60,11 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.policies.flow_matching import get_active_action_dim, integrate_flow_matching
+from lerobot.policies.flow_matching import (
+    get_active_action_dim,
+    integrate_flow_matching,
+    reduce_flow_matching_loss,
+)
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.device_utils import get_safe_dtype
 from lerobot.utils.import_utils import require_package
@@ -379,39 +383,22 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
-        loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        original_action_dim = self.config.action_feature.shape[0]
-        losses = losses[:, :, :original_action_dim]
-        loss_dict["losses_after_forward"] = losses.clone().mean().item()
+        loss, loss_per_dim = reduce_flow_matching_loss(losses, actions_is_pad, reduction)
 
-        if actions_is_pad is not None:
-            in_episode_bound = ~actions_is_pad
-            losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
-
-        # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone().mean().item()
-
-        if reduction == "none":
-            # Return per-sample losses (B,) by averaging over valid (time, action) entries
-            if actions_is_pad is None:
-                per_sample_loss = losses.mean(dim=(1, 2))
-            else:
-                num_valid = ((~actions_is_pad).sum(dim=1) * losses.shape[-1]).clamp_min(1)
-                per_sample_loss = losses.sum(dim=(1, 2)) / num_valid
-            loss_dict["loss"] = per_sample_loss.mean().item()
-            return per_sample_loss, loss_dict
-        else:
-            # Default: return scalar mean loss over valid (time, action) entries
-            if actions_is_pad is None:
-                loss = losses.mean()
-            else:
-                num_valid = ((~actions_is_pad).sum() * losses.shape[-1]).clamp_min(1)
-                loss = losses.sum() / num_valid
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+        active_action_dim = get_active_action_dim(self.config)
+        padded_loss = (
+            loss_per_dim[active_action_dim:].mean()
+            if active_action_dim < losses.shape[-1]
+            else loss_per_dim.new_zeros(())
+        )
+        loss_dict = {
+            "loss": loss.mean().item(),
+            "loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist(),
+            "flow_loss_real_dims": loss_per_dim[:active_action_dim].mean().item(),
+            "flow_loss_padded_dims": padded_loss.item(),
+        }
+        return loss, loss_dict
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
@@ -856,7 +843,7 @@ class VLAFlowMatching(nn.Module):
             self.config.num_steps,
             denoise_step_partial_call,
             active_action_dim=get_active_action_dim(self.config),
-            mask_padded_dims=self.config.mask_padded_action_dims_at_inference,
+            mask_padded_dims=False,
             rtc_processor=self.rtc_processor,
             rtc_enabled=self._rtc_enabled(),
             inference_delay=kwargs.get("inference_delay"),

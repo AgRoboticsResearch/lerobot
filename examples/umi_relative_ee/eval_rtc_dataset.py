@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--legacy_full_action_noise",
         action="store_true",
-        help="Disable padded-dimension masking for legacy flow-policy inference reproduction.",
+        help="Deprecated compatibility no-op; SmolVLA/π0.5 always use full-width OpenPI flow.",
     )
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--task", default="pick the strawberry")
@@ -131,7 +131,7 @@ def load_policy_and_processors(
         )
     if not getattr(policy_config, "use_umi_relative_ee", False):
         raise ValueError(f"{model_path} is not configured for UMI relative-EE actions")
-    policy_config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
+    policy_config.mask_padded_action_dims_at_inference = False
 
     if num_steps is not None:
         step_field = "num_inference_steps" if policy_config.type in {"pi0", "pi05"} else "num_steps"
@@ -161,7 +161,7 @@ def load_policy_and_processors(
         preprocessor_overrides={"device_processor": {"device": str(device)}},
     )
     core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
-    core_policy.config.mask_padded_action_dims_at_inference = not legacy_full_action_noise
+    core_policy.config.mask_padded_action_dims_at_inference = False
     return policy, core_policy, preprocessor, postprocessor, policy_config
 
 

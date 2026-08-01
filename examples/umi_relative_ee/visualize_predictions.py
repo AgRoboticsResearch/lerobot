@@ -446,6 +446,11 @@ def main():
         default=None,
         help="Override flow-matching inference denoising steps (SmolVLA); default uses the policy config.",
     )
+    parser.add_argument(
+        "--zero_noise",
+        action="store_true",
+        help="Zero-noise flow-matching decoding (all-zero latent) for SmolVLA/pi0.5; ignored for ACT.",
+    )
     args = parser.parse_args()
 
     if iio is None:
@@ -596,7 +601,15 @@ def main():
                     "processed shapes: %s",
                     {k: tuple(v.shape) for k, v in processed.items() if torch.is_tensor(v)},
                 )
-            pred = policy.predict_action_chunk(processed)
+            if args.zero_noise and hasattr(policy_config, "max_action_dim"):
+                # All-zero flow latent for SmolVLA/pi0.5; matches the "zero all dims" arm of the
+                # within-chunk-jitter audit. Masked-padded-dims integration is a no-op on zeros.
+                zero_noise = torch.zeros(
+                    (1, policy_config.chunk_size, policy_config.max_action_dim), device=device
+                )
+                pred = policy.predict_action_chunk(processed, noise=zero_noise)
+            else:
+                pred = policy.predict_action_chunk(processed)
 
         pred_rel = unnormalize_actions(pred, action_stats, action_norm_mode)[0].cpu().numpy()
         pred_traj = rel_actions_to_traj(pred_rel)
