@@ -1,8 +1,9 @@
-# OpenPI full-width flow matching for UMI
+# Padded-noise strategies for UMI flow matching
 
-SmolVLA and π0.5 use the same OpenPI-compatible flow-matching contract in this
-repository. This page defines that contract and explains how it affects old
-checkpoints, training, and inference.
+SmolVLA and π0.5 support two coherent padded-coordinate strategies in this
+repository: OpenPI-compatible full-width flow (Option A, the default) and
+masked-subspace flow (Option B). This page defines both strategies and explains
+how they affect old checkpoints, training, and inference.
 
 The implementation follows the flow head in the local OpenPI checkout at
 commit `03893832f2002a31016586874658662c669081ac`.
@@ -18,8 +19,9 @@ For UMI relative-EE data:
 - SmolVLA's causal action attention is unchanged;
 - π0 is unchanged.
 
-The fixed-width coordinates 10 through 31 are not robot commands. They are
-still part of the learned flow and are supervised to end at zero.
+The fixed-width coordinates 10 through 31 are not robot commands. Under the
+default Option A strategy, they remain part of the learned flow and are
+supervised to end at zero.
 
 ## Training equation
 
@@ -207,6 +209,83 @@ env HF_HUB_OFFLINE=1 /home/zfei/code/lerobot-fei-v5.0-umi-unified/.venv/bin/pyth
   --job_name=smolvla_openpi_fullwidth_1302_1M \
   --wandb.enable=true --wandb.project=lerobot
 ```
+
+## Option B: masked-subspace flow (`flow_matching_padding_mode = "masked_subspace"`)
+
+Option A (OpenPI full-width, above) is the default. Option B is the other
+coherent formulation: the flow lives entirely on the real `d`-dimensional
+action subspace, and the `D - d` padded coordinates are forced to zero
+throughout training and inference. Switch per run with a policy flag:
+
+```bash
+--policy.flow_matching_padding_mode=openpi_full_width  # Option A (default)
+--policy.flow_matching_padding_mode=masked_subspace    # Option B
+```
+
+The field lives on `SmolVLAConfig` and `PI05Config`. π0 keeps its legacy masked
+default and is unaffected.
+
+### Training equation (Option B)
+
+```python
+a_real = normalize(raw_action)          # [batch, chunk, 10]
+a = pad_with_zeros(a_real, 32)          # [batch, chunk, 32]
+epsilon = randn_like(a)
+epsilon[..., 10:] = 0                   # zero noise in padded coords 10..31
+t = Beta(1.5, 1.0) * 0.999 + 0.001
+x_t = t * epsilon + (1.0 - t) * a       # padded x_t stays 0
+u_t = epsilon - a                        # padded target velocity 0
+v_t = model(observation, x_t, t)
+loss_elementwise = (v_t - u_t).square()
+loss = mean over real dims 0..9 only     # padded coordinates excluded
+```
+
+Only the real coordinates are optimized. Because padded noise, state, and
+target are all zero, padded coordinates never move. Implemented as
+`mask_padded_action_dims(noise, active_action_dim, enabled=True)` at the
+training noise sample site, and `reduce_flow_matching_loss(...,
+active_action_dim=d)` for the loss.
+
+### Inference equation (Option B)
+
+The masked integration that was the pre-Option-A default:
+`integrate_flow_matching(..., mask_padded_dims=True)` zeros padded coordinates
+in the initial latent, masks the denoiser and RTC velocity, and clamps the
+Euler state after every step.
+
+```python
+x_t = randn(batch, chunk, 32)
+x_t[..., 10:] = 0        # masked at init
+for step in range(num_steps):
+    v_t = model.denoise_step(observation, x_t, t)
+    v_t[..., 10:] = 0    # masked velocity
+    x_t = x_t + dt * v_t
+    x_t[..., 10:] = 0    # clamped each step
+robot_actions = x_t[..., :10]
+```
+
+### When to use which
+
+- **Option A (default)** matches OpenPI/π checkpoints exactly: the model spends
+  capacity learning to transport padded noise to zero, and stochastic sampling
+  is the intended decode. Use unless you have a reason not to.
+- **Option B** never spends capacity on padding and keeps the learned flow on
+  the real action manifold — the cheaper targeted design for a fixed real action
+  width. Compare empirically against A on the same data/seed.
+
+Both are mathematically coherent. For SmolVLA and π0.5, the previous mixed
+formulation (full-width noise + real-dim-only loss) no longer exists. π0 retains
+its legacy behavior and is outside this switch. Existing mixed-formulation
+SmolVLA and π0.5 checkpoints load under either mode but were not trained
+coherently — retrain.
+
+### 1M run (Option B) — SmolVLA on kiwi
+
+Launcher [`run_smolvla_masked_subspace_1m_kiwi.sh`](./run_smolvla_masked_subspace_1m_kiwi.sh),
+identical to the Option A kiwi launcher except
+`--policy.flow_matching_padding_mode=masked_subspace`; output
+`outputs/train/smolvla_masked_subspace_1302_1M`, repo
+`zfff/smolvla_masked_subspace_1302_1M`.
 
 ## What this does not do
 

@@ -63,6 +63,7 @@ from torch import Tensor, nn
 from lerobot.policies.flow_matching import (
     get_active_action_dim,
     integrate_flow_matching,
+    mask_padded_action_dims,
     reduce_flow_matching_loss,
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
@@ -384,12 +385,18 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        loss, loss_per_dim = reduce_flow_matching_loss(losses, actions_is_pad, reduction)
-
         active_action_dim = get_active_action_dim(self.config)
+        masked_subspace = self.config.flow_matching_padding_mode == "masked_subspace"
+        loss, loss_per_dim = reduce_flow_matching_loss(
+            losses,
+            actions_is_pad,
+            reduction,
+            active_action_dim=active_action_dim if masked_subspace else None,
+        )
+
         padded_loss = (
             loss_per_dim[active_action_dim:].mean()
-            if active_action_dim < losses.shape[-1]
+            if (not masked_subspace and active_action_dim < losses.shape[-1])
             else loss_per_dim.new_zeros(())
         )
         loss_dict = {
@@ -765,6 +772,9 @@ class VLAFlowMatching(nn.Module):
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
+        if self.config.flow_matching_padding_mode == "masked_subspace":
+            # Option B: keep the flow on the real action subspace; padded noise is zero.
+            noise = mask_padded_action_dims(noise, get_active_action_dim(self.config), enabled=True)
 
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
@@ -843,7 +853,7 @@ class VLAFlowMatching(nn.Module):
             self.config.num_steps,
             denoise_step_partial_call,
             active_action_dim=get_active_action_dim(self.config),
-            mask_padded_dims=False,
+            mask_padded_dims=self.config.flow_matching_padding_mode == "masked_subspace",
             rtc_processor=self.rtc_processor,
             rtc_enabled=self._rtc_enabled(),
             inference_delay=kwargs.get("inference_delay"),

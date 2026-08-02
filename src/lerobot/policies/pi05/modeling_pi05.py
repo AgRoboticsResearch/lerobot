@@ -51,6 +51,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.policies.flow_matching import (
     get_active_action_dim,
     integrate_flow_matching,
+    mask_padded_action_dims,
     reduce_flow_matching_loss,
 )
 from lerobot.utils.constants import (
@@ -848,7 +849,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             num_steps,
             denoise_step_partial_call,
             active_action_dim=get_active_action_dim(self.config),
-            mask_padded_dims=False,
+            mask_padded_dims=self.config.flow_matching_padding_mode == "masked_subspace",
             rtc_processor=self.rtc_processor,
             rtc_enabled=self._rtc_enabled(),
             inference_delay=kwargs.get("inference_delay"),
@@ -1255,19 +1256,29 @@ class PI05Policy(PreTrainedPolicy):
 
         actions = self.prepare_action(batch)
 
+        active_action_dim = get_active_action_dim(self.config)
+        masked_subspace = self.config.flow_matching_padding_mode == "masked_subspace"
+
         noise = self.model.sample_noise(actions.shape, actions.device)
+        if masked_subspace:
+            # Option B: keep the flow on the real action subspace; padded noise is zero.
+            noise = mask_padded_action_dims(noise, active_action_dim, enabled=True)
         time = self.model.sample_time(actions.shape[0], actions.device)
 
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
 
         action_is_pad = batch.get("action_is_pad")
-        loss, loss_per_dim = reduce_flow_matching_loss(losses, action_is_pad, reduction)
+        loss, loss_per_dim = reduce_flow_matching_loss(
+            losses,
+            action_is_pad,
+            reduction,
+            active_action_dim=active_action_dim if masked_subspace else None,
+        )
 
-        active_action_dim = get_active_action_dim(self.config)
         padded_loss = (
             loss_per_dim[active_action_dim:].mean()
-            if active_action_dim < losses.shape[-1]
+            if (not masked_subspace and active_action_dim < losses.shape[-1])
             else loss_per_dim.new_zeros(())
         )
         loss_dict = {

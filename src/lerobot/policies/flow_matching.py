@@ -27,6 +27,7 @@ def reduce_flow_matching_loss(
     losses: Tensor,
     action_is_pad: Tensor | None = None,
     reduction: str = "mean",
+    active_action_dim: int | None = None,
 ) -> tuple[Tensor, Tensor]:
     """Reduce a full-width OpenPI flow-matching loss.
 
@@ -40,11 +41,17 @@ def reduce_flow_matching_loss(
 
     Returns the requested scalar/per-sample reduction and a per-dimension mean
     over valid timesteps for logging.
+
+    When ``active_action_dim`` is given and smaller than the last dimension, the
+    loss is restricted to the real action coordinates (masked-subspace flow):
+    padded coordinates are excluded from both the loss and the per-dim log.
     """
     if losses.ndim != 3:
         raise ValueError(f"losses must have shape (batch, time, action_dim), got {tuple(losses.shape)}.")
     if reduction not in {"mean", "none"}:
         raise ValueError(f"reduction must be 'mean' or 'none', got {reduction!r}.")
+    if active_action_dim is not None and active_action_dim < losses.shape[-1]:
+        losses = losses[..., :active_action_dim]
 
     if action_is_pad is None:
         loss_per_dim = losses.mean(dim=(0, 1))

@@ -39,9 +39,16 @@ class PI05Config(PreTrainedConfig):
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
     max_action_dim: int = 32
-    # Deprecated compatibility field; saved True values load but are ignored.
-    # π0.5 always uses OpenPI full-width flow.
+    # Deprecated compatibility field; saved values load but are ignored.
+    # Use flow_matching_padding_mode to select the padded-coordinate strategy.
     mask_padded_action_dims_at_inference: bool = False
+
+    # How fixed-width padded action coordinates are handled by flow matching.
+    # "openpi_full_width" (Option A, default): full-width Gaussian noise and a
+    # loss over all max_action_dim coordinates (padded target is zero).
+    # "masked_subspace" (Option B): noise, velocity, and loss are restricted to
+    # the real action dims; padded coordinates are held at zero in train + infer.
+    flow_matching_padding_mode: str = "openpi_full_width"
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10
@@ -137,6 +144,12 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.flow_matching_padding_mode not in {"openpi_full_width", "masked_subspace"}:
+            raise ValueError(
+                "flow_matching_padding_mode must be openpi_full_width or masked_subspace, "
+                f"got {self.flow_matching_padding_mode!r}."
+            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

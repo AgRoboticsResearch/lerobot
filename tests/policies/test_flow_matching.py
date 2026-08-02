@@ -41,6 +41,24 @@ def test_pi0_keeps_legacy_masked_inference_default():
     assert field.default is True
 
 
+@pytest.mark.parametrize("config_class", [SmolVLAConfig, PI05Config])
+def test_flow_matching_padding_mode_defaults_to_openpi_full_width(config_class):
+    field = config_class.__dataclass_fields__["flow_matching_padding_mode"]
+    assert field.default == "openpi_full_width"
+
+
+@pytest.mark.parametrize("config_class", [SmolVLAConfig, PI05Config])
+def test_flow_matching_padding_mode_accepts_masked_subspace(config_class):
+    config = config_class(flow_matching_padding_mode="masked_subspace")
+    assert config.flow_matching_padding_mode == "masked_subspace"
+
+
+@pytest.mark.parametrize("config_class", [SmolVLAConfig, PI05Config])
+def test_flow_matching_padding_mode_rejects_unknown_value(config_class):
+    with pytest.raises(ValueError, match="flow_matching_padding_mode"):
+        config_class(flow_matching_padding_mode="masked_subsapce")
+
+
 def test_get_active_action_dim_uses_action_feature():
     config = SimpleNamespace(
         action_feature=SimpleNamespace(shape=(10,)),
@@ -74,6 +92,29 @@ def test_full_width_loss_without_temporal_padding():
 
     torch.testing.assert_close(loss, losses.mean())
     torch.testing.assert_close(loss_per_dim, losses.mean(dim=(0, 1)))
+
+
+def test_masked_subspace_loss_restricts_to_real_action_dims():
+    # Same construction as test_full_width_loss_includes_padded_coordinates_and_masks_only_timesteps
+    losses = torch.zeros(2, 3, 4)
+    losses[0, 0] = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    losses[0, 1] = torch.tensor([5.0, 6.0, 7.0, 8.0])
+    losses[0, 2] = 1000.0
+    losses[1, 0] = torch.tensor([9.0, 10.0, 11.0, 12.0])
+    losses[1, 1:] = 1000.0
+    action_is_pad = torch.tensor([[False, False, True], [False, True, True]])
+
+    # Option B: only the first 2 (real) coordinates participate; the 1000 padded
+    # entries are excluded because they live in padded coordinates/timesteps.
+    loss, loss_per_dim = reduce_flow_matching_loss(losses, action_is_pad, active_action_dim=2)
+    per_sample_loss, _ = reduce_flow_matching_loss(
+        losses, action_is_pad, reduction="none", active_action_dim=2
+    )
+
+    torch.testing.assert_close(loss, torch.tensor(5.5))
+    torch.testing.assert_close(per_sample_loss, torch.tensor([3.5, 9.5]))
+    torch.testing.assert_close(loss_per_dim, torch.tensor([5.0, 6.0]))
+    assert loss_per_dim.shape[0] == 2
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # OpenPI full-width 100K experiment log
 
-Baseline per [`OPENPI_FULL_WIDTH_FLOW_MATCHING.md`](./OPENPI_FULL_WIDTH_FLOW_MATCHING.md):
+Baseline per [`padded_noise_strategy.md`](./padded_noise_strategy.md):
 SmolVLA and pi0.5 train with full-width (32-D) flow loss and full-width
 inference (`mask_padded_action_dims_at_inference=false`). ACT unchanged.
 All three train on `sroiv2_strawberry_picking_lab_1302_occlusion` (121,262

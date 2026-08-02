@@ -5,7 +5,7 @@
 >
 > **Superseded runtime:** the masked-inference experiment documented below is
 > historical. SmolVLA and π0.5 now follow the full-width OpenPI contract in
-> [`OPENPI_FULL_WIDTH_FLOW_MATCHING.md`](./OPENPI_FULL_WIDTH_FLOW_MATCHING.md).
+> [`padded_noise_strategy.md`](./padded_noise_strategy.md).
 
 ## TL;DR
 
