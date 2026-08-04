@@ -1,6 +1,7 @@
 ---
 created: 2026-07-27
-workspace: /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+updated: 2026-08-04
+workspace: /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 branch: fei-v5.0-umi-unified
 status: training guide
 tags:
@@ -16,7 +17,7 @@ tags:
 This guide describes the π0.5 LoRA training path implemented in:
 
 ```text
-/home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 ```
 
 It is specific to the unified branch and the strawberry-picking datasets. It
@@ -24,7 +25,11 @@ explains the raw data contract, temporal query, SE(3) target, normalization,
 flow-matching loss, PEFT LoRA setup, validation, checkpoint loading, and
 visualization.
 
-The main recommendation is:
+This is now the authoritative combined guide. It incorporates the completed
+broad-LoRA run, the OpenPI comparison, and the validation-loss versus physical
+prediction investigation that were previously split across two other notes.
+
+The demonstrated configuration is:
 
 ```text
 Raw dataset       absolute 7D axis-angle EE poses
@@ -33,8 +38,15 @@ State             derived 20D two-pose relative state
 Chunk             30 actions
 Normalization     q01/q99 quantiles
 Model             LeRobot PI05Policy initialized from lerobot/pi05_base
-Fine-tuning       PyTorch PEFT LoRA, rank 16
+Fine-tuning       broad PyTorch PEFT LoRA, rank 16/alpha 16
+Targets           VLM + expert q/k/v/o and FFN
+Full modules      action input/output and time MLP input/output
+Padding flow      masked_subspace
 ```
+
+The recommended next capacity experiment changes only the expert LoRA to
+rank/alpha 32/32 while retaining VLM 16/16. This matches OpenPI's split LoRA
+definition more closely; details are in section 12.2.
 
 ## 1. Which implementation this guide uses
 
@@ -72,7 +84,7 @@ the wrong branch.
 Start commands from the unified workspace:
 
 ```bash
-cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 export PYTHONPATH="$PWD/src"
 ```
 
@@ -119,11 +131,11 @@ rejects UMI data that is not 7D.
 
 ### Dataset used for the current experiment
 
-Training:
+Training used by the completed broad run:
 
 ```text
-repo_id: sroi/sroiv2_strawberry_picking_lab_1000onesb_1125
-root:    /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb_1125
+repo_id: sroi/sroiv2_strawberry_picking_lab_1302_occlusion
+root:    /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1302_occlusion
 ```
 
 Validation:
@@ -134,7 +146,8 @@ root:    /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation
 ```
 
 The validation dataset contains 100 episodes and is kept separate from the
-training dataset.
+training dataset. The older 1125-episode commands are retained in section 13.3
+as a legacy launcher example.
 
 ## 4. Temporal query and target alignment
 
@@ -370,17 +383,17 @@ Before the flow model:
 [batch, 30, 10] -> zero-pad -> [batch, 30, 32]
 ```
 
-The action input/output projections retain the 32D pretrained model shape.
+The action input/output projections retain the 32D pretrained model shape. The
+loss and sampling domain depend on `flow_matching_padding_mode`:
 
-The policy loss then slices the loss tensor back to the actual configured
-physical action dimension:
+| Mode | Training noise and loss | Inference |
+| --- | --- | --- |
+| `openpi_full_width` | 32-D Gaussian noise; mean loss over all 32 coordinates | integrate all 32, then slice to 10 |
+| `masked_subspace` | padded noise is zero; loss only over the first 10 coordinates | keep padded flow state/velocity zero, then slice to 10 |
 
-```text
-[batch, 30, 32] -> first 10 loss dimensions
-```
-
-This unified implementation therefore does not average the reported training
-loss over the 22 padded action dimensions.
+The default remains OpenPI full width for pretrained compatibility. The
+completed broad-LoRA UMI run explicitly used `masked_subspace` to concentrate
+adaptation on the physical 10-D action space.
 
 At inference, generated actions are likewise sliced back to the physical output
 dimension before unnormalization.
@@ -416,15 +429,15 @@ The per-dimension objective is:
 (v_theta - u_t)^2
 ```
 
-The unified policy:
+The policy masks invalid episode-boundary timesteps with `action_is_pad` and
+logs `flow_loss_real_dims` and `flow_loss_padded_dims`. In full-width mode the
+scalar averages 10 real and 22 padded coordinates; in masked-subspace mode it
+averages only the 10 real coordinates.
 
-- Keeps only the 10 physical action dimensions in the loss.
-- Masks padded action timesteps using `action_is_pad`.
-- Averages over valid timesteps and physical dimensions.
-- Logs `loss_per_dim` for the 10 physical action dimensions.
-
-There is no built-in translation-versus-rotation weighting. Normalization is
-what puts those dimensions onto comparable scales.
+There is no built-in translation-versus-rotation weighting or smoothness term.
+Normalization puts dimensions onto broadly comparable scales, but this remains
+normalized velocity-field MSE—not millimetres, SO(3) degrees, endpoint error,
+or task success. Section 22 gives the measured consequences.
 
 ## 11. Quantile normalization
 
@@ -521,12 +534,21 @@ baseline.
 
 ## 12. LoRA implementation in this workspace
 
-LoRA is applied through LeRobot's PyTorch PEFT integration:
+LoRA is applied through LeRobot's PyTorch PEFT integration. The old local
+default was narrow and trained only about 1.29M parameters. It targeted action
+expert q/v and action projections, and formerly named nonexistent
+`action_time_mlp_in/out` modules. The default naming bug has been corrected to
+`time_mlp_in/out`, but the default is still intentionally a low-memory narrow
+adapter.
+
+The completed broad run overrides the default:
 
 ```bash
 --peft.method_type=LORA
 --peft.r=16
 --peft.lora_alpha=16
+--peft.target_modules='.*\.(paligemma|gemma_expert)\..*\.(self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj))'
+--peft.full_training_modules='["action_in_proj", "action_out_proj", "time_mlp_in", "time_mlp_out"]'
 ```
 
 With rank 16 and alpha 16:
@@ -535,12 +557,9 @@ With rank 16 and alpha 16:
 LoRA scaling = alpha / rank = 1
 ```
 
-The π0.5 policy supplies a default target-module regular expression covering:
-
-- `q_proj` and `v_proj` self-attention projections in the Gemma action expert.
-- Action input projection.
-- Action output projection.
-- Other named action/state projection modules when present and matched.
+This adapts q/k/v/o and gate/up/down in both the PaliGemma language model and
+Gemma action expert. The four action/time projections are fully trained and
+saved with the adapter. The resulting run trained 31,693,856 parameters.
 
 The base policy is initialized from:
 
@@ -559,13 +578,13 @@ mix two materially different implementations:
 
 - OpenPI's JAX LoRA inserts adapters into attention and feed-forward layers in
   both the PaliGemma VLM and the Gemma action expert.
-- LeRobot PEFT, as configured by this workspace, adapts only action-expert
-  `q_proj`/`v_proj` attention projections and the named action/state
-  projections listed above.
+- This workspace's **default** LeRobot PEFT target remains the narrow
+  action-expert q/v pattern; the demonstrated launcher overrides it with the
+  broad OpenPI-like attention+FFN scope.
 
-Consequently, an OpenPI `rank=16/32` run is much broader than this workspace's
-single-rank adapter, and its memory use and capacity are not directly
-comparable.
+Consequently, the completed local broad run is comparable in module scope to
+OpenPI, but not in rank: it uses one global rank 16 rather than VLM 16 / expert
+32.
 
 Publicly documented configurations include:
 
@@ -575,7 +594,7 @@ Publicly documented configurations include:
 | [OpenPI community π0.5 LoRA config](https://github.com/Physical-Intelligence/openpi/issues/672) | VLM attention/FFN plus expert attention/FFN | VLM 16, expert 32 | 32 | peak `5e-5`, warmup 10k | 30k |
 | [Real Franka jar task](https://huggingface.co/IDEAS-Lab-Northwestern/pi05-real-jar-60-droid-refined-lora) | OpenPI dual adapter, 60 demonstrations | VLM 16, expert 32 | 4 | Not reported | 20k |
 | [Simulated multitask picking](https://huggingface.co/IDEAS-Lab-Northwestern/pi05-sim-pnp-multitask-3cam-libero-lora) | OpenPI dual adapter | VLM 16, expert 32 | 4 | `2.5e-5` to `2.5e-6`, warmup 1k | 50k + 30k |
-| [LeRobot SO-101 sock task](https://huggingface.co/RyuRobot/pi05_sock_in_bowl_lora_July_10_2026) | Same target-module pattern as this workspace | 32 | 32 | `2.5e-4` to `2.5e-5`, warmup 1k | 15k |
+| [LeRobot SO-101 sock task](https://huggingface.co/RyuRobot/pi05_sock_in_bowl_lora_July_10_2026) | Narrow LeRobot default-style target pattern | 32 | 32 | `2.5e-4` to `2.5e-5`, warmup 1k | 15k |
 | [Public LeRobot rank-16 run](https://huggingface.co/Tna001/pi05_lora_r16_lr3e4/blob/main/train_config.json) | LeRobot PEFT | 16 | 16 | `3e-4` to `2.5e-6`, warmup 500 | 20k |
 
 Additional official reference points:
@@ -585,9 +604,9 @@ Additional official reference points:
 - The [LeRobot LIBERO reproduction](https://huggingface.co/docs/lerobot/libero)
   starts from `pi05_libero` and trains for another 6k steps with global batch
   256 on eight H100 GPUs.
-- OpenPI estimates more than 22.5 GB for its broader JAX LoRA recipe and more
+- OpenPI estimates more than 22.5 GB for its JAX LoRA recipe and more
   than 70 GB for full fine-tuning. These estimates do not apply directly to
-  this workspace's narrower adapter; see the
+  this workspace's PyTorch PEFT implementation; see the
   [OpenPI README](https://github.com/Physical-Intelligence/openpi).
 
 The public native-LeRobot rank-32 adapter is particularly useful for
@@ -604,60 +623,66 @@ Hugging Face Discord history is login-gated and was not publicly indexed when
 this comparison was prepared. Do not cite an alleged Discord consensus without
 a stable public message or an independently reproducible configuration.
 
-### 12.2 Interpretation for the UMI strawberry task
+### 12.2 Recommended higher-capacity UMI configuration
 
-The baseline in this guide uses:
+OpenPI defines [`gemma_2b_lora`](https://github.com/Physical-Intelligence/openpi/blob/main/src/openpi/models/gemma.py)
+with attention and FFN rank/alpha 16/16, and `gemma_300m_lora` with attention
+and FFN rank/alpha 32/32. The completed local
+run matched the official module scope but used one global rank 16, including in
+the action expert. The clearest next capacity step is therefore:
+
+| Component | Rank | Alpha | Targets |
+| --- | ---: | ---: | --- |
+| PaliGemma/VLM language layers | 16 | 16 | q/k/v/o + gate/up/down |
+| Gemma action expert | 32 | 32 | q/k/v/o + gate/up/down |
+| Action/time projections | full | N/A | `action_in_proj`, `action_out_proj`, `time_mlp_in`, `time_mlp_out` |
+| Vision encoder | frozen initially | N/A | none |
+
+Recommended training parameters on this 24 GB RTX 4090:
 
 ```text
-rank = 16
-alpha = 16
-LoRA scale = 1
-trainable parameters ~= 1.29M
-peak learning rate = 1e-4
+base                         lerobot/pi05_base
+padding flow                 masked_subspace
+chunk / execution horizon    30 / 30
+batch size                   4; fall back to 2 only after a real memory test
+optimizer                    AdamW, betas 0.9/0.95, eps 1e-8
+peak / final LR              5e-5 / 5e-6
+weight decay                 0.01
+gradient clipping            1.0
+warmup                       1,000 steps at batch 4
+schedule                     cosine decay
+total steps                  100,000 maximum
+checkpoint / physical audit  every 12,500 steps
+dtype                        bfloat16
+gradient checkpointing       true
+compile                      false for the first verified run
+seed                         1000
 ```
 
-These values are inside the range of public LeRobot experiments:
+At batch 4, 75K steps processes 300K samples (about 2.47 dataset passes) and
+100K processes 400K samples (about 3.30 passes). Do not assume the final step is
+best: run the full 100-episode decoded audit at every checkpoint. The current
+evidence favors continuing through at least 75K; 100K is an evaluation ceiling,
+not an instruction to deploy the last checkpoint.
 
-- Rank 16 and rank 32 are both in active use.
-- Batch 4 is normal for single-GPU LoRA and does not imply that batching is
-  broken merely because VRAM changes little.
-- Public peak learning rates range from roughly `2.5e-5` to `3e-4`; `1e-4` is
-  not an obvious outlier.
-- Published runs commonly use 15k-80k steps. The 500k-step command in this
-  workspace is unusually long and must be justified by dataset size,
-  effective epochs, validation, and physical evaluation rather than copied as
-  a universal default.
-
-Use a controlled capacity ablation before broadening the adapter:
+The local `PeftConfig` now exposes PEFT `rank_pattern` and `alpha_pattern`, so
+the split can be expressed directly. The global 16/16 values apply to all broad
+targets, while the expert pattern overrides matched Gemma expert modules:
 
 ```bash
---peft.r=32 \
---peft.lora_alpha=32
+--peft.r=16
+--peft.lora_alpha=16
+--peft.rank_pattern="{'.*\\.gemma_expert\\..*': 32}"
+--peft.alpha_pattern="{'.*\\.gemma_expert\\..*': 32}"
 ```
 
-Keeping `alpha / rank = 1` isolates the effect of doubling adapter rank. Keep
-the seed, batch size, dataset, optimizer, and validation schedule fixed, and
-start from `lerobot/pi05_base` in a new output directory. Compare checkpoints
-at 10k, 25k, 50k, and 100k before extending the run. If batch size changes,
-compare examples or effective epochs rather than raw step counts.
+This is preferable to global 32/32 because it increases action-expert capacity
+without unnecessarily doubling the VLM adapter rank.
 
-Interpret the ablation as follows:
-
-- Better training and validation performance suggests rank 16 was limiting
-  capacity.
-- Better training loss without better validation or robot success indicates
-  overfitting, not a need for still higher rank.
-- No meaningful improvement suggests that rank is not the bottleneck. Check
-  normalization, UMI transforms, data diversity, camera/domain shift, and
-  gripper timing next.
-- If failures are primarily visual or semantic, raising the rank of the same
-  action-side targets cannot adapt the frozen vision/VLM representation.
-  Broader expert FFN or selected VLM targets are then a more meaningful
-  experiment than immediately trying rank 64.
-
-Always select the final checkpoint using held-out validation visualization and
-closed-loop picking success. Training loss alone is insufficient for comparing
-LoRA capacity.
+Do not unfreeze the full vision encoder as the first next step. If the split-rank
+run still fails mainly on unseen lighting, occlusion, or strawberry appearance,
+then test low-rank adaptation of the last vision blocks or unfreeze only the
+last one or two blocks. Full-model fine-tuning is not a practical 24 GB recipe.
 
 ### 12.3 Checkpoint contents
 
@@ -674,13 +699,43 @@ A PEFT checkpoint stores:
 Do not copy only the adapter weights. The saved processors and their UMI
 statistics are part of the trained policy contract.
 
-## 13. Recommended 1125-episode training command
+## 13. Training commands
+
+### 13.1 Demonstrated broad-LoRA 1302 run
+
+The completed run used the current 1302 occlusion dataset and batch 4:
+
+```bash
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
+setsid nohup bash examples/umi_relative_ee/run_pi05_broad_lora_umi.sh 4 \
+  > examples/umi_relative_ee/logs/pi05_broad_lora_masked_bs4.log 2>&1 < /dev/null &
+```
+
+The launcher explicitly sets broad targets, masked-subspace flow, batch-scaled
+steps, validation, and checkpoint frequencies. Batch 4 runs 75K steps; batch 2
+runs 150K so both process 300K samples. Do not run both simultaneously.
+
+### 13.2 Higher-capacity split-rank run
+
+The OpenPI-style launcher uses PaliGemma rank/alpha 16/16 and Gemma expert
+32/32:
+
+```bash
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
+bash examples/umi_relative_ee/run_pi05_openpi_split_lora_umi.sh 4
+```
+
+Batch 4 runs 100K steps and saves every 12.5K. Batch 2 is only the memory
+fallback; it runs 200K steps so both settings process 400K samples. The live
+experiment and output paths are recorded in section 24.
+
+### 13.3 Legacy 1125-episode narrow launcher
 
 The shell launcher defaults to the older dataset name, so override it for the
 1125-episode experiment:
 
 ```bash
-cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 export PYTHONPATH="$PWD/src"
 
 DATASET_REPO_ID=sroi/sroiv2_strawberry_picking_lab_1000onesb_1125 \
@@ -718,7 +773,7 @@ The 24 GB starting configuration is batch size 2. If it runs out of memory,
 reduce to batch size 1. The current trainer does not expose gradient
 accumulation.
 
-## 14. Validation semantics
+## 14. Validation semantics and checkpoint selection
 
 The launcher provides:
 
@@ -738,10 +793,17 @@ At a validation event, the trainer:
 6. Restores training mode.
 7. Resets processor state again.
 
-Validation uses the same flow-matching loss implementation as training, with
-fresh sampled noise and flow time. It is comparable across the same code and
-settings, but it is not an ACT L1 loss and should not be numerically compared
-directly with ACT's validation loss.
+Validation uses the same flow-matching loss implementation as training. It
+resets the RNG to seed 0 for deterministic evaluation. Raw loss is comparable
+only within the same padding objective. In full-width mode, 22 easy padded
+coordinates dilute the scalar; use `flow_loss_real_dims` for a cautious
+cross-mode diagnostic.
+
+Flow loss is not sufficient for checkpoint selection even within one mode. It
+scores normalized velocity MSE across all chunk timesteps, whereas deployment
+integrates the field and cares about physical XYZ, SO(3), gripper, and
+smoothness. Run `eval_open_loop_dataset.py` on the full validation set at every
+saved checkpoint. Section 22 records the observed disagreement.
 
 The full 100-episode validation set has 9,274 raw frames and is expensive for
 π0.5. For a smoke test, use a small explicit episode subset. Use the full set
@@ -749,7 +811,7 @@ for checkpoint selection.
 
 ## 15. Required smoke tests
 
-Before starting 50,000 steps, verify the following.
+Before starting a long run, verify the following.
 
 ### 15.1 Import location
 
@@ -820,7 +882,7 @@ Run 10–100 steps and confirm:
 Resume from the saved training configuration:
 
 ```bash
-cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 export PYTHONPATH="$PWD/src"
 
 /home/zfei/anaconda3/envs/py312/bin/python \
@@ -847,7 +909,7 @@ directory.
 Use the unified visualizer and explicitly pin the unified source:
 
 ```bash
-cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 export PYTHONPATH="$PWD/src"
 
 /home/zfei/anaconda3/envs/py312/bin/python \
@@ -926,15 +988,544 @@ the same chunk-start base. Do not accumulate predicted relative transforms.
 5. Run a 10–100-step LoRA smoke test.
 6. Save, reload, and visualize the smoke-test checkpoint.
 7. Run a few thousand steps and compare predictions with ACT.
-8. Continue to 50,000 steps only if validation and visualization improve.
-9. Select checkpoints using full validation plus physical-space visualization,
-   not training loss alone.
+8. Continue based on decoded all-episode metrics, not raw flow loss alone.
+9. Compare pose chunk mean, endpoint, gripper, and within-chunk acceleration.
+10. Confirm the selected checkpoints in closed-loop robot trials.
 
-## 21. Related unified documentation
+## 21. Completed broad-LoRA run
+
+The previous narrow full-width run trained 1,287,168 parameters and was stopped
+after its 400K checkpoint was preserved. Its default target covered mainly
+action-expert q/v and action projections; the then-broken time-MLP target names
+matched no modules.
+
+The replacement configuration was:
+
+| Setting | Broad run |
+| --- | --- |
+| Dataset | `sroiv2_strawberry_picking_lab_1302_occlusion` |
+| Base | `lerobot/pi05_base` |
+| Real/model action width | 10 / 32 |
+| Padding flow | `masked_subspace` |
+| LoRA scope | q/k/v/o and gate/up/down in VLM language layers and action expert |
+| Fully trained modules | action input/output and time MLP input/output |
+| Vision encoder | frozen |
+| Rank / alpha | global 16 / 16 |
+| Peak / final LR | `5e-5` / `5e-6` |
+| Batch / steps | 4 / 75K |
+| Learnable / total parameters | 31,693,856 / 4,175,098,672 |
+| Observed GPU memory | about 12,220 / 24,564 MiB |
+| Throughput | about 1.7-1.8 steps/s |
+
+Run artifacts:
+
+```text
+output: outputs/train/pi05_broad_lora_masked_1302_bs4
+log:    examples/umi_relative_ee/logs/pi05_broad_lora_masked_bs4.log
+W&B:    biorobotlab/lerobot/9erobpvd
+```
+
+The run completed 75K steps and 300K samples. Saved checkpoints are 12.5K,
+25K, 37.5K, 50K, 62.5K, and 75K.
+
+### Difference from the official LeRobot example
+
+The LeRobot guide's example is full-model fine-tuning: vision encoder, VLM,
+action expert, and projections are all trainable. It uses batch 32 and 3K steps
+(96K examples), compile, and gradient checkpointing. This broad-LoRA run is a
+24 GB task-adaptation recipe: frozen vision, LoRA transformer weights, full
+action/time projections, batch 4, and a UMI-specific 10-D masked flow.
+
+### Difference from official OpenPI LoRA
+
+OpenPI's checked-in LoRA model definitions apply adapters to attention and FFN
+with VLM rank/alpha 16/16 and expert 32/32. The local completed run matches the
+scope and VLM rank but uses expert 16/16. OpenPI does not currently provide one
+canonical checked-in π0.5 LoRA training preset; its explicit low-memory LoRA
+preset is for π0, while its checked-in π0.5 LIBERO preset is a full fine-tune.
+
+## 22. Why validation flow loss disagreed with prediction quality
+
+The raw validation losses of full-width and masked-subspace runs are not
+comparable. At old narrow 200K:
+
+```text
+(10 * 0.038027 real-dim loss + 22 * 0.000191 padded-dim loss) / 32
+= 0.012015 reported loss
+```
+
+Broad 25K reports `0.037607` because it averages only the 10 real dimensions.
+Thus the corrected comparison is 0.038027 versus 0.037607, not 0.012015 versus
+0.037607.
+
+| Checkpoint | Padding | Raw validation loss | Real-dim loss | Padded loss |
+| --- | --- | ---: | ---: | ---: |
+| narrow 200K | full width | **0.012015** | 0.038027 | 0.000191 |
+| broad 25K | masked | 0.037607 | **0.037607** | 0 |
+| broad 75K | masked | 0.052667 | 0.052667 | 0 |
+
+Even the real-dimension proxy disagreed with deployed behavior. Reasons:
+
+1. It measures normalized velocity at sampled flow points, not the action after
+   ten Euler integration steps.
+2. It averages raw XYZ, rot6d, and gripper coordinates rather than metres and
+   SO(3) geodesic angle.
+3. It averages all 30 timesteps and has no endpoint or smoothness term.
+4. Full-width and masked models are conditioned on different padded flow states.
+5. Grouped XYZ/rotation/gripper tradeoffs are hidden in one 10-D mean.
+6. Broad LoRA has about 25 times the trainable capacity of the old adapter.
+
+The two checkpoint processor files were diffed: transforms, normalization
+modes, and statistics are identical; only the runtime cache ID differs. The
+improvement is not caused by mismatched normalization.
+
+### Full 100-episode physical audit
+
+All 100 validation episodes were evaluated at five evenly spaced non-padded
+query frames, seed 1000, using checkpoint-saved processing. Values are
+episode-balanced and lower is better.
+
+| Metric | narrow 200K | broad 25K | broad 75K |
+| --- | ---: | ---: | ---: |
+| Rotation chunk mean | 3.077° | 2.749° | **2.516°** |
+| Rotation endpoint | 5.584° | 4.846° | **4.500°** |
+| XYZ chunk mean | 16.75 mm | 14.73 mm | **13.63 mm** |
+| XYZ endpoint | 31.20 mm | 25.02 mm | **23.47 mm** |
+| Gripper chunk mean | 0.1060 | **0.0996** | 0.1032 |
+| Gripper endpoint | 0.1717 | **0.1580** | 0.1655 |
+| Rotation acceleration proxy | 0.1013° | 0.0880° | **0.0729°** |
+| XYZ acceleration proxy | 0.563 mm | 0.476 mm | **0.382 mm** |
+
+Broad 75K improves old 200K by about 19% in rotation endpoint, 25% in XYZ
+endpoint, 28% in rotation acceleration, and 32% in XYZ acceleration. Broad 25K
+is the gripper-favoring alternative. The earlier interpretation that 75K was
+simply overfit came from flow loss and three episodes; it is not supported by
+the full physical audit.
+
+Reports:
+
+- `outputs/debug/compare_pi05_loss_vs_physical/all100_old_fullwidth_200k/pi05_lora_openpi_fullwidth_1302_1M_0200000_open_loop_metrics.json`
+- `outputs/debug/compare_pi05_loss_vs_physical/all100_broad_masked_25k/pi05_broad_lora_masked_1302_bs4_025000_open_loop_metrics.json`
+- `outputs/debug/compare_pi05_loss_vs_physical/all100_broad_masked_75k/pi05_broad_lora_masked_1302_bs4_075000_open_loop_metrics.json`
+
+For this run, test broad 75K first for pose/smoothness and broad 25K as the
+gripper-favoring alternative. Real-robot picking remains the final selector.
+
+## 23. Related unified documentation
 
 - `examples/umi_relative_ee/README.md`
 - `examples/umi_relative_ee/prediction_visualization.md`
 - `examples/umi_relative_ee/visualize_predictions_pi05.md`
 - `examples/umi_relative_ee/train_pi05_lora.sh`
+- `examples/umi_relative_ee/run_pi05_broad_lora_umi.sh`
+- `examples/umi_relative_ee/run_pi05_openpi_split_lora_umi.sh`
 - `docs/source/pi05.mdx`
 
+## 24. Active higher-capacity split-rank run
+
+Started on 2026-08-03 at 16:52 Asia/Taipei in tmux window
+`0:pi05-split`:
+
+```text
+run name       pi05_openpi_split_lora_masked_1302_bs4
+output         outputs/train/pi05_openpi_split_lora_masked_1302_bs4
+log            examples/umi_relative_ee/logs/pi05_openpi_split_lora_masked_1302_bs4.log
+W&B            https://wandb.ai/biorobotlab/lerobot/runs/pnbp5ewm
+batch / steps  4 / 100,000
+save / val     12,500 / 5,000 steps
+trainables     38,624,288
+total params   4,182,029,104
+GPU memory     12,339 / 24,564 MiB after backward
+throughput     about 1.8 steps/s at startup
+```
+
+The logged PEFT configuration contains global 16/16 and expert
+`rank_pattern`/`alpha_pattern` 32/32. Compared with the completed broad global
+rank-16 run, trainable parameters increased from 31,693,856 to 38,624,288. At
+step 50 the run reported loss 0.467 and gradient norm 2.446; at step 200 it
+reported loss 0.354 and gradient norm 1.814. There was no out-of-memory error.
+Batch 4 therefore fits with about 11.8 GiB free after a forward/backward step.
+
+The scheduled checkpoints are 12.5K, 25K, 37.5K, 50K, 62.5K, 75K, 87.5K,
+and 100K. Apply the same 100-episode decoded audit to each useful checkpoint;
+do not select 100K merely because it is last.
+
+Progress snapshot at 2026-08-03 22:17 Asia/Taipei:
+
+```text
+step                 30,588 / 100,000
+recent throughput    about 1.77 steps/s
+recent train loss    about 0.03-0.04
+saved checkpoints    12.5K and 25K (436 MiB each)
+GPU                   11,947 MiB, 92% utilization, 86 C, 375 W
+estimated completion  about 2026-08-04 10:40 Asia/Taipei
+```
+
+| Validation step | Masked real-dimension flow loss |
+| ---: | ---: |
+| 5K | 0.044052 |
+| 10K | 0.038571 |
+| 15K | 0.039730 |
+| 20K | **0.038474** |
+| 25K | 0.039386 |
+| 30K | 0.040399 |
+
+The small rise after 20K does not by itself establish physical overfitting;
+the previous experiment showed that decoded pose and smoothness can continue
+improving while flow loss worsens. Compare the 12.5K, 25K, and later
+checkpoints with the same physical audit. The 86 C temperature is within the
+GPU limit but close enough to warrant keeping airflow unobstructed.
+
+## 25. Single-GPU common sense: RTX 4090 and RTX 5090
+
+Both cards should normally be treated as π0.5 **LoRA** devices, not full-model
+fine-tuning devices. The RTX 4090 has 24 GB and the RTX 5090 has 32 GB, while
+OpenPI estimates more than 22.5 GB for its native LoRA path and more than 70 GB
+for full fine-tuning. Exact memory differs between OpenPI JAX and this
+workspace's PyTorch PEFT implementation.
+
+| Setting | RTX 4090 starting point | RTX 5090 starting point |
+| --- | --- | --- |
+| Fine-tuning method | broad or mixed-rank LoRA | same mixed-rank LoRA first |
+| VLM / expert rank | 16 / 16–32 | 16 / 32; increase only after an ablation |
+| Vision encoder | frozen | frozen initially |
+| Action/time projections | fully trained | fully trained |
+| Precision | bfloat16 | bfloat16 |
+| Gradient checkpointing | enabled | enabled initially |
+| Initial batch | 2–4 | 4–8 |
+| Full-model fine-tune | not practical | still not practical on 32 GB |
+
+More VRAM should first buy stability, batch size, cameras, and controlled
+ablations—not indiscriminate rank or full vision unfreezing. If a 5090 is used,
+keep the 38.62M parameter configuration for the first hardware comparison and
+increase batch only after measuring memory. Preserve the same number of seen
+samples by reducing optimizer steps when batch is increased; changing rank,
+batch, learning rate, and sample budget simultaneously prevents a clean
+comparison.
+
+Only adapt late vision blocks after decoded errors demonstrate a visual domain
+gap, such as failures specific to lighting, occlusion, camera placement, or
+object appearance. For action geometry and within-chunk behavior, prioritize
+the action expert, projections, target representation, normalization, and
+physical checkpoint metrics.
+
+### Why OpenPI says more than 22.5 GB while this run uses 12.34 GiB
+
+These measurements are not the same recipe. OpenPI's checked-in low-memory
+LoRA example is currently a π0 JAX configuration and inherits global batch 32.
+OpenPI documents JAX training as float32 weights and gradients with mostly
+bfloat16 computation, and recommends allowing XLA to reserve 90% of GPU
+memory. Its more-than-22.5-GB figure is therefore a capacity requirement for
+that stack, not a minimum that every correct LoRA implementation must consume.
+
+This run uses LeRobot PyTorch PEFT with batch 4, a bfloat16 policy path for most
+language/action base weights, a frozen base and vision encoder, and gradient
+checkpointing. Some numerically sensitive or adapter parameters can remain
+float32, but this is still substantially different from JAX float32 base
+weights. Its
+measured 12,339 MiB after backward is consequently plausible even though it
+trains a broad 38.62M-parameter adapter. Lower memory does not imply that only
+the old narrow modules were matched: the logged trainable count increased from
+31,693,856 at global rank 16 to 38,624,288 with expert rank 32, exactly the
+expected 6,930,432-parameter increase.
+
+## 26. Full-parameter batch-1 trial on the two-4090 host
+
+On 2026-08-03, the repository and UMI assets were prepared on
+`zfei@10.98.19.22:2202` to test whether full-parameter π0.5 training can pass a
+real optimizer step at batch 1. This is an empirical memory trial, not a claim
+that two RTX 4090 cards meet OpenPI's greater-than-70-GB recommendation.
+
+Remote layout:
+
+```text
+repository  /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+train data  /home/zfei/data/lerobot/sroiv2_strawberry_picking_lab_1302_occlusion
+validation  /home/zfei/data/lerobot/sroiv2_strawberry_picking_lab_validation
+base model  /home/zfei/.cache/huggingface/hub/models--lerobot--pi05_base
+Python      /home/zfei/anaconda3/envs/py312/bin/python
+```
+
+The host has two 24,564-MiB RTX 4090 GPUs and 62 GiB system RAM. Code, both
+datasets, and the local Hugging Face π0.5 cache were copied because the remote
+Hugging Face connection timed out. The Python 3.12 environment was also copied
+from the working machine because the remote package mirror downloaded large
+training wheels too slowly to be operationally useful.
+
+The launcher is
+`examples/umi_relative_ee/run_pi05_full_finetune_umi_bs1.sh`. It deliberately
+omits `--peft`, sets both `freeze_vision_encoder=false` and
+`train_expert_only=false`, uses bfloat16 plus gradient checkpointing, batch 1,
+30-step masked-subspace actions, and the same 5e-5 to 5e-6 learning-rate
+schedule as the LoRA comparison. The 100K configuration saves only at the end
+because a full model plus AdamW state can consume tens of gigabytes per
+checkpoint.
+
+The required gate before launching 100K steps is:
+
+```bash
+cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
+TRAIN_STEPS=2 WARMUP_STEPS=1 SAVE_CHECKPOINT=false VAL_FREQ=0 \
+WANDB_ENABLE=false RUN_SUFFIX=smoke CUDA_DEVICE=0 \
+bash examples/umi_relative_ee/run_pi05_full_finetune_umi_bs1.sh
+```
+
+Batch 1 reduces activations but does not materially reduce parameter,
+gradient, or optimizer-state memory. Ordinary two-GPU DDP is not a solution:
+it replicates the complete model and optimizer on each GPU. Using both cards
+for memory would require an explicitly tested sharded strategy such as FSDP or
+ZeRO; 48 GB aggregate VRAM is still below OpenPI's full-finetuning estimate.
+
+### Measured result
+
+The single-GPU smoke test loaded all 812 checkpoint keys and reported
+4,143,404,816 learnable parameters out of 4,143,404,816 total. Forward and
+backward completed, but the first `optimizer.step()` failed while PyTorch Adam
+was allocating `exp_avg_sq`:
+
+```text
+GPU 0 capacity       23.52 GiB
+process usage        23.46 GiB
+PyTorch allocated    22.08 GiB
+PyTorch reserved      0.93 GiB
+failed allocation    20.00 MiB
+completed steps       0
+```
+
+This is decisive: batch 1 fits the activations and gradients but not the Adam
+state. Do not launch the unsharded 100K configuration on a 24-GB card.
+
+Two bounded sharding tests were also performed. Accelerate FSDP2 found and
+wrapped the custom `_PiGemmaDecoderLayerBase` and `SiglipEncoderLayer` classes,
+but failed in the vision patch convolution because the custom model mixed a
+regular input tensor with a sharded DTensor. FSDP1 failed during wrapping
+because each custom transformer layer contains both bfloat16 and float32
+parameters, which cannot be combined into one flat parameter. Ordinary DDP
+would replicate the single-GPU failure. No long full-parameter run was
+launched.
+
+Logs on the remote host:
+
+```text
+examples/umi_relative_ee/logs/pi05_full_finetune_masked_1302_bs1_smoke2.log
+examples/umi_relative_ee/logs/pi05_full_finetune_masked_1302_bs1_fsdp2_smoke2.log
+examples/umi_relative_ee/logs/pi05_full_finetune_masked_1302_bs1_fsdp1_smoke.log
+```
+
+### Does this follow the official LeRobot example?
+
+It follows the official definition of full-model fine-tuning, but adapts the
+task and runtime settings to this UMI experiment.
+
+| Setting | Official documentation example | This UMI trial | Reason |
+| --- | --- | --- | --- |
+| Base | `lerobot/pi05_base` | same | same initialization |
+| PEFT | none | none | full parameters |
+| Vision frozen | false | false | train vision |
+| Expert-only | false | false | train VLM and expert |
+| Precision | bfloat16 | same | reduced memory |
+| Gradient checkpointing | true | same | reduced activation memory |
+| Compile | true | false | simpler memory diagnosis and sharding compatibility |
+| Batch | 32 | 1 per GPU | hardware limit |
+| Steps | 3,000 | planned 100,000 | existing 1,302-episode experiment budget |
+| Action target | generic policy defaults | UMI relative EE, 10-D rot6d | embodiment-specific geometry |
+| Chunk | default 50 | 30 | UMI control horizon |
+| Padding loss | default full width | masked 10-D subspace | do not spend loss on 22 padded coordinates |
+| Learning rate | policy default | 5e-5 to 5e-6 cosine | match this experiment family |
+
+The official command's batch 32 is an example to adapt to available hardware;
+it is not a promise that full tuning fits a consumer GPU. For this exact
+LeRobot mixed-dtype implementation, the observed pre-optimizer usage plus the
+remaining Adam moments suggests roughly 45–55 GiB at batch 1, but allocator,
+checkpointing, and implementation details make that a planning estimate. Use
+an 80-GB-class GPU for a reliable run, consistent with OpenPI's greater-than-
+70-GB guidance. Treat 48 GB as experimental, not guaranteed. A 24- or 32-GB
+card should use LoRA unless a compatible sharded/offloaded implementation is
+added and validated.
+
+## 27. High-capacity LoRA on kiwi's RTX 5080
+
+A second LoRA run was launched on `kiwi` on 2026-08-04 without interrupting
+the local rank-16/32 run. Kiwi has one RTX 5080 with 16,303 MiB. The selected
+configuration uses global rank/alpha 96/96 and action-expert rank/alpha
+192/192 at batch 4.
+
+| Configuration | Local split-rank baseline | Kiwi high-capacity run |
+| --- | ---: | ---: |
+| Vision/VLM rank | 16 | 96 |
+| Action-expert rank | 32 | 192 |
+| Trainable parameters | 38,624,288 | 220,916,768 |
+| Relative capacity | 1.00× | 5.72× |
+| Batch size | 4 | 4 |
+| Steady GPU memory | about 12.34 GiB on RTX 4090 | 14,994 / 16,303 MiB |
+| Steady throughput | about 1.75 steps/s | about 1.27 steps/s |
+
+The kiwi trainable-parameter breakdown is:
+
+```text
+vision LoRA          17,915,904
+VLM language LoRA   117,669,888
+action-expert LoRA   83,165,184
+full projections      2,165,792
+total               220,916,768
+```
+
+`freeze_vision_encoder=true` freezes the pretrained vision weights and keeps
+the vision tower in evaluation mode. PEFT is applied afterward, so LoRA
+weights on matched vision attention q/k/v projections remain trainable. The
+PaliGemma language model and action expert adapt attention plus FFN modules;
+the action/time input and output projections remain fully trained.
+
+Before the long run, rank 96/192 passed a two-step optimizer smoke test and a
+50-step steady-state sweep. The sweep held 14,994 MiB, trained at about 1.20–
+1.29 steps/s, and ended without OOM. This uses about 92% of the card while
+retaining roughly 1.28 GiB for allocator variation and validation. Rank
+112/224 was not selected because its estimated margin was too small for a
+reliable overnight job.
+
+Active run:
+
+```text
+host          kiwi
+run name      pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full
+output        outputs/train/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full
+log           examples/umi_relative_ee/logs/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full.log
+W&B           https://wandb.ai/biorobotlab/lerobot/runs/fyatnla4
+steps         100,000
+save / val    12,500 / 5,000 steps
+launcher      examples/umi_relative_ee/run_pi05_high_capacity_lora_kiwi.sh
+```
+
+At 2026-08-04 07:17 Asia/Taipei, the run was healthy just past step 26,000.
+Recent training loss was approximately 0.030--0.041. Validation at step 25,000
+was 0.040136 on real action dimensions (`flow_loss_padded_dims=0`), and the
+25,000 checkpoint was written. It was using about 14,940 MiB with 98% GPU
+utilization and running at about 1.27 steps/s between validation/checkpoint
+pauses. Approximately 16.2 compute hours remained, with a rough wall-clock
+completion estimate near 2026-08-05 01:00 Asia/Taipei after scheduled pauses.
+
+At the same snapshot, the local rank-16/32 baseline had reached step 80,350
+of 100,000 at about 1.70--1.75 steps/s. Recent training loss was approximately
+0.017--0.028, and validation at step 80,000 was 0.054120 on real action
+dimensions (`flow_loss_padded_dims=0`). Checkpoints through step 75,000 were
+present. Its compute ETA was about 3.2 hours, plus the remaining validation
+and checkpoint pauses. Compare both runs at matched seen-sample checkpoints
+with the same decoded 100-episode physical audit. More adapter parameters do
+not guarantee better robot behavior, so do not select the kiwi final
+checkpoint from training or validation flow loss alone.
+
+## 28. Open-loop prediction visualization of the two active runs
+
+On 2026-08-04 the most recent checkpoint of each active run was visualized with
+`visualize_predictions.py` (section 17) on the held-out validation set,
+episodes 0-4, identical seed, with `--project` on-image gripper-tip projection.
+This is a qualitative + decoded-metric snapshot, not a checkpoint-selection
+audit: it samples five episodes, whereas section 22's audit runs all 100.
+
+### 28.1 Checkpoints visualized
+
+| Run | Most recent checkpoint | Step then training | Trainable params |
+| --- | --- | ---: | ---: |
+| Local split-rank `pi05_openpi_split_lora_masked_1302_bs4` | `075000` | about 83K / 100K | 38,624,288 |
+| Kiwi high-capacity `pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full` | `025000` | about 28K / 100K | 220,916,768 |
+
+The two checkpoints are at **different training progress** (75K vs 25K, i.e. the
+38M run has seen about 3× the samples). Read the metrics below with that caveat;
+see section 28.4.
+
+### 28.2 How the 38M run was visualized (local, alongside training)
+
+The local 4090 held about 12.6 GiB free while the 38M training consumed about
+11.7 GiB, so visualization ran concurrently with the live run:
+
+```bash
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
+export PYTHONPATH="$PWD/src"
+
+/home/zfei/anaconda3/envs/py312/bin/python \
+  examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path outputs/train/pi05_openpi_split_lora_masked_1302_bs4/checkpoints/075000/pretrained_model \
+  --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --episode_indices 0 1 2 3 4 \
+  --task "pick the strawberry" \
+  --project \
+  --camera_info_path /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation/meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_color.json \
+  --output_dir outputs/debug/viz_pi05_38M_split_075000
+```
+
+### 28.3 How the 220M run was visualized (adapter copied from kiwi)
+
+The 220M run executes on `kiwi` (zfei@10.98.19.22, port 2203), whose RTX 5080
+held only about 1.4 GiB free during training (14.9 / 16.3 GiB). Running the
+about-5-6 GiB visualizer there would have OOM-ed the training run, so only the
+PEFT adapter directory was copied to the local host and decoded there. The base
+`lerobot/pi05_base` is already in the local Hugging Face cache (the local run
+loads it), so no base copy was needed.
+
+Note kiwi's repository lives directly under `~/code/`, not under
+`~/code/lerobots/` like the local tree:
+
+```bash
+cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
+mkdir -p outputs/train/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full/checkpoints/025000
+
+rsync -azh -e "ssh -p 2203" \
+  zfei@10.98.19.22:code/lerobot-fei-v5.0-umi-unified/outputs/train/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full/checkpoints/025000/pretrained_model \
+  outputs/train/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full/checkpoints/025000/
+```
+
+The copied `pretrained_model/` is about 843 MiB: `adapter_model.safetensors`
+(883 MiB for the 220M adapter), `adapter_config.json`, the policy
+`config.json`, `train_config.json`, and the serialized UMI preprocessor /
+postprocessor plus normalization stats. With `adapter_config.json` present, the
+visualizer auto-detects the PEFT adapter, loads the named base, and applies it.
+
+The visualization command is identical to section 28.2 except for the
+checkpoint path and output directory:
+
+```bash
+/home/zfei/anaconda3/envs/py312/bin/python \
+  examples/umi_relative_ee/visualize_predictions.py \
+  --pretrained_path outputs/train/pi05_high_capacity_lora_r96_expert_r192_masked_1302_bs4_full/checkpoints/025000/pretrained_model \
+  --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --episode_indices 0 1 2 3 4 \
+  --task "pick the strawberry" \
+  --project \
+  --camera_info_path /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation/meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_color.json \
+  --output_dir outputs/debug/viz_pi05_220M_highcap_025000
+```
+
+The two runs were executed **sequentially**, not concurrently, so that peak GPU
+use stayed at training plus one visualizer rather than training plus two.
+
+### 28.4 Decoded open-loop metrics (episodes 0-4)
+
+Both writes are at
+`outputs/debug/viz_pi05_<tag>/sroiv2_strawberry_picking_lab_validation/`:
+`pred_episode_0..4.mp4` (each about 3-4 MB) and `prediction_metrics.json`.
+Values are endpoint (chunk-final) errors over 285 sampled frames; lower is
+better.
+
+| Endpoint metric | 38M @75K | 220M @25K |
+| --- | ---: | ---: |
+| XYZ mean | **27.1 mm** | 35.2 mm |
+| XYZ median | **19.8 mm** | 28.9 mm |
+| Rotation mean | **3.64 deg** | 4.93 deg |
+| Gripper mean | **0.218** | 0.254 |
+
+At these unequal training stages the 38M checkpoint decodes better on all four
+endpoint metrics. **This is not a capacity result**: the 38M checkpoint has
+trained three times longer. Per section 24 / section 27, at matched step 25K the
+two runs' masked real-dimension flow losses are nearly tied
+(38M 0.039386 vs 220M 0.040136), so the spread above is dominated by training
+stage, not by adapter rank. Do not conclude that 220M capacity is worse from
+these numbers alone.
+
+### 28.5 Fair comparison available locally
+
+The local split-rank run also saved `025000`, so the apples-to-apples view
+(matched 25K, same 100K-sample budget target) is a single additional invocation
+identical to section 28.2 with
+`--pretrained_path outputs/train/pi05_openpi_split_lora_masked_1302_bs4/checkpoints/025000/pretrained_model`.
+Run that before drawing any capacity conclusion, and ultimately defer to the
+full 100-episode decoded audit of section 22 plus closed-loop robot trials.

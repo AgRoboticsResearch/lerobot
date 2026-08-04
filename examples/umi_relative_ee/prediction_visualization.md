@@ -1,5 +1,11 @@
 # Prediction visualization for UMI relative-EE policies (π0.5 / ACT / SmolVLA)
 
+For the matched narrow-full-width versus broad-masked π0.5 comparison, including
+why flow validation loss disagrees with decoded endpoint and smoothness metrics,
+see the combined
+[`pi0.5_finetunning.md`](./pi0.5_finetunning.md#22-why-validation-flow-loss-disagreed-with-prediction-quality)
+guide.
+
 How the open-loop prediction videos are produced for the strawberry-picking
 models, so the predicted gripper motion can be compared to ground truth on the
 camera image. This document describes the shared method implemented by

@@ -11,9 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import draccus
 import pytest
 
-from lerobot.configs.default import DatasetConfig
+from lerobot.configs.default import DatasetConfig, PeftConfig
 
 
 def test_dataset_config_valid():
@@ -36,3 +37,19 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+def test_peft_config_parses_rank_and_alpha_patterns():
+    pattern = r".*\.gemma_expert\..*"
+    cfg = draccus.parse(
+        PeftConfig,
+        args=[
+            "--r=16",
+            "--lora_alpha=16",
+            f"--rank_pattern={{'{pattern}': 32}}",
+            f"--alpha_pattern={{'{pattern}': 32}}",
+        ],
+    )
+
+    assert cfg.rank_pattern == {pattern: 32}
+    assert cfg.alpha_pattern == {pattern: 32}

@@ -123,3 +123,9 @@ class PeftConfig:
     # If None, the PEFT library defaults to alpha=8, which may dampen high-rank adapters.
     # Common values are r (alpha == rank) or 2*r.
     lora_alpha: int | None = None
+
+    # Optional PEFT regular-expression mappings for assigning different LoRA
+    # ranks/scales to different module groups. Modules not matched by a pattern
+    # keep the global `r` and `lora_alpha` values above.
+    rank_pattern: dict[str, int] | None = None
+    alpha_pattern: dict[str, int] | None = None
