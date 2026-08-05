@@ -220,6 +220,10 @@ class TimedData:
 @dataclass
 class TimedAction(TimedData):
     action: Action
+    # Server-side compute duration in ms (prepare + preprocess + infer + postprocess),
+    # filled by the UMI relative-EE policy server. None with the stock server; clients
+    # read it to split the wire time into transport vs server compute.
+    server_elapsed_ms: float | None = None
 
     def get_action(self):
         return self.action

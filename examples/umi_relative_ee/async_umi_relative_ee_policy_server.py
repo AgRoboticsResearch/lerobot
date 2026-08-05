@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import pickle  # nosec
 import time
 from concurrent import futures
 from typing import Any
@@ -32,6 +33,7 @@ from lerobot.async_inference.helpers import (
     resize_robot_observation_image,
 )
 from lerobot.async_inference.policy_server import PolicyServer
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.transport import services_pb2_grpc
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -40,6 +42,23 @@ class UmiRelativeEEPolicyServer(PolicyServer):
     """Async policy server preserving the UMI relative-EE deployment contract."""
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802
+        # Prefer the checkpoint's actual type over the client's --policy_type. A mismatch
+        # would otherwise crash the wrong policy class on the checkpoint's config (e.g.
+        # ACT + SmolVLAConfig -> no 'use_vae'). Reading config.json is cheap (no weights);
+        # the base loads from request.data, so hand it the corrected spec.
+        policy_specs = pickle.loads(request.data)  # nosec
+        actual_type = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path).type
+        if actual_type != policy_specs.policy_type:
+            self.logger.warning(
+                "Client requested policy type '%s' but the checkpoint is '%s'; using the "
+                "checkpoint's actual type. Set --policy_type=%s on the client to silence "
+                "this warning.",
+                policy_specs.policy_type,
+                actual_type,
+                actual_type,
+            )
+            policy_specs.policy_type = actual_type
+            request.data = pickle.dumps(policy_specs)  # nosec
         response = super().SendPolicyInstructions(request, context)
         if self.policy is not None:
             self.policy.config.device = str(self.device)
@@ -114,10 +133,13 @@ class UmiRelativeEEPolicyServer(PolicyServer):
 
         started = time.perf_counter()
         observation = self._prepare_umi_observation(observation_t)
+        t_prepared = time.perf_counter()
 
         with torch.inference_mode():
             processed = self.preprocessor(observation)
+            t_preprocessed = time.perf_counter()
             predicted = self.policy.predict_action_chunk(processed)
+            t_inferred = time.perf_counter()
             if predicted.ndim == 2:
                 predicted = predicted.unsqueeze(0)
             predicted = predicted[:, : self.actions_per_chunk, :]
@@ -125,6 +147,7 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             # This must remain a single call. UmiAbsoluteActionsStep uses the
             # preprocessor's cached current pose as the base for every target.
             actions = self.postprocessor(predicted)
+        t_postprocessed = time.perf_counter()
 
         if isinstance(actions, dict):
             if ACTION not in actions:
@@ -144,11 +167,21 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             list(actions),
             observation_t.get_timestep(),
         )
+        # Ship the server-side compute duration to the client so it can split the
+        # observed wire time into transport vs server compute.
+        server_elapsed_ms = (time.perf_counter() - started) * 1000
+        for timed in result:
+            timed.server_elapsed_ms = server_elapsed_ms
         self.logger.info(
-            "Observation %s -> %s absolute EE actions in %.1fms",
+            "Observation %s -> %s absolute EE actions in %.1fms "
+            "(prepare %.1fms, preprocess %.1fms, infer %.1fms, postprocess %.1fms)",
             observation_t.get_timestep(),
             len(result),
-            (time.perf_counter() - started) * 1000,
+            server_elapsed_ms,
+            (t_prepared - started) * 1000,
+            (t_preprocessed - t_prepared) * 1000,
+            (t_inferred - t_preprocessed) * 1000,
+            (t_postprocessed - t_inferred) * 1000,
         )
         return result
 

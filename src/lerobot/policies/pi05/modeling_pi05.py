@@ -968,6 +968,43 @@ class PI05Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
+        # LoRA adapter checkpoints (adapter_config.json + adapter_model.safetensors, no
+        # model.safetensors) would otherwise fall through to the load below and silently
+        # return a randomly-initialized model. Load the base weights and apply the adapter.
+        ckpt_path = Path(pretrained_name_or_path)
+        if ckpt_path.is_dir() and (ckpt_path / "adapter_config.json").exists():
+            from peft import PeftConfig, PeftModel
+
+            peft_config = PeftConfig.from_pretrained(str(ckpt_path))
+            base_name = peft_config.base_model_name_or_path
+            if not base_name:
+                raise ValueError("LoRA adapter_config.json has no base_model_name_or_path.")
+            print(f"LoRA: base='{base_name}' + adapter from {ckpt_path}")
+            base_policy = cls.from_pretrained(
+                base_name,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+            )
+            return PeftModel.from_pretrained(base_policy, str(ckpt_path), config=peft_config)
+
+        # A local checkpoint directory without model.safetensors can never yield weights.
+        # Fail fast (before building the model) instead of silently running a
+        # randomly-initialized policy.
+        if ckpt_path.is_dir() and not (ckpt_path / "model.safetensors").exists():
+            raise FileNotFoundError(
+                f"No 'model.safetensors' in local checkpoint directory {ckpt_path}. "
+                "Refusing to run a randomly-initialized policy. If this is a LoRA/PEFT "
+                "checkpoint, make sure adapter_config.json is present so the adapter "
+                "branch loads base + adapter; otherwise point at a full checkpoint."
+            )
+
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
         model = cls(config, **kwargs)
@@ -993,9 +1030,16 @@ class PI05Policy(PreTrainedPolicy):
 
                 original_state_dict = load_file(resolved_file)
                 print("✓ Loaded state dict from model.safetensors")
+            except OSError as e:
+                # Missing file (local dir, hub 404, or offline cache miss) -> OSError.
+                # Continuing would silently run a randomly-initialized policy.
+                raise FileNotFoundError(
+                    f"No 'model.safetensors' found for {pretrained_name_or_path}: {e}. "
+                    "Refusing to run a randomly-initialized policy."
+                ) from e
             except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
+                print(f"Could not load state dict: {e}")
+                print("Returning model WITHOUT loaded weights (randomly-initialized policy!)")
                 return model
 
             # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
@@ -1042,6 +1086,8 @@ class PI05Policy(PreTrainedPolicy):
             if not missing_keys and not unexpected_keys:
                 print("All keys loaded successfully!")
 
+        except FileNotFoundError:
+            raise
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
 

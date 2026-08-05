@@ -205,6 +205,14 @@ class UmiAsyncPolicyClient:
         self._request_lock = threading.Lock()
         self._request_started_at = 0.0
         self._receiver_thread: threading.Thread | None = None
+        # Per-chunk timing for the HUD (updated by the receiver thread):
+        # wire = send -> response arrives (transport + server compute);
+        # server = compute duration reported by the UMI server via TimedAction.
+        self.last_wire_ms: float | None = None
+        self.last_server_ms: float | None = None
+        # Number of accepted chunk merges; clients use it to detect the first pop after a
+        # merge for an honest send->execute-first-action (e2e) latency.
+        self.merge_count: int = 0
 
     @property
     def running(self) -> bool:
@@ -321,13 +329,23 @@ class UmiAsyncPolicyClient:
                 if not isinstance(actions, list):
                     raise TypeError(f"Expected list[TimedAction], got {type(actions)}")
                 accepted = self.action_buffer.merge(actions)
+                if accepted:
+                    self.merge_count += 1
                 self.request_pending.clear()
                 if actions:
+                    # Wire time: the server copies our send timestamp (time.time() at
+                    # send) into every action, so time-of-receipt - first-action
+                    # timestamp = transport (both ways) + server compute.
+                    wire_ms = (time.time() - actions[0].get_timestamp()) * 1000.0
+                    self.last_wire_ms = wire_ms
+                    self.last_server_ms = getattr(actions[0], "server_elapsed_ms", None)
                     logger.info(
-                        "Received chunk %s:%s (%s actions, accepted=%s, queue=%s)",
+                        "Received chunk %s:%s (%s actions, wire=%.0fms, server=%s, accepted=%s, queue=%s)",
                         actions[0].get_timestep(),
                         actions[-1].get_timestep(),
                         len(actions),
+                        wire_ms,
+                        f"{self.last_server_ms:.0f}ms" if self.last_server_ms is not None else "n/a",
                         accepted,
                         self.action_buffer.size(),
                     )

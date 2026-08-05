@@ -231,7 +231,8 @@ def run(args: argparse.Namespace) -> None:
     last_sent_timestep: int | None = None
     first_chunk_seen = False
     last_action: np.ndarray | None = None
-    last_roundtrip_ms: float | None = None
+    last_e2e_ms: float | None = None  # send -> first action of the response chunk executes
+    last_seen_merges = 0
     send_at = 0.0
     loop_t0 = time.perf_counter()
     logger.info("Starting camera-only test loop (Ctrl-C to stop)")
@@ -273,13 +274,19 @@ def run(args: argparse.Namespace) -> None:
                     logger.warning("Invalid action from server: shape=%s finite=%s",
                                    action.shape, np.isfinite(action).all())
                 else:
+                    # e2e = send -> the first action of the response chunk executes. Updated
+                    # only on the FIRST pop after a chunk merge (merge_count transition), so
+                    # queue dwell never pollutes it. A timestep==last_sent check would race:
+                    # on the send tick the boundary action may still be from the old chunk.
+                    if policy_client.merge_count != last_seen_merges:
+                        last_seen_merges = policy_client.merge_count
+                        last_e2e_ms = (time.perf_counter() - send_at) * 1000.0 if send_at else None
                     last_action = action
-                    last_roundtrip_ms = (time.perf_counter() - send_at) * 1000.0 if send_at else None
                     if not first_chunk_seen:
                         first_chunk_seen = True
                         logger.info(
-                            "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (round-trip %.0f ms)",
-                            np.round(action, 3), last_roundtrip_ms or -1.0,
+                            "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
+                            np.round(action, 3), last_e2e_ms or -1.0,
                         )
                     if args.update_state:
                         current_ee = action.astype(np.float32)  # chain: pretend the robot moved here
@@ -312,8 +319,15 @@ def run(args: argparse.Namespace) -> None:
                 ]
                 if last_action is not None:
                     hud.append(f"last_action={np.round(last_action, 3).tolist()}")
-                if last_roundtrip_ms is not None:
-                    hud.append(f"round-trip~{last_roundtrip_ms:.0f}ms")
+                if last_e2e_ms is not None:
+                    hud.append(f"e2e~{last_e2e_ms:.0f}ms")
+                if policy_client.last_wire_ms is not None and policy_client.last_server_ms is not None:
+                    net_ms = policy_client.last_wire_ms - policy_client.last_server_ms
+                    hud.append(
+                        f"wire~{policy_client.last_wire_ms:.0f}ms  "
+                        f"server~{policy_client.last_server_ms:.0f}ms  "
+                        f"net~{max(net_ms, 0.0):.0f}ms"
+                    )
                 for y, txt in enumerate(hud, start=1):
                     ypix = y * 25
                     cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
@@ -327,8 +341,9 @@ def run(args: argparse.Namespace) -> None:
 
             if step % 30 == 0:
                 logger.info(
-                    "step %d: queue=%d first_chunk=%s last_action=%s",
+                    "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s",
                     step, action_buffer.size(), first_chunk_seen,
+                    None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
                     None if last_action is None else np.round(last_action, 3).tolist(),
                 )
             step += 1
