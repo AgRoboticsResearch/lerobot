@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import pickle  # nosec
 import sys
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import grpc
@@ -88,7 +90,63 @@ except ModuleNotFoundError:
         resync_ik_safety,
     )
 
+# Trajectory-projection helpers reused verbatim from visualize_predictions.py so the
+# overlay is pixel-identical to its camera-mode projection. Optional: if that module
+# cannot be imported, _PROJECTION_AVAILABLE flips False and the client runs HUD-only.
+_PROJECTION_AVAILABLE = True
+try:
+    from examples.umi_relative_ee.visualize_predictions import (
+        DEFAULT_EXTRINSICS,
+        aa_pose_to_matrix,
+        project_future,
+        draw_traj_on_image,
+        load_tip_kin,
+    )
+except ModuleNotFoundError:
+    try:
+        from visualize_predictions import (  # type: ignore[no-redef]
+            DEFAULT_EXTRINSICS,
+            aa_pose_to_matrix,
+            project_future,
+            draw_traj_on_image,
+            load_tip_kin,
+        )
+    except Exception:  # optional projection dependency unavailable -> HUD-only
+
+        def _projection_unavailable(*_args, **_kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("visualize_predictions import failed; trajectory overlay disabled")
+
+        _PROJECTION_AVAILABLE = False
+        aa_pose_to_matrix = project_future = draw_traj_on_image = load_tip_kin = _projection_unavailable  # type: ignore[assignment]
+        DEFAULT_EXTRINSICS = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+
+def auto_detect_realsense_intrinsics(cameras: dict) -> np.ndarray | None:
+    """Best-effort intrinsics K from a live RealSense pipeline."""
+    try:
+        import pyrealsense2 as rs
+
+        for cam in cameras.values():
+            pipeline = getattr(cam, "rs_pipeline", None)
+            if pipeline is None:
+                continue
+            profile = pipeline.get_active_profile()
+            intrinsics = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+            K = np.array(
+                [
+                    [intrinsics.fx, 0, intrinsics.ppx],
+                    [0, intrinsics.fy, intrinsics.ppy],
+                    [0, 0, 1],
+                ],
+                dtype=np.float64,
+            )
+            logger.info("Auto-detected RealSense intrinsics: fx=%.1f fy=%.1f", intrinsics.fx, intrinsics.fy)
+            return K
+    except Exception:
+        pass
+    return None
 
 _ASYNC_KEYMAP_HELP = """
 ╔══════════════════════════════════════════════════════════════╗
@@ -393,6 +451,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gripper_kp", type=float, default=5.0)
     parser.add_argument("--gripper_kd", type=float, default=0.5)
     parser.add_argument("--no_vis", action="store_true")
+    parser.add_argument(
+        "--dryrun", action="store_true",
+        help="No arm/gripper/IK: connect only the camera + server, feed a FIXED identity EE state, "
+             "and visualize the predicted trajectory (like async_client_with_only_camera.py). "
+             "Skips all real robot control; does not affect the normal deploy path.",
+    )
+    parser.add_argument(
+        "--initial_state", type=float, nargs=7, default=None,
+        help="--dryrun only: fixed 7D EE state [x,y,z,wx,wy,wz,gripper] fed every tick "
+             "(default: identity + 0.5 gripper).",
+    )
+    parser.add_argument("--extrinsics_config",
+                        default=str(DEFAULT_EXTRINSICS) if DEFAULT_EXTRINSICS else None,
+                        help="camera_gripper_extrinsics JSON for the projected trajectory overlay "
+                             "(default: sibling camera_gripper_extrinsics_sroi_v2_d405.json)")
+    parser.add_argument("--camera_info_path", default=None,
+                        help="camera_info_color.json intrinsics K (default: auto-detect from RealSense)")
+    parser.add_argument("--output_dir", default="outputs/debug/async_piper_deploy",
+                        help="Headless: save the annotated camera feed to <output_dir>/camera_live.mp4")
     parser.add_argument("--debug_visualize_queue_size", action="store_true")
     args = parser.parse_args()
     if not 0 <= args.chunk_size_threshold <= 1:
@@ -469,10 +546,197 @@ def execute_ee_action(
     return True
 
 
+def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_client: "UmiAsyncPolicyClient") -> None:
+    """Camera + server only: feed a FIXED identity EE state, never touch the robot.
+
+    Mirrors async_client_with_only_camera.py: same gRPC send/receive, same trajectory
+    projection + HUD/timing, but no arm/gripper/IK import, connect, or write. The state
+    pair sent every tick is the constant identity pose (or --initial_state).
+    """
+    from lerobot.cameras.utils import make_cameras_from_configs
+
+    cameras_config = parse_cameras_config(args.cameras)
+    if not cameras_config:
+        raise ValueError("No cameras parsed from --cameras")
+    cameras = make_cameras_from_configs(cameras_config)
+    for name, camera in cameras.items():
+        camera.connect()
+        logger.info("Camera connected: %s", name)
+
+    K = auto_detect_realsense_intrinsics(cameras)
+    if args.camera_info_path:
+        import json
+
+        try:
+            K = np.array(json.loads(Path(args.camera_info_path).read_text())["K"], dtype=float).reshape(3, 3)
+            logger.info("Loaded intrinsics K from %s (fx=%.1f)", args.camera_info_path, K[0, 0])
+        except Exception as exc:
+            logger.warning("Could not load --camera_info_path %s: %s", args.camera_info_path, exc)
+    tip_kin = None
+    if _PROJECTION_AVAILABLE and args.extrinsics_config and not args.no_vis:
+        try:
+            tip_kin = load_tip_kin(args.extrinsics_config)
+            logger.info("Loaded hand-eye extrinsics for trajectory overlay: %s", args.extrinsics_config)
+        except Exception as exc:
+            logger.warning("Could not load extrinsics %s: %s — trajectory overlay disabled",
+                           args.extrinsics_config, exc)
+    if tip_kin is not None and K is not None:
+        logger.info("trajectory projection on: fx=%.1f cx=%.1f cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
+
+    # The core of dry-run: a FIXED state. prev == current == identity, every tick.
+    current_ee = np.array(
+        args.initial_state if args.initial_state else [0, 0, 0, 0, 0, 0, 0.5], dtype=np.float32
+    )
+    previous_ee = current_ee.copy()
+    logger.info("DRY-RUN: fixed EE state=%s (no robot control)", np.round(current_ee, 3).tolist())
+
+    save_mp4 = (not args.no_vis) and args.output_dir and not os.environ.get("DISPLAY")
+    live_display = (not args.no_vis) and bool(os.environ.get("DISPLAY"))
+    if args.no_vis:
+        logger.info("Headless --no_vis: camera + inference only (no window, no file)")
+    elif save_mp4:
+        logger.info("Headless: saving frames to %s/camera_live.mp4", args.output_dir)
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    frames: list[np.ndarray] = []
+    step = 0
+    last_sent_timestep: int | None = None
+    first_chunk_seen = False
+    last_action: np.ndarray | None = None
+    last_e2e_ms: float | None = None
+    last_seen_merges = 0
+    send_at = 0.0
+    loop_t0 = time.perf_counter()
+    logger.info("Starting dry-run loop (Ctrl-C to stop)")
+
+    try:
+        while args.num_steps == 0 or step < args.num_steps:
+            t0 = time.perf_counter()
+            images = {name: camera.read() for name, camera in cameras.items()}
+
+            queue_empty = action_buffer.size() == 0
+            ready = action_buffer.ready_for_observation(args.chunk_size_threshold)
+            should_send = (step == 0) or (
+                policy_client.can_send() and ready
+                and (queue_empty or last_sent_timestep != action_buffer.latest_action + 1)
+            )
+            if should_send:
+                observation_timestep = max(action_buffer.latest_action + 1, 0)
+                send_at = time.perf_counter()
+                sent = policy_client.send_observation(
+                    np.stack([previous_ee, current_ee]),  # fixed identity pair
+                    images,
+                    task=args.task,
+                    timestep=observation_timestep,
+                    must_go=queue_empty or step == 0,
+                    force=(step == 0),
+                )
+                if sent:
+                    last_sent_timestep = observation_timestep
+
+            # Pop the next action but DO NOT execute it (no robot). Track timing + last action.
+            timed_action = action_buffer.pop_next()
+            if timed_action is not None:
+                action = timed_action.get_action().detach().cpu().numpy()
+                if action.shape != (7,) or not np.isfinite(action).all():
+                    logger.warning("Invalid action from server: shape=%s finite=%s",
+                                   action.shape, np.isfinite(action).all())
+                else:
+                    if policy_client.merge_count != last_seen_merges:
+                        last_seen_merges = policy_client.merge_count
+                        last_e2e_ms = (time.perf_counter() - send_at) * 1000.0 if send_at else None
+                    last_action = action
+                    if not first_chunk_seen:
+                        first_chunk_seen = True
+                        logger.info(
+                            "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
+                            np.round(action, 3), last_e2e_ms or -1.0,
+                        )
+
+            if live_display or save_mp4:
+                for name, image in images.items():
+                    img_rgb = image
+                    if tip_kin is not None and K is not None:
+                        queued = action_buffer.snapshot()
+                        if queued:
+                            abs_actions = [qa.get_action().detach().cpu().numpy() for qa in queued]
+                            poses = np.stack(
+                                [aa_pose_to_matrix(current_ee)]
+                                + [aa_pose_to_matrix(a) for a in abs_actions]
+                            )
+                            px, py = project_future(poses, 0, K, tip_kin)
+                            img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
+                    frame = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                    elapsed_s = time.perf_counter() - loop_t0
+                    hud = [
+                        f"DRY-RUN  {args.policy_type.upper()}  step {step}  "
+                        f"queue={action_buffer.size()}  {elapsed_s:.1f}s",
+                        f"state={np.round(current_ee, 3).tolist()}",
+                    ]
+                    if last_action is not None:
+                        hud.append(f"last_action={np.round(last_action, 3).tolist()}")
+                    if last_e2e_ms is not None:
+                        hud.append(f"e2e~{last_e2e_ms:.0f}ms")
+                    if policy_client.last_wire_ms is not None and policy_client.last_server_ms is not None:
+                        net_ms = policy_client.last_wire_ms - policy_client.last_server_ms
+                        hud.append(
+                            f"wire~{policy_client.last_wire_ms:.0f}ms  "
+                            f"server~{policy_client.last_server_ms:.0f}ms  "
+                            f"net~{max(net_ms, 0.0):.0f}ms"
+                        )
+                    for y, txt in enumerate(hud, start=1):
+                        ypix = y * 25
+                        cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                        cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                    if save_mp4:
+                        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    else:
+                        cv2.imshow(f"Async Piper DRY-RUN: {name}", frame)
+                cv2.waitKey(1)
+
+            if step % 30 == 0:
+                logger.info(
+                    "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s",
+                    step, action_buffer.size(), first_chunk_seen,
+                    None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
+                    None if last_action is None else np.round(last_action, 3).tolist(),
+                )
+            step += 1
+            elapsed = time.perf_counter() - t0
+            time.sleep(max(0.0, 1.0 / args.fps - elapsed))
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    finally:
+        if live_display:
+            cv2.destroyAllWindows()
+        for camera in cameras.values():
+            try:
+                camera.disconnect()
+            except Exception:
+                logger.exception("Camera disconnect failed")
+        if save_mp4 and frames:
+            try:
+                import imageio.v3 as iio
+
+                out_path = Path(args.output_dir) / "camera_live.mp4"
+                iio.imwrite(out_path, np.stack(frames), fps=args.fps, macro_block_size=1, quality=8)
+                logger.info("Saved %s (%d frames)", out_path, len(frames))
+            except Exception:
+                logger.exception("Failed to write mp4")
+        policy_client.stop()
+        logger.info("Dry-run done after %d ticks; first_chunk_seen=%s", step, first_chunk_seen)
+
+
 def run(args: argparse.Namespace) -> None:
     action_buffer = ActionBuffer(get_aggregate_function(args.aggregate_fn_name))
     policy_client = UmiAsyncPolicyClient(args, action_buffer)
     if not policy_client.start():
+        return
+
+    # Dry-run: camera + server only, fixed identity state, no robot control. Branching here
+    # (before any hardware import/connect) keeps the real deploy path below completely intact.
+    if args.dryrun:
+        _run_dryrun(args, action_buffer, policy_client)
         return
 
     piper = None
@@ -481,6 +745,20 @@ def run(args: argparse.Namespace) -> None:
     piper_connected = False
     gripper_connected = False
     step_count = 0
+    frames: list[np.ndarray] = []
+    first_chunk_seen = False
+    last_action: np.ndarray | None = None
+    last_e2e_ms: float | None = None  # send -> first action of the response chunk executes
+    last_seen_merges = 0
+    send_at = 0.0
+    loop_t0 = time.perf_counter()
+    save_mp4 = (not args.no_vis) and args.output_dir and not os.environ.get("DISPLAY")
+    live_display = (not args.no_vis) and bool(os.environ.get("DISPLAY"))
+    if args.no_vis:
+        logger.info("Headless --no_vis: camera + control only (no window, no file)")
+    elif save_mp4:
+        logger.info("Headless: saving frames to %s/camera_live.mp4", args.output_dir)
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     try:
         if DEFAULT_PIPER_SRC_PATH not in sys.path:
             sys.path.insert(0, DEFAULT_PIPER_SRC_PATH)
@@ -530,6 +808,32 @@ def run(args: argparse.Namespace) -> None:
         for name, camera in cameras.items():
             camera.connect()
             logger.info("Camera connected: %s", name)
+
+        # Intrinsics K (auto-detect or --camera_info_path) + hand-eye extrinsics for the
+        # projected trajectory overlay (matches visualize_predictions.py camera mode).
+        K = auto_detect_realsense_intrinsics(cameras)
+        if args.camera_info_path:
+            import json
+
+            try:
+                K = np.array(
+                    json.loads(Path(args.camera_info_path).read_text())["K"], dtype=float
+                ).reshape(3, 3)
+                logger.info("Loaded intrinsics K from %s (fx=%.1f)", args.camera_info_path, K[0, 0])
+            except Exception as exc:
+                logger.warning("Could not load --camera_info_path %s: %s", args.camera_info_path, exc)
+        tip_kin = None
+        if _PROJECTION_AVAILABLE and args.extrinsics_config and not args.no_vis:
+            try:
+                tip_kin = load_tip_kin(args.extrinsics_config)
+                logger.info("Loaded hand-eye extrinsics for trajectory overlay: %s", args.extrinsics_config)
+            except Exception as exc:
+                logger.warning("Could not load extrinsics %s: %s — trajectory overlay disabled",
+                               args.extrinsics_config, exc)
+        if tip_kin is not None and K is not None:
+            logger.info("trajectory projection on: fx=%.1f cx=%.1f cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
+        elif K is not None and not args.no_vis:
+            logger.info("No hand-eye extrinsics — HUD only, no trajectory overlay")
 
         if args.warm_start:
             move_to_pose(
@@ -647,6 +951,7 @@ def run(args: argparse.Namespace) -> None:
                     )
                     if should_send:
                         observation_timestep = max(action_buffer.latest_action + 1, 0)
+                        send_at = time.perf_counter()
                         sent = policy_client.send_observation(
                             np.stack([previous_ee, current_ee]),
                             images,
@@ -661,6 +966,19 @@ def run(args: argparse.Namespace) -> None:
 
                     timed_action = action_buffer.pop_next()
                     if timed_action is not None:
+                        # e2e = send -> the first action of the response chunk executes. Updated
+                        # only on the FIRST pop after a chunk merge (merge_count transition), so
+                        # queue dwell never pollutes it.
+                        if policy_client.merge_count != last_seen_merges:
+                            last_seen_merges = policy_client.merge_count
+                            last_e2e_ms = (time.perf_counter() - send_at) * 1000.0 if send_at else None
+                        last_action = timed_action.get_action().detach().cpu().numpy()
+                        if not first_chunk_seen:
+                            first_chunk_seen = True
+                            logger.info(
+                                "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
+                                np.round(last_action, 3), last_e2e_ms or -1.0,
+                            )
                         execute_ee_action(
                             timed_action.get_action(),
                             piper=piper,
@@ -681,21 +999,58 @@ def run(args: argparse.Namespace) -> None:
 
                 previous_ee = current_ee.copy()
 
-                if not args.no_vis:
-                    queue_size = action_buffer.size()
+                if live_display or save_mp4:
                     for name, image in images.items():
-                        frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                        cv2.putText(
-                            frame,
-                            f"{state.name}  queue={queue_size}",
-                            (12, 28),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            (0, 255, 0) if state == LoopState.INFERENCE else (0, 200, 255),
-                            2,
-                        )
-                        cv2.imshow(f"Async Piper: {name}", frame)
+                        img_rgb = image  # RGB uint8
+                        # Project the queued absolute EE plan onto the camera image exactly as
+                        # visualize_predictions.py projects its predicted chunk: origin = the
+                        # current FK EE pose, then each queued target, composed as
+                        # (T_opt_cam @ inv(T_origin) @ T_target @ T_cam_ee) and pinholed with K.
+                        if tip_kin is not None and K is not None:
+                            queued = action_buffer.snapshot()
+                            if queued:
+                                abs_actions = [qa.get_action().detach().cpu().numpy() for qa in queued]
+                                poses = np.stack(
+                                    [aa_pose_to_matrix(current_ee)]
+                                    + [aa_pose_to_matrix(a) for a in abs_actions]
+                                )
+                                px, py = project_future(poses, 0, K, tip_kin)
+                                img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
+                        frame = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                        elapsed_s = time.perf_counter() - loop_t0
+                        hud = [
+                            f"{state.name}  {args.policy_type.upper()}  step {step_count}  "
+                            f"queue={action_buffer.size()}  {elapsed_s:.1f}s",
+                        ]
+                        if last_action is not None:
+                            hud.append(f"state={np.round(current_ee, 3).tolist()}")
+                            hud.append(f"last_action={np.round(last_action, 3).tolist()}")
+                        if last_e2e_ms is not None:
+                            hud.append(f"e2e~{last_e2e_ms:.0f}ms")
+                        if policy_client.last_wire_ms is not None and policy_client.last_server_ms is not None:
+                            net_ms = policy_client.last_wire_ms - policy_client.last_server_ms
+                            hud.append(
+                                f"wire~{policy_client.last_wire_ms:.0f}ms  "
+                                f"server~{policy_client.last_server_ms:.0f}ms  "
+                                f"net~{max(net_ms, 0.0):.0f}ms"
+                            )
+                        for y, txt in enumerate(hud, start=1):
+                            ypix = y * 25
+                            cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                            cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        if save_mp4:
+                            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        else:
+                            cv2.imshow(f"Async Piper: {name}", frame)
                     cv2.waitKey(1)
+
+                if step_count % 30 == 0:
+                    logger.info(
+                        "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s",
+                        step_count, action_buffer.size(), first_chunk_seen,
+                        None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
+                        None if last_action is None else np.round(last_action, 3).tolist(),
+                    )
 
                 elapsed = time.perf_counter() - loop_started
                 time.sleep(max(0.0, 1 / args.fps - elapsed))
@@ -710,6 +1065,15 @@ def run(args: argparse.Namespace) -> None:
                 camera.disconnect()
             except Exception:
                 logger.exception("Camera disconnect failed")
+        if save_mp4 and frames:
+            try:
+                import imageio.v3 as iio
+
+                out_path = Path(args.output_dir) / "camera_live.mp4"
+                iio.imwrite(out_path, np.stack(frames), fps=args.fps, macro_block_size=1, quality=8)
+                logger.info("Saved %s (%d frames)", out_path, len(frames))
+            except Exception:
+                logger.exception("Failed to write mp4")
         if piper_connected:
             try:
                 move_to_safe(piper, gripper, args.gripper_kp, args.gripper_kd)
