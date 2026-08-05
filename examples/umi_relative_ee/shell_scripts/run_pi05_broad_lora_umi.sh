@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Broad π0.5 LoRA for the 10-D UMI relative-EE task.
-# Usage: bash examples/umi_relative_ee/run_pi05_broad_lora_umi.sh [2|4]
+# Usage: bash examples/umi_relative_ee/shell_scripts/run_pi05_broad_lora_umi.sh [2|4]
 # Batch 4 uses half as many optimizer steps as batch 2 so both runs see the
 # same number of training examples.
 

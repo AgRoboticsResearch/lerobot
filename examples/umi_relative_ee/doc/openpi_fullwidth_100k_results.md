@@ -7,7 +7,7 @@ All three train on `sroiv2_strawberry_picking_lab_1302_occlusion` (121,262
 frames / 1302 episodes) and validate on `sroiv2_strawberry_picking_lab_validation`
 (9,274 frames / 100 episodes), val every 10K steps, seed 1000, chunk 30.
 
-Launcher: [`run_openpi_fullwidth_100k.sh`](./run_openpi_fullwidth_100k.sh)
+Launcher: [`run_openpi_fullwidth_100k.sh`](../shell_scripts/run_openpi_fullwidth_100k.sh)
 
 ## Runs (all 100,000 optimizer steps, run in parallel on one RTX 4090)
 
@@ -66,8 +66,8 @@ All videos: 1500x800 panel composite with on-image trajectory projection.
 
 | Model | Machine | Launcher | Output dir | Log |
 | --- | --- | --- | --- | --- |
-| SmolVLA 1M | kiwi (RTX 5080) | examples/umi_relative_ee/run_smolvla_fullwidth_1m_kiwi.sh | outputs/train/smolvla_openpi_fullwidth_1302_1M (on kiwi) | examples/umi_relative_ee/logs/smolvla_openpi_fullwidth_1M.log |
-| pi0.5 LoRA 1M | this host (RTX 4090) | examples/umi_relative_ee/run_pi05_fullwidth_1m.sh | outputs/train/pi05_lora_openpi_fullwidth_1302_1M | examples/umi_relative_ee/logs/pi05_openpi_fullwidth_1M.log |
+| SmolVLA 1M | kiwi (RTX 5080) | examples/umi_relative_ee/shell_scripts/run_smolvla_fullwidth_1m_kiwi.sh | outputs/train/smolvla_openpi_fullwidth_1302_1M (on kiwi) | examples/umi_relative_ee/logs/smolvla_openpi_fullwidth_1M.log |
+| pi0.5 LoRA 1M | this host (RTX 4090) | examples/umi_relative_ee/shell_scripts/run_pi05_fullwidth_1m.sh | outputs/train/pi05_lora_openpi_fullwidth_1302_1M | examples/umi_relative_ee/logs/pi05_openpi_fullwidth_1M.log |
 
 Same contract as the 100K runs: 1302_occlusion train + validation val, chunk 30, seed 1000,
 `mask_padded_action_dims_at_inference=false`, `scheduler_decay_steps=1000000`,

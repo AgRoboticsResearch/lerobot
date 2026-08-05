@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Higher-capacity OpenPI-style split-rank π0.5 LoRA for the 10-D UMI task.
-# Usage: bash examples/umi_relative_ee/run_pi05_openpi_split_lora_umi.sh [2|4]
+# Usage: bash examples/umi_relative_ee/shell_scripts/run_pi05_openpi_split_lora_umi.sh [2|4]
 #
 # The global rank applies to the PaliGemma language model. PEFT rank/alpha
 # patterns override the Gemma action expert to rank/alpha 32/32.

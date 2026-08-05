@@ -11,7 +11,7 @@ models, so the predicted gripper motion can be compared to ground truth on the
 camera image. This document describes the shared method implemented by
 `visualize_predictions.py` and doubles as its **run guide** (commands, flags,
 output paths). The preserved policy-specific notes remain in
-`visualize_predictions_act_smolvla.md` and `../../docs/legacy/fei-v5.0/pi05_umi_README.md`.
+`visualize_predictions_act_smolvla.md` and `../../../docs/legacy/fei-v5.0/pi05_umi_README.md`.
 
 For raw unnormalized 9D pose plots and geodesic SO(3) rotation-error analysis,
 see `debug_rotation_visualization.md`. Both scripts write under
@@ -206,5 +206,5 @@ The latent shape is derived from the checkpoint config
 complete latent width; zero-noise remains a diagnostic only. Diagnostics
 retain `--legacy_full_action_noise` for report compatibility, but it no longer
 changes SmolVLA/π0.5 inference. See the historical
-[`run_jerk_ab.sh`](./run_jerk_ab.sh) and the
-zero-noise video runner [`run_zero_noise_vis.sh`](./run_zero_noise_vis.sh).
+[`run_jerk_ab.sh`](../shell_scripts/run_jerk_ab.sh) and the
+zero-noise video runner [`run_zero_noise_vis.sh`](../shell_scripts/run_zero_noise_vis.sh).

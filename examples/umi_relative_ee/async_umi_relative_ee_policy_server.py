@@ -97,7 +97,14 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             observation[image_key] = prepare_image(image_tensor).unsqueeze(0)
 
         if "task" in raw:
-            observation["task"] = raw["task"]
+            task = raw["task"]
+            # Pi05PrepareStateTokenizerProcessorStep iterates the task sequence
+            # directly (no str -> [str] normalization like the SmolVLA
+            # pipeline's NewLineTask/Tokenizer steps), so a bare string would be
+            # walked character-by-character.
+            if self.policy_type == "pi05" and isinstance(task, str):
+                task = [task]
+            observation["task"] = task
         return observation
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:

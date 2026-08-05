@@ -72,7 +72,7 @@ The relevant local implementation files are:
 - `src/lerobot/processor/umi_relative_ee_processor.py`
 - `src/lerobot/datasets/umi_relative_ee_stats.py`
 - `src/lerobot/datasets/factory.py`
-- `examples/umi_relative_ee/train_pi05_lora.sh`
+- `examples/umi_relative_ee/shell_scripts/train_pi05_lora.sh`
 - `examples/umi_relative_ee/visualize_predictions.py`
 
 ## 2. Always pin Python to the unified source tree
@@ -707,7 +707,7 @@ The completed run used the current 1302 occlusion dataset and batch 4:
 
 ```bash
 cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
-setsid nohup bash examples/umi_relative_ee/run_pi05_broad_lora_umi.sh 4 \
+setsid nohup bash examples/umi_relative_ee/shell_scripts/run_pi05_broad_lora_umi.sh 4 \
   > examples/umi_relative_ee/logs/pi05_broad_lora_masked_bs4.log 2>&1 < /dev/null &
 ```
 
@@ -722,7 +722,7 @@ The OpenPI-style launcher uses PaliGemma rank/alpha 16/16 and Gemma expert
 
 ```bash
 cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
-bash examples/umi_relative_ee/run_pi05_openpi_split_lora_umi.sh 4
+bash examples/umi_relative_ee/shell_scripts/run_pi05_openpi_split_lora_umi.sh 4
 ```
 
 Batch 4 runs 100K steps and saves every 12.5K. Batch 2 is only the memory
@@ -744,7 +744,7 @@ VALIDATION_DATASET_REPO_ID=sroi/sroiv2_strawberry_picking_lab_validation \
 VALIDATION_DATASET_ROOT=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
 OUTPUT_DIR=outputs/train/pi05_lora_umi_relative_ee_1125train_100val \
 POLICY_REPO_ID=zfff/pi05_lora_umi_relative_ee_1125train_100val \
-bash examples/umi_relative_ee/train_pi05_lora.sh
+bash examples/umi_relative_ee/shell_scripts/train_pi05_lora.sh
 ```
 
 The launcher currently uses:
@@ -1113,15 +1113,15 @@ gripper-favoring alternative. Real-robot picking remains the final selector.
 
 ## 23. Related unified documentation
 
-- `examples/umi_relative_ee/README.md`
-- `examples/umi_relative_ee/prediction_visualization.md`
-- `examples/umi_relative_ee/visualize_predictions_pi05.md`
-- `examples/umi_relative_ee/train_pi05_lora.sh`
-- `examples/umi_relative_ee/run_pi05_broad_lora_umi.sh`
-- `examples/umi_relative_ee/run_pi05_openpi_split_lora_umi.sh`
+- `examples/umi_relative_ee/doc/README.md`
+- `examples/umi_relative_ee/doc/prediction_visualization.md`
+- `examples/umi_relative_ee/doc/visualize_predictions_pi05.md`
+- `examples/umi_relative_ee/shell_scripts/train_pi05_lora.sh`
+- `examples/umi_relative_ee/shell_scripts/run_pi05_broad_lora_umi.sh`
+- `examples/umi_relative_ee/shell_scripts/run_pi05_openpi_split_lora_umi.sh`
 - `docs/source/pi05.mdx`
 
-## 24. Active higher-capacity split-rank run
+## 24. Completed higher-capacity split-rank run
 
 Started on 2026-08-03 at 16:52 Asia/Taipei in tmux window
 `0:pi05-split`:
@@ -1169,12 +1169,32 @@ estimated completion  about 2026-08-04 10:40 Asia/Taipei
 | 20K | **0.038474** |
 | 25K | 0.039386 |
 | 30K | 0.040399 |
+| 35K | 0.041474 |
+| 40K | 0.043412 |
+| 45K | 0.043351 |
+| 50K | 0.043854 |
+| 55K | 0.046869 |
+| 60K | 0.046562 |
+| 65K | 0.052282 |
+| 70K | 0.049739 |
+| 75K | 0.052020 |
+| 80K | 0.054120 |
+| 85K | 0.054612 |
+| 90K | 0.054842 |
+| 95K | 0.057460 |
+| 100K | 0.059480 |
 
-The small rise after 20K does not by itself establish physical overfitting;
-the previous experiment showed that decoded pose and smoothness can continue
-improving while flow loss worsens. Compare the 12.5K, 25K, and later
-checkpoints with the same physical audit. The 86 C temperature is within the
-GPU limit but close enough to warrant keeping airflow unobstructed.
+The run completed all 100,000 steps on 2026-08-04 at 10:37 Asia/Taipei
+(17h43m wall, about 1.79 steps/s mean), processing 400K samples (3.30 epochs).
+Best masked flow validation is at 20K (**0.038474**); from there it rises
+monotonically to 0.059480 at 100K, a 55% increase — the same flow-loss
+overfitting shape as the prior broad-LoRA run. As established in section 22,
+rising flow loss does not by itself indicate worse decoded behavior: the
+5-episode decoded check (section 28.6) shows 38M@75K only marginally better
+than 38M@50K on mean endpoint error and equal on the median. Do not select
+100K from this table; the section 22 physical audit and closed-loop trials
+remain the selectors. All eight scheduled checkpoints (12.5K-100K) plus
+`last` are saved.
 
 ## 25. Single-GPU common sense: RTX 4090 and RTX 5090
 
@@ -1253,7 +1273,7 @@ from the working machine because the remote package mirror downloaded large
 training wheels too slowly to be operationally useful.
 
 The launcher is
-`examples/umi_relative_ee/run_pi05_full_finetune_umi_bs1.sh`. It deliberately
+`examples/umi_relative_ee/shell_scripts/run_pi05_full_finetune_umi_bs1.sh`. It deliberately
 omits `--peft`, sets both `freeze_vision_encoder=false` and
 `train_expert_only=false`, uses bfloat16 plus gradient checkpointing, batch 1,
 30-step masked-subspace actions, and the same 5e-5 to 5e-6 learning-rate
@@ -1267,7 +1287,7 @@ The required gate before launching 100K steps is:
 cd /home/zfei/code/lerobots/lerobot-fei-v5.0-umi-unified
 TRAIN_STEPS=2 WARMUP_STEPS=1 SAVE_CHECKPOINT=false VAL_FREQ=0 \
 WANDB_ENABLE=false RUN_SUFFIX=smoke CUDA_DEVICE=0 \
-bash examples/umi_relative_ee/run_pi05_full_finetune_umi_bs1.sh
+bash examples/umi_relative_ee/shell_scripts/run_pi05_full_finetune_umi_bs1.sh
 ```
 
 Batch 1 reduces activations but does not materially reduce parameter,
@@ -1393,7 +1413,7 @@ log           examples/umi_relative_ee/logs/pi05_high_capacity_lora_r96_expert_r
 W&B           https://wandb.ai/biorobotlab/lerobot/runs/fyatnla4
 steps         100,000
 save / val    12,500 / 5,000 steps
-launcher      examples/umi_relative_ee/run_pi05_high_capacity_lora_kiwi.sh
+launcher      examples/umi_relative_ee/shell_scripts/run_pi05_high_capacity_lora_kiwi.sh
 ```
 
 At 2026-08-04 07:17 Asia/Taipei, the run was healthy just past step 26,000.
@@ -1413,6 +1433,29 @@ and checkpoint pauses. Compare both runs at matched seen-sample checkpoints
 with the same decoded 100-episode physical audit. More adapter parameters do
 not guarantee better robot behavior, so do not select the kiwi final
 checkpoint from training or validation flow loss alone.
+
+Progress update at 2026-08-04 about 14:05 Asia/Taipei: the kiwi run was at
+step about 54,649 / 100,000 (about 55%), running at about 1.28 steps/s,
+14,950 MiB / 98% util / 66 C, newest checkpoint 50K (matched-50K decoded
+comparison in section 28.6), ETA near 2026-08-05 00:00 Asia/Taipei. The local
+split-rank baseline has finished (section 24), so the local 4090 is idle.
+
+| Validation step | Masked real-dimension flow loss |
+| ---: | ---: |
+| 5K | 0.040779 |
+| 10K | 0.042527 |
+| 15K | 0.039064 |
+| 20K | **0.036459** |
+| 25K | 0.040136 |
+| 30K | 0.041968 |
+| 35K | 0.041201 |
+| 40K | 0.044948 |
+| 45K | 0.043402 |
+| 50K | 0.049185 |
+
+The kiwi run shares the 38M run's shape: best flow validation at 20K
+(**0.036459**, marginally lower than the 38M's 0.038474), then rising. It is
+still training, so these are interim numbers.
 
 ## 28. Open-loop prediction visualization of the two active runs
 
@@ -1521,11 +1564,41 @@ two runs' masked real-dimension flow losses are nearly tied
 stage, not by adapter rank. Do not conclude that 220M capacity is worse from
 these numbers alone.
 
-### 28.5 Fair comparison available locally
+### 28.5 Fair (matched-sample) comparison
 
-The local split-rank run also saved `025000`, so the apples-to-apples view
-(matched 25K, same 100K-sample budget target) is a single additional invocation
-identical to section 28.2 with
-`--pretrained_path outputs/train/pi05_openpi_split_lora_masked_1302_bs4/checkpoints/025000/pretrained_model`.
-Run that before drawing any capacity conclusion, and ultimately defer to the
-full 100-episode decoded audit of section 22 plus closed-loop robot trials.
+The two runs also share a 50K checkpoint (matched step and matched about 200K
+samples seen), so the apples-to-apples capacity view is a decode of both at
+50K with the section 28.2 command form, swapping in
+`.../checkpoints/050000/pretrained_model` for each run. The 220M@50K adapter
+was copied from kiwi exactly as in section 28.3. The result follows.
+
+### 28.6 Matched-50K decoded comparison (capacity result)
+
+Decoded on the same validation episodes 0-4, seed, and `--project` protocol as
+section 28.4 (285 frames each); lower is better. The fair comparison is the
+**38M@50K vs 220M@50K** column pair (matched step and matched samples).
+
+| Endpoint metric | 38M @50K | 38M @75K | 220M @25K | 220M @50K |
+| --- | ---: | ---: | ---: | ---: |
+| XYZ mean | 30.3 mm | **27.1 mm** | 35.2 mm | 28.9 mm |
+| XYZ median | **19.8 mm** | **19.8 mm** | 28.9 mm | 24.5 mm |
+| Rotation mean | 3.91 deg | **3.64 deg** | 4.93 deg | 3.99 deg |
+| Gripper mean | **0.22** | **0.22** | 0.25 | 0.27 |
+
+At matched training the 5.72x-capacity 220M adapter does **not** beat the 38M
+adapter: 38M is better on XYZ median (19.8 vs 24.5 mm), gripper (0.22 vs
+0.27), and roughly tied on rotation; 220M is better only on XYZ mean (28.9 vs
+30.3 mm), and that is a tail effect since it loses on the median. Extra
+capacity is therefore not the lever here — consistent with the section 27
+caution that more parameters do not guarantee better behavior.
+
+Two trends: the 220M run is still climbing (25K->50K: 35.2->28.9 mm mean,
+4.93->3.99 deg) at only 55% of training, whereas the 38M has largely plateaued
+(50K->75K: about flat on median and rotation). The 220M gripper error,
+uniquely, worsened 25K->50K (0.25->0.27) while its pose metrics improved.
+
+Caveat: this is a 5-episode (285-frame) sample, not the 100-episode decoded
+audit of section 22, and the gaps are within 5-episode noise. Treat it as "no
+signal that 220M helps," not a precise ranking. The 38M split-rank
+configuration remains the more efficient choice so far; closed-loop robot
+trials remain the final selector.

@@ -100,7 +100,7 @@ Use the normal UMI training entrypoints:
 
 - SmolVLA: [smolvla_relative_ee_training.md](./smolvla_relative_ee_training.md)
 - π0.5: [README.md](./README.md#training-baseline) and
-  [train_pi05_lora.sh](./train_pi05_lora.sh)
+  [train_pi05_lora.sh](../shell_scripts/train_pi05_lora.sh)
 
 Activate the existing environment before running commands:
 
@@ -121,22 +121,22 @@ All runs below use the full-width contract above, dataset
 
 ### 100K baselines (this host, RTX 4090)
 
-Launcher [`run_openpi_fullwidth_100k.sh`](./run_openpi_fullwidth_100k.sh)
+Launcher [`run_openpi_fullwidth_100k.sh`](../shell_scripts/run_openpi_fullwidth_100k.sh)
 (ACT/SmolVLA/pi0.5, 100K steps, val/10K, save/20K), launched as three parallel
 background drivers. Results and jitter-eval table:
 [`openpi_fullwidth_100k_results.md`](./openpi_fullwidth_100k_results.md).
 
 ```bash
 cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
-setsid nohup bash examples/umi_relative_ee/run_openpi_fullwidth_100k.sh act    > examples/umi_relative_ee/logs/act_openpi_fullwidth_100k_driver.log    2>&1 < /dev/null &
-setsid nohup bash examples/umi_relative_ee/run_openpi_fullwidth_100k.sh smolvla > examples/umi_relative_ee/logs/openpi_fullwidth_smolvla_driver.log  2>&1 < /dev/null &
-setsid nohup bash examples/umi_relative_ee/run_openpi_fullwidth_100k.sh pi05   > examples/umi_relative_ee/logs/openpi_fullwidth_pi05_driver.log    2>&1 < /dev/null &
+setsid nohup bash examples/umi_relative_ee/shell_scripts/run_openpi_fullwidth_100k.sh act    > examples/umi_relative_ee/logs/act_openpi_fullwidth_100k_driver.log    2>&1 < /dev/null &
+setsid nohup bash examples/umi_relative_ee/shell_scripts/run_openpi_fullwidth_100k.sh smolvla > examples/umi_relative_ee/logs/openpi_fullwidth_smolvla_driver.log  2>&1 < /dev/null &
+setsid nohup bash examples/umi_relative_ee/shell_scripts/run_openpi_fullwidth_100k.sh pi05   > examples/umi_relative_ee/logs/openpi_fullwidth_pi05_driver.log    2>&1 < /dev/null &
 ```
 
 ### 1M runs (launched 2026-08-01 23:45)
 
-Launchers: [`run_pi05_fullwidth_1m.sh`](./run_pi05_fullwidth_1m.sh) (this host)
-and [`run_smolvla_fullwidth_1m_kiwi.sh`](./run_smolvla_fullwidth_1m_kiwi.sh)
+Launchers: [`run_pi05_fullwidth_1m.sh`](../shell_scripts/run_pi05_fullwidth_1m.sh) (this host)
+and [`run_smolvla_fullwidth_1m_kiwi.sh`](../shell_scripts/run_smolvla_fullwidth_1m_kiwi.sh)
 (kiwi). Both use `steps=1000000`, `save_freq=100000`, `val_freq=50000`,
 `scheduler_decay_steps=1000000`.
 
@@ -144,7 +144,7 @@ and [`run_smolvla_fullwidth_1m_kiwi.sh`](./run_smolvla_fullwidth_1m_kiwi.sh)
 
 ```bash
 cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
-setsid nohup bash examples/umi_relative_ee/run_pi05_fullwidth_1m.sh \
+setsid nohup bash examples/umi_relative_ee/shell_scripts/run_pi05_fullwidth_1m.sh \
   > examples/umi_relative_ee/logs/pi05_1m_driver.log 2>&1 < /dev/null &
 ```
 
@@ -181,7 +181,7 @@ datasets to `/home/zfei/data/`).
 
 ```bash
 ssh -o BatchMode=yes zfei@10.98.19.22 -p 2203 '
-  setsid nohup bash /home/zfei/code/lerobot-fei-v5.0-umi-unified/examples/umi_relative_ee/run_smolvla_fullwidth_1m_kiwi.sh \
+  setsid nohup bash /home/zfei/code/lerobot-fei-v5.0-umi-unified/examples/umi_relative_ee/shell_scripts/run_smolvla_fullwidth_1m_kiwi.sh \
     > /home/zfei/code/lerobot-fei-v5.0-umi-unified/examples/umi_relative_ee/logs/smolvla_1m_driver.log 2>&1 < /dev/null &
 '
 ```
@@ -281,7 +281,7 @@ coherently — retrain.
 
 ### 1M run (Option B) — SmolVLA on kiwi
 
-Launcher [`run_smolvla_masked_subspace_1m_kiwi.sh`](./run_smolvla_masked_subspace_1m_kiwi.sh),
+Launcher [`run_smolvla_masked_subspace_1m_kiwi.sh`](../shell_scripts/run_smolvla_masked_subspace_1m_kiwi.sh),
 identical to the Option A kiwi launcher except
 `--policy.flow_matching_padding_mode=masked_subspace`; output
 `outputs/train/smolvla_masked_subspace_1302_1M`, repo

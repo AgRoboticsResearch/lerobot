@@ -408,11 +408,15 @@ def load_policy_and_processors(model_path: str, device: torch.device):
 
 
 def add_policy_task(batch: dict, policy, task: str | None) -> None:
-    if policy.name != "smolvla":
+    if policy.name not in ("smolvla", "pi05"):
         return
     if not task:
-        raise ValueError("SmolVLA deployment requires --task (for this dataset: 'pick the strawberry').")
-    batch["task"] = task
+        raise ValueError(
+            f"{policy.name} deployment requires --task (for this dataset: 'pick the strawberry')."
+        )
+    # The pi05/SmolVLA prompt tokenizers read `task` from complementary data as
+    # a sequence of strings; a bare string would be iterated char-by-char.
+    batch["task"] = [task]
 
 
 def parse_args():

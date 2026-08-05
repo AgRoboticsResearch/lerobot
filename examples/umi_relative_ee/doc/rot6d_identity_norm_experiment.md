@@ -180,7 +180,7 @@ HF_HUB_OFFLINE=1 PYTHONPATH=src python examples/umi_relative_ee/train_pi05_lora.
   --wandb.enable=true --wandb.project=lerobot
 ```
 
-Launcher (reproduces all three): `bash examples/umi_relative_ee/run_identity_ab.sh {act|smolvla|pi05}`.
+Launcher (reproduces all three): `bash examples/umi_relative_ee/shell_scripts/run_identity_ab.sh {act|smolvla|pi05}`.
 
 ### Evaluation (post-hoc, primary metric — all policies, all 100 episodes)
 ```bash

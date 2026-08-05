@@ -256,7 +256,7 @@ The preprocessor and postprocessor are separate pipelines, but the postprocessor
 ### Training command
 
 ```bash
-PYTHONPATH=../../src python train_relative_ee_processor.py \
+PYTHONPATH=../../../src python ../train_relative_ee_processor.py \
   --dataset.repo_id=lerobot_sroi_v2 \
   --dataset.root=/mnt/data1/data/lerobot/lerobot_sroi_v2 \
   --policy.type=act \
@@ -368,7 +368,7 @@ P_optical = T_opt_cam @ T_rel @ T_cam_grip
 Runs live inference with a physical camera. Uses identity 7D aa state (no FK).
 
 ```bash
-PYTHONPATH=../../src python visualize_predictions.py \
+PYTHONPATH=../../../src python ../visualize_predictions.py \
   --pretrained_path outputs/<run>/checkpoints/last/pretrained_model \
   --cameras "{wrist: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 25, fourcc: MJPG}}" \
   --camera_info_path /path/to/camera_info.json
@@ -385,7 +385,7 @@ Loads a `LeRobotDataset` and projects trajectories onto observation images.
 
 GT only:
 ```bash
-PYTHONPATH=../../src python visualize_predictions.py \
+PYTHONPATH=../../../src python ../visualize_predictions.py \
   --dataset_root /path/to/dataset \
   --episode_indices 0 \
   --camera_name camera \
@@ -396,7 +396,7 @@ PYTHONPATH=../../src python visualize_predictions.py \
 
 With model inference (+ GT overlay):
 ```bash
-PYTHONPATH=../../src python visualize_predictions.py \
+PYTHONPATH=../../../src python ../visualize_predictions.py \
   --dataset_root /path/to/dataset \
   --episode_indices 0 \
   --camera_name camera \

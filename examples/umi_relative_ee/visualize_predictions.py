@@ -1,10 +1,16 @@
 #!/usr/bin/env python
 r"""
-Visualize ACT, SmolVLA, or π0.5 UMI relative-EE predictions on a recorded dataset.
+Visualize ACT, SmolVLA, or π0.5 UMI relative-EE predictions — two modes.
 
-The policy is loaded through its saved unified or legacy-compatible UMI
-processor. LoRA adapters are detected automatically. The state is derived from
-``action[t-1:t+1]``; a task string is supplied for language-conditioned models.
+The policy is loaded through its saved unified UMI processor. LoRA adapters are
+detected automatically. ACT uses the VAE prior at inference (no GT action);
+π0.5/SmolVLA take a task string.
+
+**Dataset mode** (default; ``--dataset_root``): open-loop inference on a recorded
+dataset. The state is derived from ``action[t-1:t+1]``. For each frame we feed the
+GT observation (image + two-pose state + task), predict the 30-step action chunk,
+unnormalize to relative rot6d actions, and render a per-frame panel-composite
+video:
 
 Mode: **open-loop dataset inference**. For each frame of a validation episode we
 feed the model the GT observation (image + the two-pose state derived from the
@@ -19,17 +25,27 @@ The panel-composite needs no camera calibration. Pass ``--project`` to also draw
 the predicted and ground-truth gripper-tip trajectories on the camera image
 using the supplied hand-eye calibration and dataset camera intrinsics.
 
-Usage:
+Usage (dataset mode):
     python examples/umi_relative_ee/visualize_predictions.py \
         --pretrained_path outputs/train/my_umi_policy/checkpoints/last/pretrained_model \
         --dataset_root /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
         --episode_indices 0 1 2 \
         --output_dir outputs/debug/viz_umi
+
+Usage (camera mode — live RealSense, no robot):
+    python examples/umi_relative_ee/visualize_predictions.py \
+        --pretrained_path outputs/train/my_umi_policy/checkpoints/last/pretrained_model \
+        --cameras "{camera: {type: intelrealsense, fps: 30, width: 640, height: 480}}" \
+        --task "pick the strawberry" \
+        --output_dir outputs/debug/viz_camera
+    # add --mp4 to save instead of display; --max_steps N to stop after N steps;
+    # --update_state to auto-chain predictions; --initial_state to seed the EE pose.
 """
 
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -49,6 +65,28 @@ try:
 except ImportError:
     iio = None
 
+try:  # PyYAML is only needed for camera mode (--cameras YAML spec).
+    import yaml  # noqa: E402
+except ImportError:
+    yaml = None
+
+try:  # RealSense is optional; camera mode needs it, offline mode does not.
+    import pyrealsense2 as rs  # noqa: E402
+except ImportError:
+    rs = None
+
+try:  # Camera-mode deps; guarded so offline mode runs without the camera extra.
+    from lerobot.cameras import CameraConfig  # noqa: E402
+    from lerobot.cameras.utils import make_cameras_from_configs  # noqa: E402
+    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401, E402
+    from lerobot.cameras.realsense.configuration_realsense import (  # noqa: F401, E402
+        RealSenseCameraConfig,
+    )
+
+    _CAMERA_OK = True
+except ImportError:
+    _CAMERA_OK = False
+
 from lerobot.configs.policies import PreTrainedConfig  # noqa: E402
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors  # noqa: E402
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: E402
@@ -56,7 +94,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.datasets.factory import resolve_delta_timestamps  # noqa: E402
 from lerobot.utils.collate import lerobot_collate_fn  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 DEFAULT_TASK = "pick the strawberry"
@@ -400,6 +438,249 @@ def render_frame(img_rgb, pred_traj, gt_traj, pred_rel, gt_ang, info, fig, axes)
 
 
 # ---------------------------------------------------------------------------
+# Camera mode (live RealSense / OpenCV capture, no robot needed)
+# ---------------------------------------------------------------------------
+
+
+def auto_detect_realsense_serial() -> str | None:
+    """Return the serial of the first connected RealSense, or None."""
+    if rs is None:
+        return None
+    try:
+        ctx = rs.context()
+        devices = ctx.query_devices()
+        if len(devices) > 0:
+            return devices[0].get_info(rs.camera_info.serial_number)
+    except Exception:
+        pass
+    return None
+
+
+def parse_cameras_config(cameras_str: str | None) -> dict:
+    """Parse a YAML camera spec, e.g. '{camera: {type: intelrealsense, fps: 30, w: 640, h: 480}}'."""
+    if yaml is None:
+        raise ImportError("PyYAML is required for camera mode (pip install pyyaml).")
+    if not cameras_str or cameras_str.strip() == "":
+        return {}
+    cameras_dict = yaml.safe_load(cameras_str)
+    if not isinstance(cameras_dict, dict):
+        raise ValueError(f"Expected a dict for --cameras, got {type(cameras_dict).__name__}")
+    if not _CAMERA_OK:
+        raise ImportError("lerobot camera modules not available (install the camera extra).")
+    cameras: dict[str, CameraConfig] = {}
+    for name, config in cameras_dict.items():
+        config = dict(config)
+        camera_type = config.pop("type", None)
+        if camera_type is None:
+            raise ValueError(f"Camera '{name}' missing 'type' field")
+        if camera_type == "intelrealsense" and "serial_number_or_name" not in config:
+            serial = auto_detect_realsense_serial()
+            if serial:
+                config["serial_number_or_name"] = serial
+                logger.info("Auto-detected RealSense serial: %s", serial)
+            else:
+                raise ValueError("No RealSense device found and no serial_number_or_name provided")
+        if camera_type == "opencv" and "index_or_path" in config and isinstance(config["index_or_path"], int):
+            config["index_or_path"] = str(config["index_or_path"])
+        camera_config_class = CameraConfig.get_choice_class(camera_type)
+        cameras[name] = camera_config_class(**config)
+    return cameras
+
+
+def auto_detect_camera_intrinsics(cameras: dict) -> np.ndarray | None:
+    """Read color intrinsics K from a live RealSense pipeline, or None."""
+    if rs is None:
+        return None
+    for cam in cameras.values():
+        if hasattr(cam, "rs_pipeline") and cam.rs_pipeline is not None:
+            try:
+                profile = cam.rs_pipeline.get_active_profile()
+                intrinsics = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+                K = np.array(
+                    [
+                        [intrinsics.fx, 0, intrinsics.ppx],
+                        [0, intrinsics.fy, intrinsics.ppy],
+                        [0, 0, 1],
+                    ]
+                )
+                logger.info(
+                    "Auto-detected RealSense intrinsics: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                    intrinsics.fx,
+                    intrinsics.fy,
+                    intrinsics.ppx,
+                    intrinsics.ppy,
+                )
+                return K
+            except Exception:
+                pass
+    return None
+
+
+def run_camera_mode(args):
+    r"""Live camera inference: feed each frame + a (static) EE state to the policy
+    and overlay the predicted chunk on the camera image. No robot required.
+
+    The state defaults to the identity pose [0, 0, 0, 0, 0, 0, 0.5]. With the camera
+    held still, the UMI 20D relative state collapses to ~identity and the image
+    alone drives the predicted chunk. Pass --update_state to auto-chain the last
+    prediction as the next base pose. See
+    doc/live_inference_input_contract_and_pose_source.md.
+    """
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    logger.info("Loading policy + processors from %s", args.pretrained_path)
+    policy, preprocessor, policy_config = load_policy_and_processors(args.pretrained_path, device)
+    if args.num_steps is not None:
+        policy_config.num_steps = args.num_steps
+        if hasattr(policy, "model") and getattr(policy.model, "config", None) is not None:
+            policy.model.config.num_steps = args.num_steps
+        logger.info("overrode flow-matching num_steps -> %d", args.num_steps)
+
+    action_stats = extract_action_stats(preprocessor)
+    action_norm_mode = policy_config.normalization_mapping["ACTION"]
+    policy_type = policy_config.type
+    needs_task = policy_type in ("pi05", "smolvla")
+    logger.info(
+        "camera mode: policy=%s chunk=%d needs_task=%s", policy_type, policy_config.chunk_size, needs_task
+    )
+    if needs_task and not args.task:
+        raise ValueError(f"{policy_type} requires --task (e.g. 'pick the strawberry')")
+
+    # projection: hand-eye extrinsics + intrinsics K
+    tip_kin = load_tip_kin(args.extrinsics_config)
+    K = load_K(args.camera_info_path) if args.camera_info_path else None
+    if K is None:
+        logger.info("No --camera_info_path; will auto-detect intrinsics from the RealSense pipeline")
+
+    # cameras
+    cameras_config = parse_cameras_config(args.cameras)
+    if not cameras_config:
+        raise ValueError("No cameras parsed from --cameras")
+    cameras = make_cameras_from_configs(cameras_config)
+    for cam_name, camera in cameras.items():
+        camera.connect()
+        logger.info("Connected camera: %s", cam_name)
+    if K is None:
+        K = auto_detect_camera_intrinsics(cameras)
+    if K is None:
+        logger.warning("No intrinsics K — trajectory overlay disabled")
+    else:
+        logger.info("projection on: fx=%.1f cx=%.1f cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
+
+    current_state = (
+        np.array(args.initial_state, dtype=np.float32)
+        if args.initial_state
+        else np.array([0, 0, 0, 0, 0, 0, 0.5], dtype=np.float32)
+    )
+
+    policy.reset()
+    preprocessor.reset()
+    fps = args.fps or 30
+    save_mp4 = args.mp4
+    live_display = (not save_mp4) and bool(os.environ.get("DISPLAY"))
+    frames: list[np.ndarray] = []
+    out_path = Path(args.output_dir) / "camera_live.mp4"
+    if save_mp4:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    elif not live_display:
+        # Headless with no --mp4: just run the model. No window, no file.
+        logger.info(
+            "Headless and --mp4 not set: running inference only (no window, no file). "
+            "Pass --mp4 to save a video, or run with a DISPLAY for the live window."
+        )
+
+    step = 0
+    ms_ema: float | None = None  # rolling inference time for a stable HUD readout
+    logger.info("Starting live inference (Ctrl-C to stop)")
+    try:
+        while args.max_steps == 0 or step < args.max_steps:
+            t0 = time.perf_counter()
+
+            batch = {"observation.state": torch.from_numpy(current_state).unsqueeze(0).to(device)}
+            if needs_task:
+                batch["task"] = [args.task]
+            cam_images = {}
+            for cam_name, camera in cameras.items():
+                img = camera.read()
+                cam_images[cam_name] = img
+                img_chw = np.transpose(img.astype(np.float32) / 255.0, (2, 0, 1))
+                batch[f"observation.images.{cam_name}"] = torch.from_numpy(img_chw).unsqueeze(0).to(device)
+
+            preprocessor.reset()
+            with torch.no_grad():
+                processed = preprocessor(batch)
+                if policy_type == "act":
+                    # ACT VAE: no GT action at inference -> use the prior branch.
+                    processed.pop("action", None)
+                pred = policy.predict_action_chunk(processed)
+            pred_rel = unnormalize_actions(pred, action_stats, action_norm_mode)[0].cpu().numpy()
+
+            # inference time (model only, excludes render) + rolling fps for the HUD
+            infer_ms = (time.perf_counter() - t0) * 1000.0
+            ms_ema = infer_ms if ms_ema is None else 0.9 * ms_ema + 0.1 * infer_ms
+
+            if args.update_state:
+                from scipy.spatial.transform import Rotation
+
+                t_ref = aa_pose_to_matrix(current_state)
+                t_abs_last = t_ref @ rot6d_to_matrix(pred_rel[-1])
+                current_state = np.concatenate(
+                    [
+                        t_abs_last[:3, 3],
+                        Rotation.from_matrix(t_abs_last[:3, :3]).as_rotvec(),
+                        [pred_rel[-1, 9]],
+                    ]
+                ).astype(np.float32)
+
+            # Render only when there is a sink (live window or mp4 file).
+            if live_display or save_mp4:
+                cam_name = next(iter(cam_images))
+                img_rgb = cam_images[cam_name]
+                if K is not None:
+                    pred_poses = np.stack([np.eye(4)] + [rot6d_to_matrix(a) for a in pred_rel])
+                    px, py = project_future(pred_poses, 0, K, tip_kin)
+                    img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
+                img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+                hud1 = f"{policy_type.upper()}  step {step}  task='{args.task}'"
+                hud2 = (
+                    f"grip_pred={float(pred_rel[-1, 9]):.2f}  "
+                    f"inf={ms_ema:.0f}ms  fps={1000.0 / max(ms_ema, 1e-3):.1f}"
+                )
+                for y, txt in ((25, hud1), (50, hud2)):
+                    cv2.putText(img_bgr, txt, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+                    cv2.putText(img_bgr, txt, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                if save_mp4:
+                    frames.append(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+                else:
+                    cv2.imshow("UMI live prediction", img_bgr)
+
+            elapsed = time.perf_counter() - t0
+            if step % 10 == 0:
+                logger.info(
+                    "step %d: inf=%.0fms (%.1f fps) grip_pred=%.2f",
+                    step,
+                    ms_ema,
+                    1000.0 / max(ms_ema, 1e-3),
+                    float(pred_rel[-1, 9]),
+                )
+            step += 1
+            if live_display:
+                key = cv2.waitKey(max(1, int(1000 / fps - elapsed)))
+                if key == 27:
+                    break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if live_display:
+            cv2.destroyAllWindows()
+        for camera in cameras.values():
+            camera.disconnect()
+        if save_mp4 and iio is not None and frames:
+            iio.imwrite(out_path, np.stack(frames), fps=fps, macro_block_size=1, quality=8)
+            logger.info("Saved %s (%d frames)", out_path, len(frames))
+        logger.info("Done after %d steps", step)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -409,9 +690,9 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--pretrained_path", required=True)
-    parser.add_argument("--dataset_root", required=True)
+    parser.add_argument("--dataset_root", default=None)
     parser.add_argument("--repo_id", default=None)
-    parser.add_argument("--episode_indices", type=int, nargs="+", required=True)
+    parser.add_argument("--episode_indices", type=int, nargs="+", default=None)
     parser.add_argument("--output_dir", default="outputs/debug/viz_umi")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=1000)
@@ -451,10 +732,50 @@ def main():
         action="store_true",
         help="Zero-noise flow-matching decoding (all-zero latent) for SmolVLA/pi0.5; ignored for ACT.",
     )
+
+    # Camera mode (live inference from a physical camera, no robot required)
+    parser.add_argument(
+        "--cameras",
+        default=None,
+        help="YAML camera spec for live camera mode, e.g. "
+        "\"{camera: {type: intelrealsense, fps: 30, width: 640, height: 480}}\". "
+        "RealSense serial is auto-detected if omitted.",
+    )
+    parser.add_argument(
+        "--initial_state",
+        type=float,
+        nargs=7,
+        default=None,
+        help="Camera mode: initial 7D EE state [x,y,z,wx,wy,wz,gripper] (default: identity + 0.5 gripper).",
+    )
+    parser.add_argument(
+        "--update_state",
+        action="store_true",
+        help="Camera mode: auto-chain the last prediction as the next base pose.",
+    )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=0,
+        help="Camera mode: stop after this many steps (0 = run until Esc/Ctrl-C).",
+    )
+    parser.add_argument(
+        "--mp4",
+        action="store_true",
+        help="Camera mode: save to <output_dir>/camera_live.mp4 instead of live display.",
+    )
     args = parser.parse_args()
 
     if iio is None:
         parser.error("imageio is required (pip install imageio)")
+
+    if args.cameras:
+        run_camera_mode(args)
+        return
+    if not args.dataset_root:
+        parser.error("--dataset_root is required for dataset mode (use --cameras for live camera mode)")
+    if not args.episode_indices:
+        parser.error("--episode_indices is required for dataset mode")
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)

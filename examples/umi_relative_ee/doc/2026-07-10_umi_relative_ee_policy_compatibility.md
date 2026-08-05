@@ -748,7 +748,7 @@ without that field use the original shared key for backward compatibility.
 
 | File | Description |
 |---|---|
-| examples/umi_relative_ee/2026-07-10_umi_relative_ee_policy_compatibility.md | This compatibility review and implementation plan |
+| examples/umi_relative_ee/doc/2026-07-10_umi_relative_ee_policy_compatibility.md | This compatibility review and implementation plan |
 
 ## Optional Offline Validation
 

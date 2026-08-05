@@ -23,18 +23,18 @@ wrappers around that same trainer. ACT and SmolVLA use MIN_MAX normalization;
 π0.5 uses QUANTILES. Existing ACT and SmolVLA checkpoints with the legacy
 serialized processor names load directly.
 
-- ACT and shared processor design: `umi_style_ee_processor_pipeline.md`
-- SmolVLA runbook: `smolvla_relative_ee_training.md`
-- SmolVLA/π0.5 padded-noise strategies: `padded_noise_strategy.md`
-- π0.5 commands: the sections below and `train_pi05_lora.sh`
-- Unified prediction visualization: `prediction_visualization.md`
+- ACT and shared processor design: `doc/umi_style_ee_processor_pipeline.md`
+- SmolVLA runbook: `doc/smolvla_relative_ee_training.md`
+- SmolVLA/π0.5 padded-noise strategies: `doc/padded_noise_strategy.md`
+- π0.5 commands: the sections below and `shell_scripts/train_pi05_lora.sh`
+- Unified prediction visualization: `doc/prediction_visualization.md`
 - Policy-neutral ACT/SmolVLA/π0.5 dataset metrics: `eval_open_loop_dataset.py`
-- Pi0.5 and SmolVLA RTC deployment: `rtc.md`
-- Piper async server/client deployment: `ASYNC_INFERENCE.md`
-- Rotation normalization analysis (UMI identity vs. our per-dim scaling; jumpiness hypothesis + A/B test): `rotation_normalization.md`
+- Pi0.5 and SmolVLA RTC deployment: `doc/rtc.md`
+- Piper async server/client deployment: `doc/ASYNC_INFERENCE.md`
+- Rotation normalization analysis (UMI identity vs. our per-dim scaling; jumpiness hypothesis + A/B test): `doc/rotation_normalization.md`
 - Migration manifest and checksums: `../../docs/umi_migration_manifest.md`
 - Historical-tool smoke results: `../../docs/umi_legacy_tool_smoke.md`
-- Historical compatibility review: `2026-07-10_umi_relative_ee_policy_compatibility.md`
+- Historical compatibility review: `doc/2026-07-10_umi_relative_ee_policy_compatibility.md`
 
 ## Install
 
@@ -67,7 +67,7 @@ root: /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1000onesb
 Run:
 
 ```bash
-bash examples/umi_relative_ee/train_pi05_lora.sh
+bash examples/umi_relative_ee/shell_scripts/train_pi05_lora.sh
 ```
 
 To point it elsewhere without editing the file:
@@ -79,7 +79,7 @@ VALIDATION_DATASET_REPO_ID=my_org/my_validation_dataset \
 VALIDATION_DATASET_ROOT=/data/my_validation_dataset \
 OUTPUT_DIR=outputs/train/my_pi05_umi_lora \
 POLICY_REPO_ID=my_org/my_pi05_umi_lora \
-bash examples/umi_relative_ee/train_pi05_lora.sh
+bash examples/umi_relative_ee/shell_scripts/train_pi05_lora.sh
 ```
 
 The 24 GB launcher uses LoRA rank 16, bf16, gradient

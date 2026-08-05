@@ -373,4 +373,4 @@ The batch-size-8 smoke run produced finite training losses of `0.584` and `0.537
 - `src/lerobot/processor/relative_action_processor.py`: shared SE(3), state derivation, and cache steps.
 - `src/lerobot/policies/smolvla/configuration_smolvla.py`: SmolVLA and relative-EE configuration fields.
 - `src/lerobot/policies/smolvla/modeling_smolvla.py`: SmolVLA training and inference implementation.
-- `examples/umi_relative_ee/umi_style_ee_processor_pipeline.md`: policy-independent relative-EE math and deployment details.
+- `examples/umi_relative_ee/doc/umi_style_ee_processor_pipeline.md`: policy-independent relative-EE math and deployment details.
