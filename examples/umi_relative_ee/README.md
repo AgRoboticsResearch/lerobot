@@ -55,6 +55,100 @@ The first run also needs access to Hugging Face to download
 > receives HTTP 403 for that repository.
 
 
+## Recommended training commands
+
+The current recommended command for each policy on the strawberry
+`1302_occlusion` dataset with the separate validation set. The entry scripts
+are executable, so run them directly (`./` or absolute path). Dataset roots are
+host-specific: ACT and π0.5 below use the local workstation (`/mnt/...`),
+SmolVLA uses `kiwi` (`/home/zfei/...`). Adjust roots to the host you run on.
+
+### π0.5 — 38M split-rank LoRA (current recommendation)
+
+The completed 38M split-rank run (global rank/alpha 16, action-expert 32/32,
+masked-subspace flow, 38,624,288 trainable params) is the current π0.5
+fine-tuning recommendation. Launch it through the batch-scaled wrapper —
+batch 4 runs 100K steps and reproduces the completed run:
+
+```bash
+bash examples/umi_relative_ee/shell_scripts/run_pi05_openpi_split_lora_umi.sh 4
+```
+
+Full config, the validation-loss trajectory, and the matched-50K capacity
+comparison against the 220M run are in `doc/pi0.5_finetunning.md`. The narrow
+`train_pi05_lora.sh` starter in "Training baseline" below is the low-memory
+default, not the recommended config.
+
+### ACT
+
+Identity-rot6d normalization, chunk 30, 2.5M steps, batch 8, on the local
+workstation:
+
+```bash
+/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified/examples/umi_relative_ee/train_relative_ee_processor.py \
+  --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1302_occlusion \
+  --dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1302_occlusion \
+  --validation_dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_validation \
+  --validation_dataset.root=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation \
+  --val_freq=10000 \
+  --policy.type=act \
+  --policy.use_umi_relative_ee=true \
+  --policy.umi_rot6d_identity_norm=true \
+  --policy.device=cuda \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.repo_id=zfff/act_umi_identity_rot6d_1302 \
+  --policy.push_to_hub=false \
+  --seed=1000 \
+  --save_freq=100000 \
+  --steps=2500000 \
+  --batch_size=8 \
+  --num_workers=4 \
+  --log_freq=200 \
+  --eval_freq=0 \
+  --output_dir=outputs/train/act_umi_identity_rot6d_1302 \
+  --job_name=act_umi_identity_rot6d_1302 \
+  --wandb.enable=true \
+  --wandb.project=lerobot
+```
+
+### SmolVLA
+
+OpenPI full-width flow, chunk 30, 1M steps, batch 8, on `kiwi`:
+
+```bash
+/home/zfei/code/lerobot-fei-v5.0-umi-unified/examples/umi_relative_ee/train_relative_ee_processor.py \
+  --dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_1302_occlusion \
+  --dataset.root=/home/zfei/data/sroiv2_strawberry_picking_lab_1302_occlusion \
+  --validation_dataset.repo_id=sroi/sroiv2_strawberry_picking_lab_validation \
+  --validation_dataset.root=/home/zfei/data/sroiv2_strawberry_picking_lab_validation \
+  --val_freq=50000 \
+  --policy.path=lerobot/smolvla_base \
+  --policy.input_features=null \
+  --policy.use_umi_relative_ee=true \
+  --policy.device=cuda \
+  --policy.chunk_size=30 \
+  --policy.n_action_steps=30 \
+  --policy.train_state_proj=true \
+  --policy.optimizer_lr=0.0001 \
+  --policy.scheduler_warmup_steps=1000 \
+  --policy.scheduler_decay_steps=1000000 \
+  --policy.scheduler_decay_lr=0.0000025 \
+  --policy.repo_id=zfff/smolvla_openpi_fullwidth_1302_1M \
+  --policy.push_to_hub=false \
+  --seed=1000 \
+  --steps=1000000 \
+  --save_freq=100000 \
+  --log_freq=200 \
+  --eval_freq=0 \
+  --batch_size=8 \
+  --num_workers=4 \
+  --output_dir=outputs/train/smolvla_openpi_fullwidth_1302_1M \
+  --job_name=smolvla_openpi_fullwidth_1302_1M \
+  --wandb.enable=true \
+  --wandb.project=lerobot
+```
+
 ## Training baseline
 
 The launcher defaults to the dataset recorded in the source UMI notes:
