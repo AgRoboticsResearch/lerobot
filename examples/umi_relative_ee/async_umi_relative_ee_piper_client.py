@@ -173,6 +173,15 @@ class ActionBuffer:
         with self._lock:
             return len(self._actions)
 
+    def snapshot(self) -> list[TimedAction]:
+        """Return a timestep-sorted copy of the currently queued actions.
+
+        Non-consuming and thread-safe. Used by the camera-only client to project
+        the full remaining plan onto the camera image without advancing the queue.
+        """
+        with self._lock:
+            return [self._actions[ts] for ts in sorted(self._actions)]
+
     def ready_for_observation(self, threshold: float) -> bool:
         with self._lock:
             if self.action_chunk_size <= 0:

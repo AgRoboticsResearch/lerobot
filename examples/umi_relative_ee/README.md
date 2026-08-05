@@ -112,6 +112,13 @@ workstation:
   --wandb.project=lerobot
 ```
 
+> **Result (trained 2026-08-05 on 1459_occlusion, 1M steps):** ACT 52M params,
+> 11h30m. Best validation among saved checkpoints is **800K (val 0.0338)**;
+> the global optimum 750K (0.0332) is not saved (checkpoints are every 100K),
+> and val is flat at about 0.0334 from ~700K on with no overfit blowup. This
+> beats the prior 1302_occlusion ACT run (best ~0.0394). Checkpoints at
+> `outputs/train/act_umi_identity_rot6d_1459`.
+
 ### SmolVLA
 
 OpenPI full-width flow, chunk 30, 1M steps, batch 8, on `kiwi`:
@@ -248,3 +255,102 @@ the saved postprocessor uses that cached chunk-start pose for all 30 targets.
 During execution, continue updating the two-frame state history every control
 tick. Convert the resulting absolute 7D targets through IK before sending joint
 commands.
+
+## Deploy state: where the EE pose comes from and how the two-frame state is built
+
+The policy never consumes a raw 7D pose. It consumes a flattened **20D
+two-pose relative state**, derived from a *current* and a *previous* absolute
+7D EE pose. This section records where those poses come from at deploy time and
+why the sync and async deploy paths build the pair differently. Full source
+citations are in `doc/live_inference_input_contract_and_pose_source.md`.
+
+### The 7D state is robot proprioception (FK), not SLAM
+
+Each control tick, both `deploy_umi_relative_ee_piper.py` and the async Piper
+client build the **current** 7D absolute EE pose of the `camera_link` frame with
+`ee_pose_aa_from_fk`:
+
+```text
+[x, y, z, axis_angle_x, axis_angle_y, axis_angle_z, gripper_norm]
+ \_____ position _____/  \____ orientation ____/   normalized 0..1
+```
+
+- `x,y,z` + axis-angle come from `kinematics.forward_kinematics(joints)` — placo
+  solving the URDF chain from base to `camera_link` from the six joint encoders;
+- `gripper_norm` is the gripper reading normalized to `[0,1]`.
+
+There is **no SLAM/visual-odometry tracker in the control loop.** The deploy
+pose is free proprioception from the arm, exactly like any robot-arm policy.
+(SLAM is offline data-collection only; see `doc/...pose_source.md` §5.) This is
+the single 7D **`current`** pose; the **`previous`** pose is simply
+`current(t-1)`.
+
+### The 20D state = `[inv(T_current) @ T_prev,  identity]`
+
+`to_umi_relative_state` (`src/lerobot/processor/umi_relative_ee_processor.py`)
+turns the `[previous, current]` pair into 20D by computing
+`inv(T_current) @ T_pose` for both poses and flattening:
+
+```text
+rel_prev    = inv(T_current) @ T_prev      -> [dx,dy,dz, rot6d(6), gripper]  (10D)
+rel_current = inv(T_current) @ T_current   -> identity                       (10D)
+=> 20D = [ rel_prev(10), identity(10) ]
+```
+
+The only non-trivial half is *how far the previous pose was from now*. **If the
+arm is held still, `prev ≈ current`, the whole 20D collapses to
+`[identity, identity]`, and the image alone drives the predicted chunk.** This
+is why the camera-only test client and `visualize_predictions.py` camera mode
+predict near-zero motion from a static identity pose, and why
+`--update_state` (chaining the last prediction as the next pose) is what
+synthesizes a motion cue in the no-robot visualizers.
+
+### Sync sends `[1,7]`; the preprocessor chains `previous` internally
+
+`deploy_umi_relative_ee_piper.py` keeps no `previous` variable. It sends only
+the current pose, and `UmiRelativeStateStep` synthesizes the pair from its own
+instance state (the `state.ndim == 2` branch):
+
+```python
+ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)   # [7]
+batch = {OBS_STATE: ee_aa.unsqueeze(0)}                                # [1,7]  single pose
+# inside UmiRelativeStateStep:
+#   previous = current if self._previous_state is None else self._previous_state
+#   state_pair = stack([previous, current])                            # [1,2,7]
+#   self._previous_state = current.detach().clone()                    # "chaining"
+```
+
+First tick: `_previous_state` is `None`, so `prev = current` (identity pair).
+Every later tick: `prev` is the pose from the previous call. This works because
+the sync `preprocessor` is a **persistent in-process object called every tick**,
+so its internal `_previous_state` stays exactly one step behind.
+
+### Async sends an explicit `[previous, current]` pair
+
+The async client maintains both poses itself and sends the pair
+(`np.stack([previous_ee, current_ee])` → `[2,7]`). The server passes it straight
+through (`_prepare_umi_observation` requires shape `(2,7)`), and
+`UmiRelativeStateStep` takes the provided-pair branch (`state.ndim == 3`,
+`shape[1] == 2`) instead of chaining. The "chaining" here happens in the client:
+`previous_ee = current_ee.copy()` at the end of each tick.
+
+This is **not** a stylistic choice — it is forced by the async decoupling. The
+client ticks every `1/fps`, but only **sends an observation when the action
+queue needs refilling** (roughly every `actions_per_chunk × chunk_size_threshold`
+ticks), so the server sees a *subset* of ticks. The two-frame state needs
+**consecutive** frames `current(t-1), current(t)`; if the server chained
+internally, its `_previous` would be the pose from the *last inference request*
+(many ticks ago) — not `t-1` — and the policy would get a stale, non-consecutive
+pair. The client is the only process that reads the arm every tick, so it owns
+the consecutive pair and ships it explicitly.
+
+### Net effect
+
+Both paths deliver identical `[1,2,7]` pairs to `to_umi_relative_state`, hence
+the same 20D state and the same policy input — the only difference is *who*
+remembers the previous pose (the in-process preprocessor vs the client). The
+predicted chunk is postprocessed with one chunk-start base in both cases (sync:
+one local `postprocessor(chunk)` call; async: the UMI server override
+postprocesses the whole chunk in a single call, deliberately **not** the stock
+per-action loop, which would re-base each target on a refreshed pose).
+

@@ -1452,10 +1452,32 @@ split-rank baseline has finished (section 24), so the local 4090 is idle.
 | 40K | 0.044948 |
 | 45K | 0.043402 |
 | 50K | 0.049185 |
+| 55K | 0.049476 |
+| 60K | 0.050197 |
+| 65K | 0.052390 |
+| 70K | 0.053407 |
+| 75K | 0.056286 |
+| 80K | 0.059316 |
+| 85K | 0.060923 |
+| 90K | 0.064176 |
+| 95K | 0.068004 |
+| 100K | 0.069094 |
 
-The kiwi run shares the 38M run's shape: best flow validation at 20K
-(**0.036459**, marginally lower than the 38M's 0.038474), then rising. It is
-still training, so these are interim numbers.
+The run completed all 100,000 steps on 2026-08-05 at 01:10 Asia/Taipei
+(24h20m wall, about 1.27 steps/s), processing 400K samples (3.30 epochs).
+Final train loss about 0.02. Best masked flow validation is at 20K
+(**0.036459**); from there it rises monotonically to 0.069094 at 100K — a
+steeper overfit climb than the 38M split-rank run (0.038474 -> 0.059480). The
+best-val checkpoint that is actually saved is 25K (0.040136), because
+checkpoints are written every 12.5K and the 20K optimum is not saved.
+
+Verdict: the 220M run is a negative capacity result. Its best flow val (20K)
+is only marginally lower than the 38M's (0.0365 vs 0.0385), yet it overfit
+harder by 100K (0.0691 vs 0.0595), and the matched-50K decoded comparison
+(section 28.6) showed no endpoint-quality advantage at equal training. The
+5.72x adapter capacity did not improve behavior; the 38M split-rank
+configuration remains the recommended π0.5 recipe (section 28, README). All
+eight checkpoints (12.5K-100K) plus `last` are saved on kiwi.
 
 ## 28. Open-loop prediction visualization of the two active runs
 
