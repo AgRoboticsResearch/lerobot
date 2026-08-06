@@ -195,10 +195,16 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
 
     metric_names = (
         "rotation_chunk_mean_deg",
+        "rotation_chunk_rmse_deg",
+        "rotation_chunk_mse_deg2",
         "rotation_end_deg",
         "xyz_chunk_mean_m",
+        "xyz_chunk_rmse_m",
+        "xyz_chunk_mse_m2",
         "xyz_end_m",
         "gripper_chunk_mean",
+        "gripper_chunk_rmse",
+        "gripper_chunk_mse",
         "gripper_end",
         "rot_jerk_deg",
         "xyz_jerk_m",
@@ -319,6 +325,13 @@ def main() -> None:
         rotation_error = rotation_error_deg(predicted, ground_truth)
         xyz_error = torch.linalg.vector_norm(predicted[:, :3] - ground_truth[:, :3], dim=-1)
         gripper_error = (predicted[:, 6] - ground_truth[:, 6]).abs()
+        # Trajectory MSE/RMSE over the chunk (mean / root-mean-square of the
+        # squared per-step error). RMSE is in natural units (deg, m); MSE is the
+        # raw squared quantity. Kept per-modality — combining deg, m, and gripper
+        # into one MSE would be meaningless.
+        rotation_mse = float((rotation_error**2).mean())
+        xyz_mse = float((xyz_error**2).mean())
+        gripper_mse = float((gripper_error**2).mean())
         pred_jerk = within_chunk_jerk(predicted)
         gt_jerk = within_chunk_jerk(ground_truth)
         samples.append(
@@ -326,10 +339,16 @@ def main() -> None:
                 "episode_index": episode_index,
                 "frame_index": frame_index,
                 "rotation_chunk_mean_deg": float(rotation_error.mean()),
+                "rotation_chunk_rmse_deg": float(rotation_mse**0.5),
+                "rotation_chunk_mse_deg2": rotation_mse,
                 "rotation_end_deg": float(rotation_error[-1]),
                 "xyz_chunk_mean_m": float(xyz_error.mean()),
+                "xyz_chunk_rmse_m": float(xyz_mse**0.5),
+                "xyz_chunk_mse_m2": xyz_mse,
                 "xyz_end_m": float(xyz_error[-1]),
                 "gripper_chunk_mean": float(gripper_error.mean()),
+                "gripper_chunk_rmse": float(gripper_mse**0.5),
+                "gripper_chunk_mse": gripper_mse,
                 "gripper_end": float(gripper_error[-1]),
                 "rot_jerk_deg": pred_jerk["rot_jerk_deg"],
                 "xyz_jerk_m": pred_jerk["xyz_jerk_m"],
