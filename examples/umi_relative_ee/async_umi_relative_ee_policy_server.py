@@ -15,6 +15,7 @@ chunk-start reference, and returns timestamped absolute 7D EE targets.
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 import pickle  # nosec
 import time
@@ -34,7 +35,7 @@ from lerobot.async_inference.helpers import (
 )
 from lerobot.async_inference.policy_server import PolicyServer
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.transport import services_pb2_grpc
+from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -59,16 +60,75 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             )
             policy_specs.policy_type = actual_type
             request.data = pickle.dumps(policy_specs)  # nosec
+
+        # Identity of the requested policy, so we can reuse an already-loaded
+        # checkpoint instead of reloading it. The base server reloads on every
+        # SendPolicyInstructions: ``self.policy = from_pretrained(...)`` builds the
+        # new ~7 GB pi05 on the GPU *before* dropping the old ``self.policy``, so two
+        # models briefly coexist and OOM a 16 GB card. Reuse the resident model when
+        # the checkpoint matches; otherwise free it first (see ``_free_policy``).
+        requested_key = (policy_specs.policy_type, policy_specs.pretrained_name_or_path)
+        loaded_key = getattr(self, "_loaded_policy_key", None)
+        if self.policy is not None and loaded_key == requested_key:
+            # Same checkpoint already on the GPU: refresh the per-request runtime
+            # knobs the base would have set and reset processor state. No reload,
+            # no extra GPU memory.
+            self.device = policy_specs.device
+            self.policy_type = policy_specs.policy_type
+            self.lerobot_features = policy_specs.lerobot_features
+            self.actions_per_chunk = policy_specs.actions_per_chunk
+            try:
+                self.policy.to(self.device)
+            except Exception:
+                self.logger.debug("Could not move reused policy to %s", self.device, exc_info=True)
+            self.policy.config.device = str(self.device)
+            self.policy.eval()
+            self.policy.reset()
+            if self.preprocessor is not None:
+                self.preprocessor.reset()
+            if self.postprocessor is not None:
+                self.postprocessor.reset()
+            self.logger.info(
+                "Reusing already-loaded %s policy from %s (reload skipped).",
+                policy_specs.policy_type,
+                policy_specs.pretrained_name_or_path,
+            )
+            return services_pb2.Empty()
+
+        # Different checkpoint (or first load): unload the previous policy and
+        # processors so the GPU is empty before from_pretrained allocates again.
+        self._free_policy()
+
         response = super().SendPolicyInstructions(request, context)
         if self.policy is not None:
             self.policy.config.device = str(self.device)
             self.policy.eval()
             self.policy.reset()
+            self._loaded_policy_key = requested_key
+        else:
+            self._loaded_policy_key = None
         if self.preprocessor is not None:
             self.preprocessor.reset()
         if self.postprocessor is not None:
             self.postprocessor.reset()
         return response
+
+    def _free_policy(self) -> None:
+        """Drop references to the loaded policy/processors and reclaim GPU memory.
+
+        Called before loading a *different* checkpoint so two models never coexist
+        on the GPU.
+        """
+        if self.policy is None and self.preprocessor is None and self.postprocessor is None:
+            return
+        self.logger.info("Unloading previous policy/processors to free GPU memory...")
+        self.policy = None
+        self.preprocessor = None
+        self.postprocessor = None
+        self._loaded_policy_key = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
         """Reject only duplicate timesteps.
