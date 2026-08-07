@@ -16,6 +16,7 @@ import pickle  # nosec
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +91,12 @@ except ModuleNotFoundError:
         resync_ik_safety,
     )
 
+try:
+    from examples.umi_relative_ee.control_logger import ControlLogger, make_control_logger
+except ModuleNotFoundError:
+    # Supports direct execution from inside examples/umi_relative_ee.
+    from control_logger import ControlLogger, make_control_logger  # type: ignore[no-redef]
+
 # Trajectory-projection helpers reused verbatim from visualize_predictions.py so the
 # overlay is pixel-identical to its camera-mode projection. Optional: if that module
 # cannot be imported, _PROJECTION_AVAILABLE flips False and the client runs HUD-only.
@@ -161,6 +168,47 @@ _ASYNC_KEYMAP_HELP = """
 ║  ESC        graceful shutdown and safe pose                 ║
 ╚══════════════════════════════════════════════════════════════╝
 """.strip()
+
+
+def _loop_telemetry(loop_dt: deque[float]) -> str:
+    """HUD/log summary of recent control-loop timing.
+
+    Returns mean tick dt, the effective loop rate (samples / elapsed), and the
+    worst spike over the rolling window. A stable loop targeting ``--fps`` shows
+    ``loop~33ms (30Hz)`` with a spike close to the mean; a starved loop shows a
+    higher mean and a spike well above ``1/fps``.
+    """
+    if not loop_dt:
+        return "loop~--"
+    total = sum(loop_dt)
+    mean_ms = total / len(loop_dt) * 1000.0
+    hz = len(loop_dt) / total if total > 0 else 0.0
+    spike_ms = max(loop_dt) * 1000.0
+    return f"loop~{mean_ms:.0f}ms ({hz:.0f}Hz) spike~{spike_ms:.0f}ms"
+
+
+def _draw_hud_text(
+    frame: np.ndarray, txt: str, org: tuple[int, int], *, font_scale: float = 0.5
+) -> None:
+    """Draw a HUD line over a filled black backdrop, then a single yellow pass.
+
+    Replaces the old thick-black-outline + thin-yellow double-draw with a clean
+    filled rectangle behind the text: same legibility over any background,
+    without the chunky black halo.
+    """
+    (width, height), baseline = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    x, y = org
+    pad = 4
+    cv2.rectangle(
+        frame,
+        (x - pad, y - height - pad),
+        (x + width + pad, y + baseline + pad),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.putText(
+        frame, txt, org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), 1, cv2.LINE_AA
+    )
 
 
 @dataclass
@@ -471,6 +519,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="outputs/debug/async_piper_deploy",
                         help="Headless: save the annotated camera feed to <output_dir>/camera_live.mp4")
     parser.add_argument("--debug_visualize_queue_size", action="store_true")
+    parser.add_argument(
+        "--log", nargs="?", default=None, const="",
+        help="Log every control tick for offline analysis. Off by default. "
+             "Bare '--log' writes to logs/async_<timestamp>.csv (+ .npz/.json); "
+             "'--log PATH' uses PATH as the stem (the .csv/.npz/.json suffixes are "
+             "added automatically).",
+    )
     args = parser.parse_args()
     if not 0 <= args.chunk_size_threshold <= 1:
         parser.error("--chunk_size_threshold must be in [0, 1]")
@@ -507,13 +562,25 @@ def execute_ee_action(
     current_joints: np.ndarray,
     ik_pipeline: RobotProcessorPipeline,
     args: argparse.Namespace,
-) -> bool:
+) -> dict:
+    """Run IK + write joints/gripper.
+
+    Returns a result dict for logging:
+      ok            bool  — did we actually command the arm this tick?
+      skip_reason   str|None — "invalid_action" | "ik_failed" | None
+      joints_rad    np.ndarray(6,) | None — the IK joint command written
+      ee_action     np.ndarray(7,) | None — the popped absolute-EE target
+      gripper       float | None — normalized gripper command (0..1)
+    """
     action_aa = action.numpy()
+    gripper_value = float(np.clip(action_aa[6], 0.0, 1.0)) if action_aa.shape == (7,) else None
     if action_aa.shape != (7,) or not np.isfinite(action_aa).all():
         logger.warning(
             "Rejected invalid EE action: shape=%s finite=%s", action_aa.shape, np.isfinite(action_aa).all()
         )
-        return False
+        return {"ok": False, "skip_reason": "invalid_action", "joints_rad": None,
+                "ee_action": action_aa.copy() if action_aa.shape == (7,) else None,
+                "gripper": gripper_value}
 
     action_dict = {
         "ee.x": float(action_aa[0]),
@@ -529,11 +596,11 @@ def execute_ee_action(
         result = ik_pipeline((action_dict, observation_dict))
     except Exception as exc:
         logger.warning("IK rejected action: %s", exc)
-        return False
+        return {"ok": False, "skip_reason": "ik_failed", "joints_rad": None,
+                "ee_action": action_aa.copy(), "gripper": gripper_value}
 
     joint_values = np.array([result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS])
     piper.write_joints(joint_values)
-    gripper_value = float(np.clip(action_aa[6], 0.0, 1.0))
     if gripper is not None:
         kp, kd, position = gripper_norm_to_external(
             gripper_value,
@@ -543,7 +610,8 @@ def execute_ee_action(
         gripper.send_command(kp=kp, kd=kd, position=position)
     else:
         piper.write_gripper(gripper_norm_to_builtin(gripper_value))
-    return True
+    return {"ok": True, "skip_reason": None, "joints_rad": joint_values,
+            "ee_action": action_aa.copy(), "gripper": gripper_value}
 
 
 def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_client: "UmiAsyncPolicyClient") -> None:
@@ -606,6 +674,7 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
     last_e2e_ms: float | None = None
     last_seen_merges = 0
     send_at = 0.0
+    loop_dt: deque[float] = deque(maxlen=60)
     loop_t0 = time.perf_counter()
     logger.info("Starting dry-run loop (Ctrl-C to stop)")
 
@@ -671,6 +740,7 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
                     hud = [
                         f"DRY-RUN  {args.policy_type.upper()}  step {step}  "
                         f"queue={action_buffer.size()}  {elapsed_s:.1f}s",
+                        _loop_telemetry(loop_dt),
                         f"state={np.round(current_ee, 3).tolist()}",
                     ]
                     if last_action is not None:
@@ -685,9 +755,7 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
                             f"net~{max(net_ms, 0.0):.0f}ms"
                         )
                     for y, txt in enumerate(hud, start=1):
-                        ypix = y * 25
-                        cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
-                        cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        _draw_hud_text(frame, txt, (10, y * 25))
                     if save_mp4:
                         frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                     else:
@@ -702,8 +770,10 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
                     None if last_action is None else np.round(last_action, 3).tolist(),
                 )
             step += 1
-            elapsed = time.perf_counter() - t0
-            time.sleep(max(0.0, 1.0 / args.fps - elapsed))
+            work = time.perf_counter() - t0
+            time.sleep(max(0.0, 1.0 / args.fps - work))
+            # Full tick period (work + sleep) — honest Hz, not work-only time.
+            loop_dt.append(time.perf_counter() - t0)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
@@ -745,12 +815,14 @@ def run(args: argparse.Namespace) -> None:
     piper_connected = False
     gripper_connected = False
     step_count = 0
+    ctrl_log: ControlLogger | None = None
     frames: list[np.ndarray] = []
     first_chunk_seen = False
     last_action: np.ndarray | None = None
     last_e2e_ms: float | None = None  # send -> first action of the response chunk executes
     last_seen_merges = 0
     send_at = 0.0
+    loop_dt: deque[float] = deque(maxlen=60)
     loop_t0 = time.perf_counter()
     save_mp4 = (not args.no_vis) and args.output_dir and not os.environ.get("DISPLAY")
     live_display = (not args.no_vis) and bool(os.environ.get("DISPLAY"))
@@ -858,9 +930,20 @@ def run(args: argparse.Namespace) -> None:
         single_actions_executed = 0
         last_sent_timestep: int | None = None
 
+        ctrl_log = make_control_logger(args, prefix="async")
+        if ctrl_log is not None:
+            ctrl_log.start()
+        tick = 0
+
         with KeyboardCommandHandler() as keyboard:
             while args.num_steps == 0 or step_count < args.num_steps:
                 loop_started = time.perf_counter()
+                tick += 1
+                diag = {
+                    "popped": False, "ik_ok": False, "skip_reason": "no_action",
+                    "action_timestep": None, "action_ee": None, "ik_joints_rad": None,
+                    "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
+                }
 
                 key = keyboard.poll()
                 while key is not None:
@@ -979,7 +1062,7 @@ def run(args: argparse.Namespace) -> None:
                                 "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
                                 np.round(last_action, 3), last_e2e_ms or -1.0,
                             )
-                        execute_ee_action(
+                        res = execute_ee_action(
                             timed_action.get_action(),
                             piper=piper,
                             gripper=gripper,
@@ -987,6 +1070,23 @@ def run(args: argparse.Namespace) -> None:
                             ik_pipeline=ik_pipeline,
                             args=args,
                         )
+                        diag.update(
+                            popped=True,
+                            action_timestep=timed_action.get_timestep(),
+                            action_ee=res["ee_action"],
+                            ik_joints_rad=res["joints_rad"],
+                            ik_ok=res["ok"],
+                            skip_reason=res["skip_reason"],
+                            gripper=res["gripper"],
+                        )
+                        if res["ee_action"] is not None:
+                            diag["ee_delta_m"] = float(
+                                np.linalg.norm(res["ee_action"][:3] - current_ee[:3])
+                            )
+                        if res["joints_rad"] is not None:
+                            diag["joint_delta_max_rad"] = float(
+                                np.max(np.abs(res["joints_rad"] - current_joints))
+                            )
                         step_count += 1
                         if single_chunk:
                             single_actions_executed += 1
@@ -1021,6 +1121,7 @@ def run(args: argparse.Namespace) -> None:
                         hud = [
                             f"{state.name}  {args.policy_type.upper()}  step {step_count}  "
                             f"queue={action_buffer.size()}  {elapsed_s:.1f}s",
+                            _loop_telemetry(loop_dt),
                         ]
                         if last_action is not None:
                             hud.append(f"state={np.round(current_ee, 3).tolist()}")
@@ -1035,9 +1136,7 @@ def run(args: argparse.Namespace) -> None:
                                 f"net~{max(net_ms, 0.0):.0f}ms"
                             )
                         for y, txt in enumerate(hud, start=1):
-                            ypix = y * 25
-                            cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
-                            cv2.putText(frame, txt, (10, ypix), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                            _draw_hud_text(frame, txt, (10, y * 25))
                         if save_mp4:
                             frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                         else:
@@ -1046,14 +1145,47 @@ def run(args: argparse.Namespace) -> None:
 
                 if step_count % 30 == 0:
                     logger.info(
-                        "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s",
+                        "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s %s",
                         step_count, action_buffer.size(), first_chunk_seen,
                         None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
                         None if last_action is None else np.round(last_action, 3).tolist(),
+                        _loop_telemetry(loop_dt),
                     )
 
-                elapsed = time.perf_counter() - loop_started
-                time.sleep(max(0.0, 1 / args.fps - elapsed))
+                work = time.perf_counter() - loop_started
+                time.sleep(max(0.0, 1 / args.fps - work))
+                # Full tick period (work + pacing sleep) — NOT work-only time, so the
+                # reported Hz is honest (the loop is physically always <= --fps).
+                tick_dt = time.perf_counter() - loop_started
+                loop_dt.append(tick_dt)
+
+                if ctrl_log is not None:
+                    if not diag["popped"]:
+                        diag["skip_reason"] = (
+                            "paused" if state == LoopState.PAUSED else "underrun"
+                        )
+                    ctrl_log.log(
+                        step=step_count,
+                        tick=tick,
+                        tick_dt_ms=tick_dt * 1000.0,
+                        work_ms=work * 1000.0,
+                        state=state.name,
+                        queue=action_buffer.size(),
+                        popped=diag["popped"],
+                        ik_ok=diag["ik_ok"],
+                        skip_reason=diag["skip_reason"],
+                        action_timestep=diag["action_timestep"],
+                        ee_delta_m=diag["ee_delta_m"],
+                        joint_delta_max_rad=diag["joint_delta_max_rad"],
+                        gripper=diag["gripper"],
+                        action_ee=diag["action_ee"],
+                        current_ee=current_ee,
+                        ik_joints_rad=diag["ik_joints_rad"],
+                        current_joints_rad=current_joints,
+                        e2e_ms=last_e2e_ms,
+                        wire_ms=policy_client.last_wire_ms,
+                        server_ms=policy_client.last_server_ms,
+                    )
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception:
@@ -1085,6 +1217,11 @@ def run(args: argparse.Namespace) -> None:
         if piper_connected:
             piper.disconnect()
         policy_client.stop()
+        if ctrl_log is not None:
+            try:
+                ctrl_log.close()
+            except Exception:
+                logger.exception("Failed to write control log")
         if args.debug_visualize_queue_size and action_buffer.queue_size_history:
             visualize_action_queue_size(action_buffer.queue_size_history)
         logger.info("Disconnected after %s executed action steps", step_count)

@@ -56,6 +56,12 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
 )
 from lerobot.utils.constants import OBS_STATE
 
+try:
+    from examples.umi_relative_ee.control_logger import ControlLogger, make_control_logger
+except ModuleNotFoundError:
+    # Supports direct execution from inside examples/umi_relative_ee.
+    from control_logger import ControlLogger, make_control_logger  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
 
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -458,6 +464,12 @@ def parse_args():
                         help="Initial 7D aa state [x,y,z,wx,wy,wz,gripper] for dry_run")
     parser.add_argument("--update_state", action="store_true",
                         help="Chain predictions: last predicted action becomes next state (dry_run)")
+    parser.add_argument(
+        "--log", nargs="?", default=None, const="",
+        help="Log every control tick for offline analysis. Off by default. "
+             "Bare '--log' writes to logs/sync_<timestamp>.csv (+ .npz/.json); "
+             "'--log PATH' uses PATH as the stem (suffixes added automatically).",
+    )
     return parser.parse_args()
 
 
@@ -752,11 +764,41 @@ def main():
 
     # ── 8. Main control loop ───────────────────────────────────────────
     step_count = 0
+    ctrl_log: ControlLogger | None = None
     action_queue = []
     chunk_traj_3d = None
 
     logger.info(f"Starting control loop at {args.fps} Hz")
     print(_KEYMAP_HELP)
+
+    ctrl_log = make_control_logger(args, prefix="sync")
+    if ctrl_log is not None:
+        ctrl_log.start()
+    tick = 0
+
+    def log_tick() -> None:
+        """Record one control tick to the --log (no-op when logging is off).
+
+        Reads the per-tick `diag` dict + loop locals; called at the end of BOTH
+        the PAUSED and INFERENCE branches so every tick is logged.
+        """
+        if ctrl_log is None:
+            return
+        if state == LoopState.PAUSED:
+            # Sync pops every tick (so the overlay advances during pause) but
+            # never runs IK while paused → label distinctly from real skips.
+            diag["skip_reason"] = "paused"
+        elif not diag["popped"]:
+            diag["skip_reason"] = "underrun"
+        ctrl_log.log(
+            step=step_count,
+            tick=tick,
+            tick_dt_ms=(time.perf_counter() - t0) * 1000.0,
+            state=state.name,
+            queue=len(action_queue),
+            e2e_ms=None, wire_ms=None, server_ms=None,
+            **diag,
+        )
 
     try:
         with KeyboardCommandHandler() as kb:
@@ -766,6 +808,14 @@ def main():
 
             while args.num_steps == 0 or step_count < args.num_steps:
                 t0 = time.perf_counter()
+                tick += 1
+                diag = {
+                    "popped": False, "ik_ok": False, "skip_reason": "no_action",
+                    "action_timestep": None, "action_ee": None, "ik_joints_rad": None,
+                    "current_ee": None, "current_joints_rad": None,
+                    "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
+                    "work_ms": None,
+                }
 
                 # ── 8a. Drain keyboard queue ────────────────────────────
                 key = kb.poll()
@@ -832,6 +882,8 @@ def main():
                 gripper_norm = np.clip(gripper_norm, 0.0, 1.0)
 
                 ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)
+                diag["current_ee"] = ee_aa
+                diag["current_joints_rad"] = current_joints
                 state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
                 batch = {OBS_STATE: state_tensor}
                 add_policy_task(batch, policy, args.task)
@@ -889,6 +941,8 @@ def main():
                 # Pop one action (queue advances in both states so overlay cadence
                 # matches inference cadence — typically one new chunk per n_action_steps).
                 action_aa = action_queue.pop(0)
+                diag["popped"] = True
+                diag["action_ee"] = action_aa
                 # In single-chunk mode: detect when we just popped the last action
                 # of the chunk so we can return to PAUSED after this tick's write.
                 last_of_chunk = single_chunk and len(action_queue) == 0
@@ -909,8 +963,10 @@ def main():
                 # ── 8f. PAUSED: arm holds pose, loop continues ───────────
                 if state == LoopState.PAUSED:
                     elapsed = time.perf_counter() - t0
+                    diag["work_ms"] = elapsed * 1000.0
                     if elapsed < 1.0 / args.fps:
                         time.sleep(1.0 / args.fps - elapsed)
+                    log_tick()
                     continue
 
                 # ── 8g. INFERENCE: IK + write to motors ──────────────────
@@ -941,6 +997,7 @@ def main():
                 except Exception as e:
                     logger.warning(f"IK failed: {e}, skipping action")
                     ik_failed = True
+                    diag["skip_reason"] = "ik_failed"
 
                 if not ik_failed:
                     joint_values = np.array(
@@ -961,6 +1018,13 @@ def main():
                         pos_mm = gripper_norm_to_builtin(gripper_value)
                         piper.write_gripper(pos_mm)
 
+                    diag.update(
+                        ik_ok=True, skip_reason=None, ik_joints_rad=joint_values,
+                        gripper=gripper_value,
+                        ee_delta_m=float(np.linalg.norm(action_aa[:3] - ee_aa[:3])),
+                        joint_delta_max_rad=float(np.max(np.abs(joint_values - current_joints))),
+                    )
+
                 step_count += 1
 
                 # Single-chunk mode: return to PAUSED after executing the whole chunk
@@ -971,8 +1035,10 @@ def main():
                     logger.info("Chunk executed — back to PAUSED")
 
                 elapsed = time.perf_counter() - t0
+                diag["work_ms"] = elapsed * 1000.0
                 if elapsed < 1.0 / args.fps:
                     time.sleep(1.0 / args.fps - elapsed)
+                log_tick()
 
                 if step_count % 100 == 0:
                     logger.info(
@@ -992,6 +1058,11 @@ def main():
                 camera.disconnect()
             except Exception:
                 pass
+        if ctrl_log is not None:
+            try:
+                ctrl_log.close()
+            except Exception:
+                logger.exception("Failed to write control log")
         # Always return to safe pose before disconnecting
         try:
             move_to_safe(piper, gripper, args.gripper_kp, args.gripper_kd)
