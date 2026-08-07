@@ -767,6 +767,11 @@ def main():
     ctrl_log: ControlLogger | None = None
     action_queue = []
     chunk_traj_3d = None
+    # UMI relative-EE chunk provenance for the --log (anchor + raw relative per chunk).
+    chunk_id = 0
+    chunk_ref_ee = None       # 7D EE pose that anchored the current chunk (T_anchor)
+    chunk_rel = None          # raw per-step relative model output [T, D] for the current chunk
+    chunk_idx = 0             # position within the current chunk (advances per pop)
 
     logger.info(f"Starting control loop at {args.fps} Hz")
     print(_KEYMAP_HELP)
@@ -815,6 +820,8 @@ def main():
                     "current_ee": None, "current_joints_rad": None,
                     "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
                     "work_ms": None,
+                    "chunk_id": None, "chunk_ref_ee": None,
+                    "action_abs": None, "action_agg": None, "action_rel": None,
                 }
 
                 # ── 8a. Drain keyboard queue ────────────────────────────
@@ -929,6 +936,13 @@ def main():
                         actions_aa[i]
                         for i in range(min(args.n_action_steps, len(actions_aa)))
                     ]
+                    # UMI chunk provenance for the --log: this chunk is anchored at the
+                    # current EE pose (ee_aa), and chunk_rel is its raw relative model
+                    # output [T, D] (pred_norm, before the postprocessor made it absolute).
+                    chunk_id += 1
+                    chunk_ref_ee = ee_aa.copy()
+                    chunk_rel = pred_norm[0].detach().cpu().numpy()
+                    chunk_idx = 0
                     logger.info(f"Predicted chunk of {len(action_queue)} actions")
 
                     chunk_traj_3d = None
@@ -943,6 +957,15 @@ def main():
                 action_aa = action_queue.pop(0)
                 diag["popped"] = True
                 diag["action_ee"] = action_aa
+                # Per-tick chunk provenance: anchor + raw relative + the absolute target
+                # (SYNC replays one chunk verbatim, so pre-ensemble == executed).
+                diag["chunk_id"] = chunk_id
+                diag["chunk_ref_ee"] = chunk_ref_ee
+                diag["action_abs"] = action_aa
+                diag["action_agg"] = action_aa
+                if chunk_rel is not None and chunk_idx < len(chunk_rel):
+                    diag["action_rel"] = chunk_rel[chunk_idx]
+                chunk_idx += 1
                 # In single-chunk mode: detect when we just popped the last action
                 # of the chunk so we can return to PAUSED after this tick's write.
                 last_of_chunk = single_chunk and len(action_queue) == 0

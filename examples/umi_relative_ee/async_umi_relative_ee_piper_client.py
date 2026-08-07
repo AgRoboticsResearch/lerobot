@@ -18,7 +18,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -211,11 +211,24 @@ def _draw_hud_text(
     )
 
 
+def _to_np(t) -> np.ndarray | None:
+    """None-safe torch tensor / array → 1D float numpy, for control-log fields."""
+    if t is None:
+        return None
+    if hasattr(t, "detach"):
+        t = t.detach().cpu()
+    return np.asarray(t, dtype=float).ravel()
+
+
 @dataclass
 class ActionBuffer:
     """Thread-safe timeline of overlapping absolute EE action chunks."""
 
     aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+    # Optional temporal-ensemble audit callback, fired per overlapping timestep:
+    #   on_merge(timestep, existing_abs, incoming_abs, aggregated_abs, ref_ee, chunk_id)
+    # Run under self._lock from the receiver thread → must not block or do I/O.
+    on_merge: Callable | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -224,6 +237,8 @@ class ActionBuffer:
         self.action_chunk_size = -1
         self.minimum_chunk_timestamp = float("-inf")
         self.queue_size_history: list[int] = []
+        # Monotonic client-side chunk id (unique across the whole run, survives clear()).
+        self._chunk_counter = 0
 
     def clear(self, *, reject_chunks_before: float | None = None) -> None:
         with self._lock:
@@ -244,18 +259,33 @@ class ActionBuffer:
 
             current = {step: item.get_action() for step, item in self._actions.items()}
             future: dict[int, TimedAction] = {}
+            self._chunk_counter += 1
+            chunk_id = self._chunk_counter  # client-side id for this incoming chunk
             for item in incoming:
                 timestep = item.get_timestep()
                 if timestep <= self.latest_action:
                     continue
-                action = item.get_action().detach().cpu()
+                inc = item.get_action().detach().cpu()  # incoming ABSOLUTE target (pre-blend)
                 if timestep in current:
-                    action = self.aggregate_fn(current[timestep], action)
-                future[timestep] = TimedAction(
-                    timestamp=item.get_timestamp(),
-                    timestep=timestep,
-                    action=action,
-                )
+                    existing = current[timestep]  # already-queued absolute (prior chunk)
+                    action = self.aggregate_fn(existing, inc)  # blended ABSOLUTE
+                    if self.on_merge is not None:
+                        try:  # audit: confirm ensemble blends absolute targets, not ΔT's
+                            self.on_merge(timestep, existing, inc, action,
+                                          getattr(item, "reference_ee", None), chunk_id)
+                        except Exception:  # noqa: BLE001
+                            pass
+                else:
+                    action = inc
+                ta = TimedAction(timestamp=item.get_timestamp(), timestep=timestep, action=action)
+                # Carry the incoming chunk's provenance for pop-time logging. ``action``
+                # is the post-blend absolute target; ``last_incoming_abs`` is the latest
+                # chunk's pre-blend absolute for this timestep.
+                ta.reference_ee = getattr(item, "reference_ee", None)
+                ta.relative_action = getattr(item, "relative_action", None)
+                ta.chunk_id = chunk_id
+                ta.last_incoming_abs = inc
+                future[timestep] = ta
 
             self._actions = future
             self.action_chunk_size = max(self.action_chunk_size, len(incoming))
@@ -933,6 +963,25 @@ def run(args: argparse.Namespace) -> None:
         ctrl_log = make_control_logger(args, prefix="async")
         if ctrl_log is not None:
             ctrl_log.start()
+
+            # Audit the temporal ensemble: on every overlapping-timestep blend, record
+            # the existing absolute target (prior chunk), the incoming absolute + its
+            # anchor, and the aggregated result, so offline analysis can confirm we blend
+            # ABSOLUTE targets (same base frame), not relative ΔT's. Runs in the receiver
+            # thread under ActionBuffer's lock → only appends to a list, never blocks.
+            def _on_merge(timestep, existing, incoming, aggregated, ref_ee, chunk_id):
+                ex, ic, ag, rf = _to_np(existing), _to_np(incoming), _to_np(aggregated), _to_np(ref_ee)
+                # Infer the convex blend weight with ag ≈ w*ex + (1-w)*ic (mean over moving dims).
+                w = float("nan")
+                if ex is not None and ic is not None and ag is not None:
+                    denom = ex - ic
+                    m = np.abs(denom) > 1e-9
+                    if m.any():
+                        w = float(np.mean((ag[m] - ic[m]) / denom[m]))
+                ctrl_log.log_merge(timestep=int(timestep), chunk_id=int(chunk_id), weight=w,
+                                   existing_abs=ex, incoming_abs=ic, aggregated_abs=ag, ref_ee=rf)
+
+            action_buffer.on_merge = _on_merge
         tick = 0
 
         with KeyboardCommandHandler() as keyboard:
@@ -943,6 +992,8 @@ def run(args: argparse.Namespace) -> None:
                     "popped": False, "ik_ok": False, "skip_reason": "no_action",
                     "action_timestep": None, "action_ee": None, "ik_joints_rad": None,
                     "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
+                    "chunk_id": None, "chunk_ref_ee": None,
+                    "action_abs": None, "action_agg": None, "action_rel": None,
                 }
 
                 key = keyboard.poll()
@@ -1078,6 +1129,13 @@ def run(args: argparse.Namespace) -> None:
                             ik_ok=res["ok"],
                             skip_reason=res["skip_reason"],
                             gripper=res["gripper"],
+                            # UMI chunk provenance: anchor + raw relative + latest chunk's
+                            # pre-blend absolute, vs the post-ensemble absolute executed.
+                            chunk_id=getattr(timed_action, "chunk_id", None),
+                            chunk_ref_ee=_to_np(getattr(timed_action, "reference_ee", None)),
+                            action_abs=_to_np(getattr(timed_action, "last_incoming_abs", None)),
+                            action_agg=res["ee_action"],
+                            action_rel=_to_np(getattr(timed_action, "relative_action", None)),
                         )
                         if res["ee_action"] is not None:
                             diag["ee_delta_m"] = float(
@@ -1175,6 +1233,11 @@ def run(args: argparse.Namespace) -> None:
                         ik_ok=diag["ik_ok"],
                         skip_reason=diag["skip_reason"],
                         action_timestep=diag["action_timestep"],
+                        chunk_id=diag["chunk_id"],
+                        chunk_ref_ee=diag["chunk_ref_ee"],
+                        action_abs=diag["action_abs"],
+                        action_agg=diag["action_agg"],
+                        action_rel=diag["action_rel"],
                         ee_delta_m=diag["ee_delta_m"],
                         joint_delta_max_rad=diag["joint_delta_max_rad"],
                         gripper=diag["gripper"],

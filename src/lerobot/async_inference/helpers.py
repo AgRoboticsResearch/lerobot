@@ -224,6 +224,20 @@ class TimedAction(TimedData):
     # filled by the UMI relative-EE policy server. None with the stock server; clients
     # read it to split the wire time into transport vs server compute.
     server_elapsed_ms: float | None = None
+    # UMI relative-EE chunk-provenance, filled by the UMI relative-EE policy server so
+    # clients can audit the temporal ensemble (None with the stock server). ``action``
+    # above is the ABSOLUTE 7D EE target = reference_ee ∘ relative_action; these two let
+    # a client confirm the ensemble blends absolute targets (same base frame), not the
+    # relative deltas directly.
+    reference_ee: Action | None = None      # 7D absolute EE pose that anchored the chunk (T_anchor)
+    relative_action: Action | None = None   # raw per-step relative action ΔT (model output)
+    # Client-side provenance, set by the async Piper client's ActionBuffer when it
+    # merges/ensembles chunks (None on the server side). ``action`` above is the
+    # post-blend absolute target; ``last_incoming_abs`` is the latest chunk's
+    # pre-blend absolute for this timestep, kept so the --log can contrast the raw
+    # chunk target against the ensembled one.
+    chunk_id: int | None = None
+    last_incoming_abs: Action | None = None
 
     def get_action(self):
         return self.action

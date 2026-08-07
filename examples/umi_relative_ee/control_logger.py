@@ -35,15 +35,36 @@ class ControlLogger:
       <stem>.csv   one row per tick (scalars + ';'-joined vectors) — pandas/Excel
       <stem>.npz   clean numeric arrays — numpy / matplotlib
       <stem>.json  run metadata + summary stats (mean dt, #IK skips, #underruns)
+
+    Per-tick UMI relative-EE chunk-provenance fields (added so the temporal
+    ensemble can be audited offline — see log_merge for the per-timestep blend):
+      chunk_id        which action chunk this tick's target came from
+      chunk_ref_ee    7D EE pose that anchored/conditioned that chunk (T_anchor)
+      action_abs      7D absolute EE target from that chunk (T_anchor ∘ ΔT), pre-ensemble
+      action_agg      7D aggregated absolute target actually executed (post weighted_average)
+      action_rel      raw relative action ΔT (model output; SYNC: in-process, ASYNC: server-reported)
+
+    And, for async runs only, a fourth sibling records each ensemble blend:
+      <stem>_merge.csv  one row per (chunk × overlapping timestep): the existing
+                        absolute target, the incoming chunk's absolute target +
+                        anchor, the weight, and the resulting aggregated target —
+                        so you can confirm the ensemble averages ABSOLUTE targets
+                        (same base frame), not relative ΔT's directly.
     """
 
     SCALAR_FIELDS: tuple[str, ...] = (
         "step", "tick", "t_s", "tick_dt_ms", "work_ms", "state", "queue",
-        "popped", "ik_ok", "skip_reason", "action_timestep",
+        "popped", "ik_ok", "skip_reason", "action_timestep", "chunk_id",
         "ee_delta_m", "joint_delta_max_rad", "gripper", "e2e_ms", "wire_ms", "server_ms",
     )
     ARRAY_FIELDS: tuple[str, ...] = (
         "action_ee", "current_ee", "ik_joints_rad", "current_joints_rad",
+        "chunk_ref_ee", "action_abs", "action_agg", "action_rel",
+    )
+    # Per-blend columns for the async temporal-ensemble audit log (<stem>_merge.csv).
+    MERGE_FIELDS: tuple[str, ...] = (
+        "step", "tick", "timestep", "chunk_id", "weight",
+        "existing_abs", "incoming_abs", "aggregated_abs", "ref_ee",
     )
 
     def __init__(self, stem: str, *, fps: int, meta: dict, flush_every: int = 150) -> None:
@@ -52,6 +73,7 @@ class ControlLogger:
         self.meta = dict(meta)
         self.meta["fps_target"] = fps
         self._rows: list[dict] = []
+        self._merge_rows: list[dict] = []
         self._loop_t0: float | None = None
         # Rewrite the files every N ticks so a SIGKILL / OOM / timeout still leaves
         # recent data on disk (within ~flush_every ticks), not just on graceful close.
@@ -69,6 +91,21 @@ class ControlLogger:
         self._rows.append(fields)
         if self._flush_every and len(self._rows) % self._flush_every == 0:
             self._write()
+
+    def log_merge(self, **fields) -> None:
+        """Record one temporal-ensemble blend (async only).
+
+        Called by ``ActionBuffer.merge`` for every timestep where an incoming
+        chunk overlaps an already-queued absolute target. ``existing_abs`` is the
+        target already in the queue (from a prior chunk), ``incoming_abs`` +
+        ``ref_ee`` come from the new chunk, ``weight`` is the blend weight, and
+        ``aggregated_abs`` is the resulting target stored back. Inspecting these
+        confirms the ensemble averages ABSOLUTE targets (same base frame), not
+        relative ΔT's averaged directly.
+        """
+        if self._loop_t0 is None:
+            return
+        self._merge_rows.append(fields)
 
     @staticmethod
     def _vec_width(rows: list[dict], name: str) -> int:
@@ -132,7 +169,7 @@ class ControlLogger:
         # --- NPZ: clean numeric arrays (NaN where a tick had no action) ---
         scalars: dict[str, np.ndarray] = {}
         for name in ("step", "tick", "t_s", "tick_dt_ms", "work_ms", "queue",
-                     "action_timestep", "ee_delta_m", "joint_delta_max_rad",
+                     "action_timestep", "chunk_id", "ee_delta_m", "joint_delta_max_rad",
                      "gripper", "e2e_ms", "wire_ms", "server_ms"):
             scalars[name] = np.array(
                 [float(r.get(name)) if r.get(name) is not None else np.nan for r in rows],
@@ -167,6 +204,26 @@ class ControlLogger:
             "joint_delta_max_rad": self._stat(scalars["joint_delta_max_rad"]),
         }
         Path(f"{self.stem}.json").write_text(json.dumps(self.meta, indent=2, default=str))
+
+        # --- <stem>_merge.csv: async temporal-ensemble blend audit (if any) ---
+        # Snapshot first: _merge_rows is appended by the async receiver thread while
+        # _write runs on the main thread (SYNC never populates it, so this is async-only).
+        merge_rows = list(self._merge_rows)
+        if merge_rows:
+            with open(f"{self.stem}_merge.csv", "w", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=list(self.MERGE_FIELDS), extrasaction="ignore")
+                writer.writeheader()
+                for row in merge_rows:
+                    out = {}
+                    for k in self.MERGE_FIELDS:
+                        v = row.get(k)
+                        if v is None:
+                            out[k] = ""
+                        elif isinstance(v, (np.ndarray, list, tuple)):
+                            out[k] = ";".join(f"{x:.6g}" for x in np.asarray(v).ravel())
+                        else:
+                            out[k] = v
+                    writer.writerow(out)
         return True
 
     def flush(self) -> None:
@@ -178,10 +235,11 @@ class ControlLogger:
             logger.warning("Control log empty — nothing written")
             return
         s = self.meta.get("summary", {})
+        merge_note = f", {len(self._merge_rows)} ensemble blends" if self._merge_rows else ""
         logger.info(
-            "Control log saved: %s.{csv,npz,json} (%s ticks, %s/%s IK-ok, %s underruns)",
+            "Control log saved: %s.{csv,npz,json} (%s ticks, %s/%s IK-ok, %s underruns%s)",
             self.stem, s.get("n_ticks"), s.get("n_ik_ok"), s.get("n_popped"),
-            s.get("n_underrun"),
+            s.get("n_underrun"), merge_note,
         )
 
 

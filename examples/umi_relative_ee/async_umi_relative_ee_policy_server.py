@@ -170,8 +170,26 @@ class UmiRelativeEEPolicyServer(PolicyServer):
         # Ship the server-side compute duration to the client so it can split the
         # observed wire time into transport vs server compute.
         server_elapsed_ms = (time.perf_counter() - started) * 1000
-        for timed in result:
+        # Chunk-provenance for the temporal-ensemble audit: ``reference_ee`` is the
+        # absolute 7D EE pose that anchored this chunk (the observation's current
+        # pose, = T_anchor) and ``relative_action`` is the raw per-step model output
+        # ΔT. ``action`` (above) is the ABSOLUTE target = T_anchor ∘ ΔT. Logging both
+        # lets a client confirm the ensemble blends absolute targets (same base
+        # frame), not relative deltas averaged directly. Guarded: never break inference.
+        try:
+            raw_state = torch.as_tensor(
+                observation_t.get_observation().get(OBS_STATE), dtype=torch.float32
+            )
+            ref_ee = (raw_state[-1] if raw_state.ndim >= 1 else raw_state).detach().cpu().clone()
+            rel_per_step = predicted[0].detach().cpu()  # [T, D] raw model output
+        except Exception:  # noqa: BLE001
+            ref_ee, rel_per_step = None, None
+        for i, timed in enumerate(result):
             timed.server_elapsed_ms = server_elapsed_ms
+            if ref_ee is not None:
+                timed.reference_ee = ref_ee
+            if rel_per_step is not None and i < rel_per_step.shape[0]:
+                timed.relative_action = rel_per_step[i]
         self.logger.info(
             "Observation %s -> %s absolute EE actions in %.1fms "
             "(prepare %.1fms, preprocess %.1fms, infer %.1fms, postprocess %.1fms)",

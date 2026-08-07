@@ -10,7 +10,18 @@ from __future__ import annotations
 import csv, json, re, sys
 from pathlib import Path
 
-FOLDER = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("outputs/debug/open_loop_eval_all")
+def _default_folder() -> Path:
+    """Latest run folder under outputs/research_report/ (newest mtime), so standalone
+    invocations auto-target the most recent eval without needing the path."""
+    base = Path("outputs/research_report")
+    if base.is_dir():
+        subs = [p for p in base.iterdir() if p.is_dir()]
+        if subs:
+            return max(subs, key=lambda p: p.stat().st_mtime)
+    return base / "open_loop_val_compare"
+
+
+FOLDER = Path(sys.argv[1]) if len(sys.argv) > 1 else _default_folder()
 
 LABEL = {
     "act_umi_identity_rot6d_1302": "ACT (1302)",
@@ -213,6 +224,28 @@ def main():
     lines.append("\n> Caveats: open-loop (recorded observations, no environment); 5 frames/episode × 100 episodes; "
                  "flow-policy inference is stochastic under the seed. For deployment selection, pair this with the "
                  "section-22 style full audit and closed-loop robot trials.")
+
+    # Figures (embed if the PNGs exist under <folder>/figures/)
+    fig_specs = [
+        ("fig1_compare_bars.png", "Figure 1 — cross-model comparison",
+         "Each model's best checkpoint (by XYZ endpoint) across four decoded metrics. Lower is better."),
+        ("fig2_act_steps.png", "Figure 2 — ACT step progression",
+         "ACT decoded metrics vs training step."),
+        ("fig2_pi05_steps.png", "Figure 3 — π0.5 step progression",
+         "π0.5 decoded metrics vs training step."),
+        ("fig3_val_vs_decoded.png", "Figure 4 — validation loss vs decoded quality",
+         "Within each model: top row XYZ endpoint, bottom row validation loss, both vs step. "
+         "Dashed line = each curve's minimum — they land on different steps, so val-loss-best ≠ decoded-best."),
+        ("fig4_pareto.png", "Figure 5 — accuracy vs smoothness",
+         "Each model's best checkpoint: x = rotation jitter (smoother left), y = XYZ endpoint error (more accurate up). "
+         "Dashed = GT jitter floor."),
+    ]
+    fig_lines = ["\n## Figures\n"]
+    if any((FOLDER / "figures" / fn).exists() for fn, *_ in fig_specs):
+        for fn, title, cap in fig_specs:
+            if (FOLDER / "figures" / fn).exists():
+                fig_lines.append(f"### {title}\n\n![{title}](figures/{fn})\n\n_{cap}_\n")
+        lines += fig_lines
 
     (FOLDER / "REPORT.md").write_text("\n".join(lines) + "\n")
 

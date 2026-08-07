@@ -7,8 +7,12 @@ cd /mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 export PYTHONPATH="$PWD/src"
 PY=/home/zfei/anaconda3/envs/py312/bin/python
 DATASET=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation
-OUT=outputs/debug/open_loop_eval_all
+# Each run lands in its own folder: <llm-suggested slug>_<datetime> (unique, no clobbering).
+# Override with OUT=... to resume into an existing folder. name_run.py prefers the `claude`
+# CLI for the slug, then $RUN_NAME, then a generic fallback.
+OUT="${OUT:-outputs/research_report/$("$PY" examples/umi_relative_ee/name_run.py)}"
 SAMPLES_PER_EP="${SAMPLES_PER_EP:-5}"
+WITH_REPORT="${WITH_REPORT:-1}"   # 1 = build figures + report in $OUT after eval
 mkdir -p "$OUT"
 LOG="$OUT/_eval_driver.log"
 
@@ -39,4 +43,10 @@ for pm in "${PMS[@]}"; do
     >> "$LOG" 2>&1 \
     || { echo "[$i] FAILED ${model} ${step} (continuing)"; continue; }
 done
-echo "ALL_DONE"
+
+if [ "$WITH_REPORT" = "1" ]; then
+  echo "=== building figures + report in $OUT ==="
+  "$PY" examples/umi_relative_ee/make_report_figures.py "$OUT" || echo "WARN: figures step failed"
+  "$PY" examples/umi_relative_ee/compile_open_loop_report.py "$OUT" || echo "WARN: report step failed"
+fi
+echo "ALL_DONE -> $OUT"

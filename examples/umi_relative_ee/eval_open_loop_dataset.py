@@ -63,7 +63,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Deprecated for SmolVLA/π0.5; disables padded masking only for legacy π0 evaluation.",
     )
-    parser.add_argument("--output_dir", default="outputs/debug/open_loop_eval")
+    parser.add_argument(
+        "--output_dir", default=None,
+        help="Defaults to outputs/research_report/eval_<datetime> so standalone runs don't clobber.",
+    )
     return parser.parse_args()
 
 
@@ -235,6 +238,9 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
 
 def main() -> None:
     args = parse_args()
+    if args.output_dir is None:
+        import datetime as _dt
+        args.output_dir = f"outputs/research_report/eval_{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("--device=cuda was requested but CUDA is unavailable")
