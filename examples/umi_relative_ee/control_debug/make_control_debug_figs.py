@@ -80,7 +80,7 @@ plt.rcParams.update({
 })
 
 EE_LABELS = ["x [m]", "y [m]", "z [m]", "rot_x [rad]", "rot_y [rad]", "rot_z [rad]", "gripper"]
-JOINT_LABELS = [f"joint{i+1} [rad]" for i in range(6)]
+JOINT_LABELS = [f"joint{i+1} [deg]" for i in range(6)]  # Piper reports degrees
 FPS_TARGET = 30.0
 TARGET_DT = 1000.0 / FPS_TARGET
 
@@ -218,45 +218,72 @@ def fig_joints(runs: list[dict], figdir: Path) -> None:
     plt.close(fig)
 
 
-# ─────────────────── Figure 3: executed smoothness / singularity ────────
-def fig_executed_smoothness(runs: list[dict], figdir: Path) -> None:
-    """Valid-only: per-joint executed step + the small-EE/large-joint signature."""
+# ─────────────────── Figure 3: joint motion decomposition ──────────────
+def _joint_signals(d: dict) -> dict:
+    """Three executed-tick joint signals [deg], max over 6 joints:
+    tracking = |q_cmd-q_meas|, command = |Δq_cmd|, measured = |Δq_meas|."""
+    ok = d["ik_ok"].astype(bool)
+    if not ok.any():
+        return {k: np.array([np.nan]) for k in ("track", "cmd", "meas")}
+    qc = d["ik_joints_rad"][ok].astype(float)   # degrees (mislabeled "_rad")
+    qm = d["current_joints_rad"][ok].astype(float)
+    return {
+        "track": np.max(np.abs(qc - qm), axis=1),
+        "cmd": np.max(np.abs(np.diff(qc, axis=0)), axis=1),
+        "meas": np.max(np.abs(np.diff(qm, axis=0)), axis=1),
+    }
+
+
+def fig_joint_decomposition(runs: list[dict], figdir: Path) -> None:
+    """Separate the three signals the tracking-gap metric conflates.
+
+    ``joint_delta_max_rad`` is |q_cmd(t)-q_meas(t)| = a TRACKING GAP, not per-tick
+    motion. Left: that gap vs the actual command increment and measured motion. Right:
+    per-joint tracking gap. Values are DEGREES (the "_rad" joint columns are mislabeled —
+    Piper reports degrees; an earlier draft np.rad2deg'd them and inflated ~57x).
+    """
     s_run, a_run = runs
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.6),
+                                   gridspec_kw={"width_ratios": [1.3, 1]})
+
+    labels = ["Δq_tracking\n|cmd−meas|", "Δq_command\n|Δcmd|", "Δq_measured\n|Δmeas|"]
+    x = np.arange(3)
+    w = 0.38
+    sg = _joint_signals(s_run["d"])
+    ag = _joint_signals(a_run["d"])
+    s_means = [float(np.mean(sg["track"])), float(np.mean(sg["cmd"])), float(np.mean(sg["meas"]))]
+    a_means = [float(np.mean(ag["track"])), float(np.mean(ag["cmd"])), float(np.mean(ag["meas"]))]
+    ax1.bar(x - w / 2, s_means, w, color=BLUE, label=f"SYNC (n={int(s_run['d']['ik_ok'].sum())})")
+    ax1.bar(x + w / 2, a_means, w, color=ORANGE, label=f"ASYNC (n={int(a_run['d']['ik_ok'].sum())})")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, fontsize=8)
+    ax1.set_ylabel("mean per-tick joint signal [deg]")
+    ax1.set_title("Tracking gap vs command step vs measured motion", color=INK2)
+    ax1.legend()
+    for xi, v in zip(x - w / 2, s_means):
+        ax1.text(xi, v, f"{v:.2f}°", ha="center", va="bottom", fontsize=7, color=INK2)
+    for xi, v in zip(x + w / 2, a_means):
+        ax1.text(xi, v, f"{v:.2f}°", ha="center", va="bottom", fontsize=7, color=INK2)
 
     def per_joint(run: dict) -> np.ndarray:
         d = run["d"]
         ok = d["ik_ok"].astype(bool)
-        return np.rad2deg(np.abs(d["ik_joints_rad"][ok] - d["current_joints_rad"][ok]).mean(0))
+        return (np.abs(d["ik_joints_rad"][ok] - d["current_joints_rad"][ok]).mean(0)
+                if ok.any() else np.full(6, np.nan))
 
-    names = ["j1", "j2", "j3", "j4", "j5", "j6"]
-    x = np.arange(6)
-    w = 0.38
-    ax1.bar(x - w / 2, per_joint(s_run), w, color=BLUE,
-            label=f"SYNC (n={int(s_run['d']['ik_ok'].sum())})")
-    ax1.bar(x + w / 2, per_joint(a_run), w, color=ORANGE,
-            label=f"ASYNC (n={int(a_run['d']['ik_ok'].sum())})")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(names)
-    ax1.set_ylabel("mean executed joint step [deg]")
-    ax1.set_title("Per-joint executed step — j3 (elbow) dominates SYNC", color=INK2)
-    ax1.legend()
+    jx = np.arange(6)
+    w2 = 0.38
+    ax2.bar(jx - w2 / 2, per_joint(s_run), w2, color=BLUE)
+    ax2.bar(jx + w2 / 2, per_joint(a_run), w2, color=ORANGE)
+    ax2.set_xticks(jx)
+    ax2.set_xticklabels(["j1", "j2", "j3", "j4", "j5", "j6"])
+    ax2.set_ylabel("mean tracking gap [deg]")
+    ax2.set_title("Per-joint tracking gap", color=INK2)
 
-    for run, col in [(s_run, BLUE), (a_run, ORANGE)]:
-        d = run["d"]
-        ok = d["ik_ok"].astype(bool)
-        ax2.scatter(d["ee_delta_m"][ok] * 1e3, np.rad2deg(d["joint_delta_max_rad"][ok]),
-                    s=8, color=col, alpha=0.5, label=run["tag"].upper())
-    ax2.axhline(30, color=MUTED, lw=0.8, ls=":", label="30°")
-    ax2.set_xscale("log")
-    ax2.set_yscale("log")
-    ax2.set_xlabel("ee_delta per step [mm]  (log)")
-    ax2.set_ylabel("max joint step [deg]  (log)")
-    ax2.set_title("Small EE move → large joint move = near singularity", color=INK2)
-    ax2.legend()
-
+    fig.suptitle("Joint motion decomposition (degrees) — the “52°/tick” was a unit bug; "
+                 "true motion is <1°/tick", fontsize=10.5, y=1.0)
     fig.tight_layout()
-    fig.savefig(figdir / "03_executed_smoothness.png", bbox_inches="tight")
+    fig.savefig(figdir / "03_joint_decomposition.png", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -352,13 +379,10 @@ def fig_stutter(runs: list[dict], figdir: Path) -> None:
         t = d["t_s"]
         valid = d["ik_ok"].astype(bool)
         ax.plot(t[valid], d["joint_delta_max_rad"][valid], color=RED, lw=1.1)
-        ax.axhline(np.deg2rad(5), color=MUTED, lw=0.8, ls=":", label="5°")
-        ax.axhline(np.deg2rad(15), color=RED, lw=0.9, ls="--", label="15°")
-        ax.set_title(f"{run['tag'].upper()} max joint step  joint_delta_max_rad", color=INK2)
-        ax.set_ylabel("rad")
-        secax = ax.secondary_yaxis("right", functions=(np.rad2deg, np.deg2rad))
-        secax.set_ylabel("deg", fontsize=8)
-        secax.tick_params(labelsize=7)
+        ax.axhline(5, color=MUTED, lw=0.8, ls=":", label="5°")
+        ax.axhline(15, color=RED, lw=0.9, ls="--", label="15°")
+        ax.set_title(f"{run['tag'].upper()} max joint tracking gap (degrees)", color=INK2)
+        ax.set_ylabel("deg")
         ax.legend(loc="upper right")
         xlim_valid(ax, t, valid)
 
@@ -444,7 +468,9 @@ def block(run: dict) -> dict:
     warm = t < 2.0
     steady_dt = d["tick_dt_ms"][~warm & np.isfinite(d["tick_dt_ms"])]
     idx = int(np.nanargmax(d["tick_dt_ms"]))
-    jd = d["joint_delta_max_rad"]
+    # NOTE on units: ik_joints_rad / current_joints_rad / joint_delta_max_rad are in
+    # DEGREES despite the "_rad" suffix (piper.read_joints reports degrees; values match
+    # START_POSE_DEG). Do NOT np.rad2deg them — earlier figures did and inflated ~57x.
     # A tick is valid (executed) iff ik_ok: popped + IK solved + written to motors.
     valid = d["ik_ok"].astype(bool)
     paused = d["state"] == "PAUSED"
@@ -452,6 +478,18 @@ def block(run: dict) -> dict:
     n_seg = int(((m[1:] == 1) & (m[:-1] == 0)).sum()) + (1 if m[0] == 1 else 0)
     per_joint = (np.abs(d["ik_joints_rad"][valid] - d["current_joints_rad"][valid]).mean(0)
                  if valid.any() else np.full(6, np.nan))
+    # Three joint signals [deg], max over the 6 joints, on executed ticks:
+    #   tracking = |q_cmd(t) - q_meas(t)|    (what joint_delta_max_rad actually is)
+    #   command  = |q_cmd(t) - q_cmd(t-1)|   (per-tick command increment)
+    #   measured = |q_meas(t) - q_meas(t-1)| (actual per-tick robot motion)
+    if valid.any():
+        qc = d["ik_joints_rad"][valid].astype(float)
+        qm = d["current_joints_rad"][valid].astype(float)
+        j_track = np.max(np.abs(qc - qm), axis=1)
+        j_cmd = np.max(np.abs(np.diff(qc, axis=0)), axis=1)
+        j_meas = np.max(np.abs(np.diff(qm, axis=0)), axis=1)
+    else:
+        j_track = j_cmd = j_meas = np.array([np.nan])
     exec_ee_step = (np.linalg.norm(np.diff(d["action_ee"][valid, :3], axis=0), axis=1)
                     if valid.sum() > 1 else np.array([np.nan]))
     # Phantom spikes: action_ee popped while PAUSED (SYNC logs these; never executed).
@@ -476,13 +514,15 @@ def block(run: dict) -> dict:
         "spike_at_s": float(t[idx]),
         "spike_at_tick": int(d["tick"][idx]),
         "ee_delta_m": s.get("ee_delta_m"),
-        "joint_delta_max_rad": s.get("joint_delta_max_rad"),
-        "joint_delta_deg_mean": float(np.rad2deg(mean(jd))),
-        "joint_delta_deg_p95": float(np.rad2deg(pct(jd, 95))),
+        "joint_delta_max_deg": s.get("joint_delta_max_rad"),  # degrees (key mislabeled "_rad")
+        "joint_tracking_deg_mean": float(mean(j_track)),
+        "joint_tracking_deg_p95": float(pct(j_track, 95)),
+        "joint_command_step_deg_mean": float(mean(j_cmd)),
+        "joint_measured_step_deg_mean": float(mean(j_meas)),
         "n_valid": int(valid.sum()),
         "n_valid_segments": n_seg,
         "valid_duration_s": float(t[valid][-1] - t[valid][0]) if valid.any() else 0.0,
-        "per_joint_step_deg": [round(float(v), 2) for v in np.rad2deg(per_joint)],
+        "per_joint_step_deg": [round(float(v), 4) for v in per_joint],
         "exec_ee_step_mm_max": float(np.nanmax(exec_ee_step) * 1e3),
         "popped_paused_ee_step_mm_max": (float(np.nanmax(paused_step) * 1e3)
                                         if np.isfinite(paused_step).any() else float("nan")),
@@ -525,27 +565,31 @@ def main() -> None:
 
     fig_ee_pose(runs, figdir)
     fig_joints(runs, figdir)
-    fig_executed_smoothness(runs, figdir)
+    fig_joint_decomposition(runs, figdir)
     fig_timing(runs, figdir)
     fig_stutter(runs, figdir)
     fig_execution_strategy(runs, figdir)
 
     sb, ab = block(S), block(A)
     out = {"sync": sb, "async": ab,
-           "ratio_sync_async_joint_delta_mean": sb["joint_delta_max_rad"]["mean"] /
-           ab["joint_delta_max_rad"]["mean"],
+           "ratio_sync_async_joint_tracking_mean": sb["joint_tracking_deg_mean"] /
+           ab["joint_tracking_deg_mean"],
            "sources": {"sync": str(resolve_stem(sync_arg).name), "async": str(resolve_stem(async_arg).name)}}
     (outdir / "computed_stats.json").write_text(json.dumps(out, indent=2, default=str))
     print(f"Figures + stats written to {outdir}")
     print(json.dumps({
         "sync_valid": {"ticks": sb["n_valid"], "segs": sb["n_valid_segments"],
-                       "j3_step_deg": sb["per_joint_step_deg"][2],
+                       "j3_track_deg": sb["per_joint_step_deg"][2],
                        "exec_ee_max_mm": sb["exec_ee_step_mm_max"],
                        "phantom_paused_max_mm": sb["popped_paused_ee_step_mm_max"]},
         "async_valid": {"ticks": ab["n_valid"], "segs": ab["n_valid_segments"],
-                        "j3_step_deg": ab["per_joint_step_deg"][2]},
-        "joint_delta_deg_mean": {"sync": sb["joint_delta_deg_mean"], "async": ab["joint_delta_deg_mean"]},
-        "ratio": out["ratio_sync_async_joint_delta_mean"],
+                        "j3_track_deg": ab["per_joint_step_deg"][2]},
+        "joint_signals_deg_mean [track,cmd,meas]": {
+            "sync": [round(sb["joint_tracking_deg_mean"], 3), round(sb["joint_command_step_deg_mean"], 3),
+                     round(sb["joint_measured_step_deg_mean"], 3)],
+            "async": [round(ab["joint_tracking_deg_mean"], 3), round(ab["joint_command_step_deg_mean"], 3),
+                      round(ab["joint_measured_step_deg_mean"], 3)]},
+        "ratio_tracking_sync_over_async": out["ratio_sync_async_joint_tracking_mean"],
     }, indent=2))
 
 
