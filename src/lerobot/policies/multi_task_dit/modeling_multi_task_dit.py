@@ -129,7 +129,9 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         ]
 
     def _generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
-        batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
+        state = batch[OBS_STATE]
+        n_obs_steps = state.shape[1] if state.ndim >= 3 else 1
+        batch_size = state.shape[0]
         assert n_obs_steps == self.config.n_obs_steps
 
         conditioning_vec = self.observation_encoder.encode(batch)
@@ -154,9 +156,10 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations"""
         self.eval()
+        batch = self._prepare_batch(batch)
 
         for k in batch:
-            if k in self._queues:
+            if k in self._queues and self._queues[k]:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
         actions = self._generate_actions(batch)
@@ -336,10 +339,15 @@ class ObservationEncoder(nn.Module):
 
     def encode(self, batch: dict) -> Tensor:
         """Encode observations to vector format."""
-        batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
+        state = batch[OBS_STATE]
+        if state.ndim == 2:
+            # UMI mode represents the two-pose history as one flattened 20D
+            # state vector instead of a temporal [B, S, D] tensor.
+            state = state.unsqueeze(1)
+        batch_size, n_obs_steps = state.shape[:2]
         conditioning_feats = []
 
-        conditioning_feats.append(batch[OBS_STATE])
+        conditioning_feats.append(state)
 
         if self.vision_encoder is not None or self.vision_encoders is not None:
             images = batch[OBS_IMAGES]

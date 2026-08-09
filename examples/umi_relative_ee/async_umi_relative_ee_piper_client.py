@@ -16,6 +16,7 @@ import pickle  # nosec
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -340,6 +341,10 @@ class UmiAsyncPolicyClient:
         self.request_pending = threading.Event()
         self._request_lock = threading.Lock()
         self._request_started_at = 0.0
+        # Identity of the currently-pending observation request (its timestep), so a
+        # STALE response (from a request invalidated by pause/resume) cannot clear a
+        # newer request's pending flag in _receive_actions. None = nothing pending.
+        self._pending_timestep: int | None = None
         self._receiver_thread: threading.Thread | None = None
         # Per-chunk timing for the HUD (updated by the receiver thread):
         # wire = send -> response arrives (transport + server compute);
@@ -349,6 +354,11 @@ class UmiAsyncPolicyClient:
         # Number of accepted chunk merges; clients use it to detect the first pop after a
         # merge for an honest send->execute-first-action (e2e) latency.
         self.merge_count: int = 0
+        # Single-worker pool that uploads observations OFF the control thread, so a slow
+        # network transfer can't delay motor ticks. Only one upload is in flight at a time
+        # (request_pending stays set until the response clears it), so max_workers=1 both
+        # serializes uploads and bounds memory.
+        self._send_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="umi-obs-upload")
 
     @property
     def running(self) -> bool:
@@ -391,19 +401,32 @@ class UmiAsyncPolicyClient:
 
     def stop(self) -> None:
         self.shutdown_event.set()
+        self._send_executor.shutdown(wait=False, cancel_futures=True)
         self.channel.close()
         if self._receiver_thread is not None:
             self._receiver_thread.join(timeout=3)
 
     def invalidate_pending_request(self) -> None:
-        self.request_pending.clear()
+        """Drop interest in the in-flight request (pause/resume/q/r/s/dot).
+
+        Clears the pending flag AND the pending-request identity, so a stale response
+        that arrives later cannot clear a *newer* request's flag (pause/resume race).
+        The in-flight RPC itself is not cancellable (gRPC unary), but its response is
+        ignored via the identity check in :meth:`_receive_actions`, and the action
+        buffer rejects the stale chunk via ``minimum_chunk_timestamp``.
+        """
+        with self._request_lock:
+            self.request_pending.clear()
+            self._pending_timestep = None
 
     def _pending_request_expired(self) -> bool:
         with self._request_lock:
             age = time.monotonic() - self._request_started_at
         if self.request_pending.is_set() and age > self.args.request_timeout:
             logger.warning("Inference request timed out after %.1fs; retrying", age)
-            self.request_pending.clear()
+            with self._request_lock:
+                self.request_pending.clear()
+                self._pending_timestep = None
         return not self.request_pending.is_set()
 
     def can_send(self, *, force: bool = False) -> bool:
@@ -438,8 +461,17 @@ class UmiAsyncPolicyClient:
         self.request_pending.set()
         with self._request_lock:
             self._request_started_at = time.monotonic()
+            self._pending_timestep = timestep
+        # Upload OFF the control thread: serialize + stream the observation on a worker so
+        # a slow network transfer never delays a motor tick. request_pending stays set
+        # until the receiver clears it on the response, so only one upload is in flight.
+        payload = pickle.dumps(observation)
+        self._send_executor.submit(self._upload_observation, payload, timestep, must_go)
+        return True
+
+    def _upload_observation(self, payload: bytes, timestep: int, must_go: bool) -> None:
+        """Worker: serialize-and-upload an observation without blocking the control loop."""
         try:
-            payload = pickle.dumps(observation)
             request_iterator = send_bytes_in_chunks(
                 payload,
                 services_pb2.Observation,
@@ -448,11 +480,13 @@ class UmiAsyncPolicyClient:
             )
             self.stub.SendObservations(request_iterator)
             logger.debug("Sent observation #%s (must_go=%s)", timestep, must_go)
-            return True
         except grpc.RpcError as exc:
-            self.request_pending.clear()
+            with self._request_lock:
+                # Clear only if this is still our pending request (a newer one may exist).
+                if self._pending_timestep is None or self._pending_timestep == timestep:
+                    self.request_pending.clear()
+                    self._pending_timestep = None
             logger.error("Failed to send observation #%s: %s", timestep, exc)
-            return False
 
     def _receive_actions(self) -> None:
         while self.running:
@@ -460,6 +494,14 @@ class UmiAsyncPolicyClient:
                 response = self.stub.GetActions(services_pb2.Empty())
                 payload = getattr(response, "data", b"")
                 if not payload:
+                    # Empty = the server returned no actions: the obs was rejected
+                    # (duplicate timestep), never enqueued (upload slower than
+                    # obs_queue_timeout), or inference threw. The pending request will
+                    # not produce actions — clear it so the control thread can resend
+                    # now, instead of stalling until request_timeout (~10 s).
+                    with self._request_lock:
+                        self.request_pending.clear()
+                        self._pending_timestep = None
                     continue
                 actions = pickle.loads(payload)  # nosec
                 if not isinstance(actions, list):
@@ -467,7 +509,15 @@ class UmiAsyncPolicyClient:
                 accepted = self.action_buffer.merge(actions)
                 if accepted:
                     self.merge_count += 1
-                self.request_pending.clear()
+                # Race fix: only clear the pending flag if this response matches the
+                # currently-pending request. A stale response (from a request dropped
+                # by pause/resume) must NOT clear a newer request's flag, or two
+                # observations could end up in flight.
+                resp_ts = actions[0].get_timestep() if actions else None
+                with self._request_lock:
+                    if self._pending_timestep is None or resp_ts == self._pending_timestep:
+                        self.request_pending.clear()
+                        self._pending_timestep = None
                 if actions:
                     # Wire time: the server copies our send timestamp (time.time() at
                     # send) into every action, so time-of-receipt - first-action
@@ -491,7 +541,9 @@ class UmiAsyncPolicyClient:
                     time.sleep(0.1)
             except Exception:
                 logger.exception("Invalid action chunk received from policy server")
-                self.request_pending.clear()
+                with self._request_lock:
+                    self.request_pending.clear()
+                    self._pending_timestep = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -507,7 +559,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk_size_threshold", type=float, default=0.5)
     parser.add_argument(
         "--aggregate_fn_name",
-        choices=["weighted_average", "latest_only", "average", "conservative"],
+        choices=["weighted_average", "latest_only", "average", "conservative",
+                 "weighted_average_so3", "conservative_so3", "average_so3"],
         default="latest_only",
     )
     parser.add_argument("--fps", type=int, default=30)
@@ -995,6 +1048,10 @@ def run(args: argparse.Namespace) -> None:
                     "chunk_id": None, "chunk_ref_ee": None,
                     "action_abs": None, "action_agg": None, "action_rel": None,
                 }
+                # True only on the tick a fresh chunk's first action is popped (when
+                # last_e2e_ms is (re)measured). e2e_ms is logged only then, so the JSON
+                # e2e stats are response-weighted, not row-weighted (stale value repeated).
+                e2e_this_tick = False
 
                 key = keyboard.poll()
                 while key is not None:
@@ -1106,6 +1163,7 @@ def run(args: argparse.Namespace) -> None:
                         if policy_client.merge_count != last_seen_merges:
                             last_seen_merges = policy_client.merge_count
                             last_e2e_ms = (time.perf_counter() - send_at) * 1000.0 if send_at else None
+                            e2e_this_tick = True
                         last_action = timed_action.get_action().detach().cpu().numpy()
                         if not first_chunk_seen:
                             first_chunk_seen = True
@@ -1245,7 +1303,7 @@ def run(args: argparse.Namespace) -> None:
                         current_ee=current_ee,
                         ik_joints_rad=diag["ik_joints_rad"],
                         current_joints_rad=current_joints,
-                        e2e_ms=last_e2e_ms,
+                        e2e_ms=(last_e2e_ms if e2e_this_tick else None),
                         wire_ms=policy_client.last_wire_ms,
                         server_ms=policy_client.last_server_ms,
                     )

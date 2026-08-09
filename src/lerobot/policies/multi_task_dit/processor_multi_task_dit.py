@@ -26,7 +26,12 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
     UnnormalizerProcessorStep,
+    make_umi_cache_key,
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -66,24 +71,44 @@ def make_multi_task_dit_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    relative_step = (
+        UmiRelativeActionsStep(cache_key=make_umi_cache_key()) if config.use_umi_relative_ee else None
+    )
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
-        TokenizerProcessorStep(
-            tokenizer_name=config.text_encoder_name,
-            padding=config.tokenizer_padding,
-            padding_side=config.tokenizer_padding_side,
-            max_length=config.tokenizer_max_length,
-            truncation=config.tokenizer_truncation,
-        ),
         DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-            device=config.device,
-        ),
     ]
+    if relative_step is not None:
+        input_steps.extend(
+            [
+                UmiDeriveStateFromActionStep(),
+                relative_step,
+                UmiRelativeStateStep(),
+            ]
+        )
+    input_steps.extend(
+        [
+            TokenizerProcessorStep(
+                tokenizer_name=config.text_encoder_name,
+                padding=config.tokenizer_padding,
+                padding_side=config.tokenizer_padding_side,
+                max_length=config.tokenizer_max_length,
+                truncation=config.tokenizer_truncation,
+            ),
+        ]
+    )
+    input_steps.extend(
+        [
+            NormalizerProcessorStep(
+                features={**config.input_features, **config.output_features},
+                norm_map=config.normalization_mapping,
+                stats=dataset_stats,
+                device=config.device,
+            ),
+        ]
+    )
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features,
@@ -92,6 +117,15 @@ def make_multi_task_dit_pre_post_processors(
         ),
         DeviceProcessorStep(device="cpu"),
     ]
+    if relative_step is not None:
+        output_steps.insert(
+            1,
+            UmiAbsoluteActionsStep(
+                cache_key=relative_step.cache_key,
+                relative_step=relative_step,
+                single_action_reference_steps=config.n_action_steps,
+            ),
+        )
 
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](

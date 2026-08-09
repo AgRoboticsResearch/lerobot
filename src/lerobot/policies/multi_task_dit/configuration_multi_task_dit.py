@@ -34,6 +34,13 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     horizon: int = 32  # Number of action steps to predict
     n_action_steps: int = 24  # Actions executed per policy call (~0.8s at 30Hz)
 
+    # UMI-style relative end-effector training. The raw dataset action is an
+    # absolute 7D [xyz, axis-angle, gripper] pose; processors derive a single
+    # 20D two-pose relative state and 10D relative rot6d action.
+    use_umi_relative_ee: bool = False
+    # Leave the 6D rotation components unnormalized, matching canonical UMI.
+    umi_rot6d_identity_norm: bool = False
+
     # Objective Selection
     objective: str = "diffusion"  # "diffusion" or "flow_matching"
 
@@ -107,8 +114,19 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
+        if self.use_umi_relative_ee:
+            # UmiRelativeStateStep flattens the two raw poses into one state
+            # vector. Keep DiT's temporal dimension at one, as ACT does in UMI
+            # mode; the two-pose history is represented inside the 20D vector.
+            self.n_obs_steps = 1
+            # UMI processors derive a 20D state from the first two queried
+            # actions and retain exactly `horizon` future actions.
+            self.do_mask_loss_for_padding = True
+
         if self.drop_n_last_frames is None:
-            self.drop_n_last_frames = self.horizon - self.n_action_steps - self.n_obs_steps + 1
+            self.drop_n_last_frames = (
+                0 if self.use_umi_relative_ee else self.horizon - self.n_action_steps - self.n_obs_steps + 1
+            )
 
         self._validate()
 
@@ -247,6 +265,12 @@ class MultiTaskDiTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            # Query [action(t-1), action(t), ..., action(t+horizon-1)].
+            # UmiDeriveStateFromActionStep consumes the first entry for the
+            # previous/current state pair and leaves `horizon` model targets,
+            # including action(t) as target zero.
+            return [-1] + list(range(self.horizon))
         return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
 
     @property

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 r"""
-Visualize ACT, SmolVLA, or π0.5 UMI relative-EE predictions — two modes.
+Visualize ACT, SmolVLA, π0.5, or MultiTask DiT UMI relative-EE predictions — two modes.
 
 The policy is loaded through its saved unified UMI processor. LoRA adapters are
 detected automatically. ACT uses the VAE prior at inference (no GT action);
@@ -792,7 +792,10 @@ def main():
         logger.info("overrode flow-matching num_steps -> %d", args.num_steps)
     action_stats = extract_action_stats(preprocessor)
     action_norm_mode = policy_config.normalization_mapping["ACTION"]
-    chunk = policy_config.chunk_size
+    # ACT/SmolVLA/π0.5 call this `chunk_size`; MultiTask DiT calls it `horizon`.
+    chunk = getattr(policy_config, "chunk_size", getattr(policy_config, "horizon", None))
+    if chunk is None:
+        raise ValueError(f"Policy config {policy_config.type!r} has no action chunk length.")
     logger.info(
         "policy=%s chunk=%d use_umi_relative_ee=%s",
         policy_config.type,
@@ -908,9 +911,6 @@ def main():
         # GT absolute 7D delta: [t-1, t, t+1, ...]; chunk-start = action[t] = index 1
         gt_abs = batch["action"][0].cpu().numpy()
         gt_ref = gt_abs[1]
-        gt_chunk = gt_abs[1:]
-        gt_traj = None if args.no_gt else gt_abs_to_rel_traj(gt_chunk, gt_ref)
-        gt_ang = gt_rel_angles(gt_chunk, gt_ref)
 
         preprocessor.reset()
         with torch.no_grad():
@@ -933,6 +933,11 @@ def main():
                 pred = policy.predict_action_chunk(processed)
 
         pred_rel = unnormalize_actions(pred, action_stats, action_norm_mode)[0].cpu().numpy()
+        # MultiTask DiT predicts n_action_steps from its horizon; compare the
+        # same prefix of the recorded action window rather than the full horizon.
+        gt_chunk = gt_abs[1 : 1 + len(pred_rel)]
+        gt_traj = None if args.no_gt else gt_abs_to_rel_traj(gt_chunk, gt_ref)
+        gt_ang = gt_rel_angles(gt_chunk, gt_ref)
         pred_traj = rel_actions_to_traj(pred_rel)
 
         pred_end = pred_traj[-1]

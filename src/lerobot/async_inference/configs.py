@@ -34,6 +34,67 @@ AGGREGATE_FUNCTIONS = {
 }
 
 
+def _ee_blend_so3(old: torch.Tensor, new: torch.Tensor, w_new: float = 0.7) -> torch.Tensor:
+    """UMI relative-EE 7D blend: lerp xyz+gripper, SLERP the axis-angle rotation.
+
+    Linear axis-angle interpolation (what ``weighted_average`` does) is only valid for
+    small rotation deltas; for large/fast rotations it leaves the SO(3) manifold and
+    distorts the rotation. This blends position (0:3) and gripper (6) linearly and the
+    rotation (3:6) via quaternion SLERP at ``t=w_new`` (numpy only — no scipy). CPU
+    tensors (the action buffer detaches to CPU before blending).
+    """
+    import numpy as np
+
+    out = (1.0 - w_new) * old + w_new * new  # correct for xyz + gripper
+    if old.shape[-1] < 6:
+        return out
+
+    def _rotvec_to_quat(aa):
+        aa = aa.reshape(-1, 3)
+        ang = np.linalg.norm(aa, axis=-1, keepdims=True)
+        small = ang[:, 0] < 1e-8
+        axis = np.where(small[:, None], np.array([1.0, 0.0, 0.0]), aa / np.where(small[:, None], 1.0, ang))
+        a2 = ang[:, 0] / 2.0
+        s = np.sin(a2)
+        q = np.empty((aa.shape[0], 4))
+        q[:, :3] = axis * s[:, None]
+        q[:, 3] = np.cos(a2)
+        return q
+
+    def _quat_to_rotvec(q):
+        q = q / np.linalg.norm(q, axis=-1, keepdims=True)
+        w = np.clip(q[:, 3], -1.0, 1.0)
+        ang = 2.0 * np.arccos(w)
+        s = np.sqrt(1.0 - w * w)
+        axis = np.where(s[:, None] < 1e-8, q[:, :3], q[:, :3] / np.where(s[:, None] < 1e-8, 1.0, s[:, None]))
+        return axis * ang[:, None]
+
+    q0 = _rotvec_to_quat(old[..., 3:6].detach().cpu().numpy())
+    q1 = _rotvec_to_quat(new[..., 3:6].detach().cpu().numpy())
+    dot = np.sum(q0 * q1, axis=-1, keepdims=True)
+    q1 = np.where(dot < 0, -q1, q1)                 # shortest arc
+    dot = np.abs(dot)
+    theta = np.arccos(np.clip(dot, -1.0, 1.0))
+    near = (theta[:, 0] < 1e-4)
+    sin_t = np.sin(theta)
+    s0 = np.where(near[:, None], 1.0 - w_new, np.sin((1.0 - w_new) * theta) / np.where(near[:, None], 1.0, sin_t))
+    s1 = np.where(near[:, None], w_new, np.sin(w_new * theta) / np.where(near[:, None], 1.0, sin_t))
+    q = s0 * q0 + s1 * q1
+    q = q / np.linalg.norm(q, axis=-1, keepdims=True)
+    aa = _quat_to_rotvec(q).reshape(tuple(old[..., 3:6].shape))
+    out = out.clone()
+    out[..., 3:6] = torch.as_tensor(aa, dtype=old.dtype, device=old.device)
+    return out
+
+
+# SO(3)-safe variants (rotation blended via SLERP); recommended for UMI relative-EE.
+AGGREGATE_FUNCTIONS.update({
+    "weighted_average_so3": lambda old, new: _ee_blend_so3(old, new, 0.7),
+    "conservative_so3": lambda old, new: _ee_blend_so3(old, new, 0.3),
+    "average_so3": lambda old, new: _ee_blend_so3(old, new, 0.5),
+})
+
+
 def get_aggregate_function(name: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
     """Get aggregate function by name from registry."""
     if name not in AGGREGATE_FUNCTIONS:
