@@ -31,6 +31,7 @@ serialized processor names load directly.
 - Policy-neutral ACT/SmolVLA/π0.5 dataset metrics: `eval_open_loop_dataset.py`
 - Pi0.5 and SmolVLA RTC deployment: `doc/rtc.md`
 - Piper async server/client deployment: `doc/ASYNC_INFERENCE.md`
+- Recommended UMI trajectory interpolation and bounded-anchor design: `doc/umi_trajectory_interpolation.md`
 - Rotation normalization analysis (UMI identity vs. our per-dim scaling; jumpiness hypothesis + A/B test): `doc/rotation_normalization.md`
 - Migration manifest and checksums: `../../docs/umi_migration_manifest.md`
 - Historical-tool smoke results: `../../docs/umi_legacy_tool_smoke.md`
@@ -353,4 +354,3 @@ predicted chunk is postprocessed with one chunk-start base in both cases (sync:
 one local `postprocessor(chunk)` call; async: the UMI server override
 postprocesses the whole chunk in a single call, deliberately **not** the stock
 per-action loop, which would re-base each target on a refreshed pose).
-
