@@ -55,6 +55,18 @@ The JSON report includes deterministic 95% bootstrap confidence intervals over
 episodes. Repeat generative-policy evaluation with inference seeds 2000 and
 3000; repeating deterministic ACT-L1/VAE inference is unnecessary.
 
+The complete stage-one evaluation matrix is likewise sequential:
+
+```bash
+bash examples/umi_relative_ee/act_flow_ablation/evaluate_stage1.sh 30000 1000 5
+```
+
+After training/evaluation, collect compact CSV/JSON evidence outside Git:
+
+```bash
+uv run python examples/umi_relative_ee/act_flow_ablation/collect_results.py
+```
+
 Do not compare ACT L1, flow velocity MSE, and diffusion epsilon MSE numerically.
 They have different scales. Compare checkpoints using decoded physical metrics
 from `eval_open_loop_dataset.py`, fixing query frames and stochastic seeds.

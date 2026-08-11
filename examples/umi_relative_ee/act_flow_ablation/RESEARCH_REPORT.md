@@ -258,18 +258,33 @@ throughput. Dedicated timed runs are required before latency conclusions.
 
 ## 9. Results
 
-Scientific performance results are pending the full controlled sweep. This
-section will be replaced with compact tables containing run hashes, parameter
-counts, throughput, peak memory, per-step validation curves, decoded metrics,
-seed means/standard deviations or bootstrap confidence intervals, and explicit
-answers to Q1 and Q2. Smoke success is feasibility evidence only.
+The controlled sweep is in progress. The exact ResNet-18 ACT replication gives
+the first scientific sanity check:
+
+| Run | 10k validation loss | Difference from historical |
+| --- | ---: | ---: |
+| historical 1459 ACT | 0.054203 | — |
+| controlled `act_r18_vae`, seed 1000 | 0.054130 | -0.000073 (-0.13%) |
+
+This close agreement makes major dataset, representation, decoder, or software
+drift unlikely at the screening scale. It does not establish reproducibility of
+decoded metrics until the 30k checkpoint is evaluated.
+
+The final version of this section will contain run hashes, parameter counts,
+throughput, peak memory, per-step validation curves, decoded metrics, seed means
+or bootstrap confidence intervals, and explicit answers to Q1 and Q2. Smoke
+success remains feasibility evidence only.
 
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
 the fixed matrix sequentially so models do not contend for the single GPU, and
 `evaluate_one.sh` resolves exactly one final checkpoint and evaluates it without
-manual path selection. Example:
+manual path selection, while `evaluate_stage1.sh` fixes the deterministic and
+three-seed generative matrix. `collect_results.py` extracts parameter counts, wall
+times, complete validation curves, decoded metrics, and confidence intervals
+into compact external CSV/JSON files without creating a second narrative doc.
+Example:
 
 ```bash
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_vae 30000 1000
