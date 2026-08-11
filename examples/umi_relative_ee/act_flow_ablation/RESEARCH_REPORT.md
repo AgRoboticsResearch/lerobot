@@ -485,6 +485,16 @@ steps/s. Checkpoints/logs remain under
 `/media/zfei/Glowat512/projects/lerobot-arch-exp`; this is an active long-run
 confirmation and is not included in the completed 30k table above.
 
+At the 2026-08-11 22:40 progress check, fresh ACT R18 had completed 100k in
+1h08m20s. Its validation total/L1 at 90k was the run-best
+0.035114/0.034751; the final 100k values were 0.035413/0.035243, showing a
+small late fluctuation rather than continued monotonic improvement. Fresh ACT
+R50 was then at 36.6k/100k (about 12.6–13.0 steps/s). Its 10k/20k/30k total
+validation losses were 0.043859/0.038979/0.034967, with corresponding L1
+0.036001/0.036323/0.033306. Thus R50 at 30k is already below R18's best 100k
+total and L1 validation values. This is encouraging convergence evidence only;
+the common decoded evaluation is deferred until the final 100k checkpoint.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
