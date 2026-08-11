@@ -170,9 +170,9 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
 | `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k complete; eval pending |
-| `act_r34_vae` | backbone-only scale | TBD | pending |
-| `act_r50_vae` | backbone-only scale | TBD | pending |
-| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | smoke passed |
+| `act_r34_vae` | backbone-only scale | 62M | 30k complete; eval pending |
+| `act_r50_vae` | backbone-only scale | 65M | 30k complete; eval pending |
+| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | training |
 | `act_r18_l1` | no-VAE deterministic objective control | TBD | pending |
 | `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | smoke passed |
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | pending |
@@ -275,6 +275,28 @@ software drift unlikely at the screening scale. The modest 30k divergence is
 large enough that the fresh run, not the historical scalar, is the strict
 contemporary control for architecture comparisons. Reproducibility of decoded
 metrics is still pending the 30k checkpoint evaluation.
+
+The first backbone-only comparison is provisionally favorable to ResNet-34:
+
+| ACT backbone | Parameters | Median update | 10k val | 20k val | 30k val |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ResNet-18 | 51,579,786 | 0.036 s | 0.054130 | 0.043604 | 0.041139 |
+| ResNet-34 | 61,680,522 | 0.048–0.049 s | 0.051064 | 0.043164 | 0.039170 |
+| ResNet-50 | 64,654,218 | 0.075 s | 0.042517 | 0.037207 | 0.036259 |
+
+ResNet-34 reduces total validation loss by 5.7%, 1.0%, and 4.8% at the three
+budgets; its 30k L1 is 0.037265 versus ResNet-18's 0.039285 (5.1% lower). It
+reduces update throughput by roughly 25%. This is a consistent capacity signal,
+but remains provisional until decoded physical metrics are available.
+
+ResNet-50 is a stronger signal: its 10k total is 16.7% below ResNet-34
+and 21.5% below ResNet-18, while its L1 (0.035436) is lower by 13.3% and 15.1%
+respectively. At 20k its total (0.037207) remains 13.8% below ResNet-34 and
+14.7% below ResNet-18, with L1 (0.034470) about 14% lower than both. It is also
+2.1× slower per update than ResNet-18. At 30k its total (0.036259) is 7.4%
+below ResNet-34 and 11.9% below ResNet-18; L1 (0.034574) is 7.2% and 12.0%
+lower. The validation gain clearly survives, while decoded metrics must still
+establish whether it survives in physical units.
 
 The final version of this section will contain run hashes, parameter counts,
 throughput, peak memory, per-step validation curves, decoded metrics, seed means
