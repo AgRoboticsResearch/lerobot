@@ -228,6 +228,36 @@ throughput. Dedicated timed runs are required before latency conclusions.
   both ACT-flow and Diffusion Policy. Their very large errors after only two
   optimizer updates are expected and are not performance evidence.
 
+### 7.1 Compatibility and isolation audit
+
+The research changes do not rewrite or silently opt existing policies into a
+new objective. The original work was first committed/pushed on
+`fei-v5.0-umi-unified`; all experiment code lives on the independent
+`research/umi-act-flowmatching-ablation-20260811` branch. Training launchers
+refuse existing output/log paths, and every new checkpoint is under the
+external Glowat512 artifact root, so historical checkpoint directories remain
+read-only.
+
+Legacy ACT retains `action_objective="l1"` and `use_vae=true` defaults. Its old
+forward/inference code is selected unless flow matching is explicitly requested.
+As a direct compatibility experiment, the historical 800k checkpoint at
+`outputs/train/act_umi_identity_rot6d_1459` loads on the research branch as
+L1+VAE with exactly 51,579,786 parameters and no missing/unexpected-weight
+failure. Diffusion's UMI processors, delta indices, and normalization changes
+are likewise gated by the new `use_umi_relative_ee=false` default; ordinary
+Diffusion Policy keeps its prior path. The dataset factory change only adds
+Diffusion to the allow-list when that flag is explicitly true. Evaluator and
+launcher changes are confined to `examples/` and do not enter normal training.
+Seventeen focused legacy/new ACT and Diffusion processor tests pass, with nine
+optional tests skipped.
+
+There is one temporary runtime interaction: stage-two training deliberately
+occupies the only host RTX 4090. At the compatibility check it used about
+4.45 GiB and 93% GPU utilization. Another simultaneous GPU training process
+would contend for compute and could run out of memory; wait for or stop tmux
+session `umi_arch_stage2_20260811` before launching unrelated GPU training.
+This resource contention does not alter previous checkpoints or configs.
+
 ## 8. Execution incidents and lessons already learned
 
 1. The repository is a linked worktree whose Git metadata is outside the
