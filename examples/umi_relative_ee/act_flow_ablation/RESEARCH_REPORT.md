@@ -169,15 +169,15 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
-| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k complete; eval pending |
+| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k complete; evaluation running |
 | `act_r34_vae` | backbone-only scale | 62M | 30k complete; eval pending |
 | `act_r50_vae` | backbone-only scale | 65M | 30k complete; eval pending |
-| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | training |
-| `act_r18_l1` | no-VAE deterministic objective control | TBD | pending |
-| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | smoke passed |
-| `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | pending |
-| `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | pending |
-| `diffusion_r18` | standard non-VLM diffusion control | 75M | smoke passed |
+| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k complete; eval pending |
+| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k complete; eval pending |
+| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k complete; eval pending |
+| `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k complete; eval pending |
+| `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k complete; eval pending |
+| `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k complete; eval pending |
 
 Promotion rules will be based on confidence intervals over decoded physical
 metrics, not the lowest model-specific validation loss. At least the leading
@@ -297,6 +297,53 @@ respectively. At 20k its total (0.037207) remains 13.8% below ResNet-34 and
 below ResNet-34 and 11.9% below ResNet-18; L1 (0.034574) is 7.2% and 12.0%
 lower. The validation gain clearly survives, while decoded metrics must still
 establish whether it survives in physical units.
+
+The first transformer-scaling point is unfavorable at the baseline optimizer:
+the 145M ResNet-50 + 768-wide 6e/3d model records 10k total 0.053834 and L1
+0.037560, versus 0.042517 and 0.035436 for backbone-only ResNet-50. It is also
+about 1.3× slower than that model and 2.6× slower than ResNet-18. Because the
+larger model's training curve descends more slowly, this result tests equal-LR
+architecture scaling; it does not rule out a higher-LR large-model variant.
+By 30k the large model nearly catches up but still does not win: total 0.036617
+versus 0.036259, and L1 0.035273 versus 0.034574 for backbone-only ResNet-50.
+At the fixed budget it adds 80.3M parameters and about 32% update time without
+a validation benefit.
+
+Removing the ACT VAE gives a simpler early winner but not a final-budget winner.
+Direct ACT-L1 records held-out L1 0.039505 / 0.039920 / 0.039448 at 10k/20k/30k,
+versus VAE ACT 0.041715 / 0.040570 / 0.039285. Thus it is 5.3% better at 10k,
+then plateaus and is effectively tied (0.4% worse) at 30k. It uses 17.4M fewer
+training parameters and updates about 14% faster. The VAE is not needed for
+30k L1 quality, while earlier stopping matters for the direct model.
+
+The uniform-time matched-flow LR control rejects a simple optimizer explanation:
+
+| Uniform ACT-flow LR | 10k flow MSE | 20k flow MSE | 30k flow MSE |
+| --- | ---: | ---: | ---: |
+| 1e-5 (ACT-matched) | 0.052217 | 0.046969 | 0.039829 |
+| 1e-4 (flow-tuned candidate) | 0.081311 | 0.073134 | 0.076679 |
+
+At 30k, 1e-4 is 92.5% worse in its own held-out velocity-MSE objective and has
+regressed from its 20k value. Training remained finite, but isolated gradient
+norm spikes above 100 accompanied the otherwise roughly unit-scale norms. Thus
+the tenfold LR increase is not a rescue for this ACT-sized flow model. This is
+an optimizer-sensitivity result only: neither row can yet be ranked against ACT
+L1 or VAE losses until their decoded physical trajectories are evaluated.
+
+The Beta(1.5, 1.0)-time, 1e-4 flow run records held-out velocity MSE
+0.064493 / 0.060377 / 0.064477 at 10k/20k/30k. It trains cleanly in 18m24s,
+with late gradient norms near 1.0, but also has a 20k optimum followed by mild
+regression. Those numbers are not directly comparable with uniform-time MSE
+because the validation sampler follows each run's training-time distribution.
+The common decoded-trajectory evaluation is therefore required to determine
+whether beta sampling actually improves the policy.
+
+Standard non-VLM Diffusion Policy records held-out noise-prediction MSE
+0.014588 / 0.009324 / 0.008077 at 10k/20k/30k, a monotonic 44.6% reduction.
+Its cosine learning-rate schedule reaches the configured 1e-6 floor near the
+end, while updates remain stable at about 0.033 s. This scalar is meaningful
+only within Diffusion Policy and is not evidence that it beats ACT: decoded
+physical errors from the common queries remain the cross-objective endpoint.
 
 The final version of this section will contain run hashes, parameter counts,
 throughput, peak memory, per-step validation curves, decoded metrics, seed means
