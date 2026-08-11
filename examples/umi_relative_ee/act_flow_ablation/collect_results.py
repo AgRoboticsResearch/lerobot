@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import re
+import statistics
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
 PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
+UPDATE_TIME_RE = re.compile(r"updt_s:(?P<seconds>[0-9.]+)")
 VALIDATION_RE = re.compile(r"Validation at step (?P<step>\d+): (?P<metrics>[^\r\n]+)")
 WRAPPER_TIME_RE = re.compile(
     r"\[(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<event>starting|completed)"
@@ -44,6 +46,7 @@ def parse_log(log_path: Path) -> dict[str, Any]:
         return {"status": "missing_log", "parameters": None, "wall_seconds": None, "validation": []}
     text = log_path.read_text(errors="replace")
     parameter_match = PARAM_RE.search(text)
+    update_seconds = [float(match["seconds"]) for match in UPDATE_TIME_RE.finditer(text)]
     times: dict[str, datetime] = {}
     for match in WRAPPER_TIME_RE.finditer(text):
         times[match["event"]] = datetime.strptime(match["time"], "%Y-%m-%d %H:%M:%S")
@@ -61,6 +64,8 @@ def parse_log(log_path: Path) -> dict[str, Any]:
         "status": "complete" if "completed" in times else "running_or_failed",
         "parameters": int(parameter_match["params"]) if parameter_match else None,
         "wall_seconds": wall_seconds,
+        "median_update_seconds": statistics.median(update_seconds) if update_seconds else None,
+        "median_updates_per_second": 1 / statistics.median(update_seconds) if update_seconds else None,
         "validation": validation,
     }
 
@@ -75,7 +80,10 @@ def flatten_evaluation(report_path: Path, run: dict[str, Any]) -> dict[str, Any]
         "num_episodes": summary["num_episodes"],
         "num_samples": summary["num_samples"],
         "video_backend": report.get("video_backend"),
+        "cuda_peak_memory_bytes": report.get("cuda_peak_memory_bytes"),
     }
+    for name, value in report.get("inference_latency_seconds", {}).items():
+        row[f"inference_{name}"] = value
     for name, value in summary["episode_balanced"].items():
         row[name] = value
         interval = summary.get("episode_balanced_95ci", {}).get(name)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -281,6 +282,20 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
     }
 
 
+def summarize_inference_latency(seconds: list[float]) -> dict[str, float | int]:
+    """Summarize synchronized policy-only latency, excluding one cold call."""
+    if not seconds:
+        raise ValueError("No inference timings were provided")
+    warm = np.asarray(seconds[1:] if len(seconds) > 1 else seconds, dtype=np.float64)
+    return {
+        "num_warm_samples": len(warm),
+        "cold_seconds": seconds[0],
+        "mean_seconds": float(warm.mean()),
+        "median_seconds": float(np.median(warm)),
+        "p95_seconds": float(np.quantile(warm, 0.95)),
+    }
+
+
 def main() -> None:
     args = parse_args()
     if args.output_dir is None:
@@ -349,6 +364,9 @@ def main() -> None:
         )
 
     samples: list[dict[str, float]] = []
+    inference_seconds: list[float] = []
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     for sample_index, (dataset_index, episode_index, frame_index) in enumerate(query_indices):
         batch = lerobot_collate_fn([dataset[dataset_index]])
         if CAMERA_KEY in batch and batch[CAMERA_KEY].dtype == torch.uint8:
@@ -373,7 +391,13 @@ def main() -> None:
         with torch.no_grad():
             processed = preprocessor(batch)
             processed.pop(ACTION, None)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            inference_start = time.perf_counter()
             predicted_model = policy.predict_action_chunk(processed)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            inference_seconds.append(time.perf_counter() - inference_start)
             predicted = postprocessor(predicted_model).squeeze(0).to(torch.float32).cpu()
 
         steps = min(len(predicted), len(ground_truth))
@@ -425,6 +449,10 @@ def main() -> None:
         "samples_per_episode": args.samples_per_episode,
         "seed": args.seed,
         "video_backend": args.video_backend,
+        "inference_latency_seconds": summarize_inference_latency(inference_seconds),
+        "cuda_peak_memory_bytes": (
+            torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+        ),
         "action_dimension_inference": {
             "active_action_dim": policy_config.action_feature.shape[0],
             "model_action_dim": getattr(

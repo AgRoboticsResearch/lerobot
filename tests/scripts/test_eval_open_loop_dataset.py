@@ -6,6 +6,7 @@ from examples.umi_relative_ee.eval_open_loop_dataset import (
     choose_query_indices,
     rotation_error_deg,
     summarize,
+    summarize_inference_latency,
 )
 
 
@@ -62,6 +63,15 @@ def test_rotation_error_deg_uses_absolute_pose_geodesic_error():
     error = rotation_error_deg(predicted, target)
 
     torch.testing.assert_close(error, torch.tensor([0.0, 90.0]), atol=1e-4, rtol=0)
+
+
+def test_summarize_inference_latency_excludes_cold_call():
+    summary = summarize_inference_latency([9.0, 1.0, 2.0, 3.0])
+
+    assert summary["num_warm_samples"] == 3
+    assert summary["cold_seconds"] == 9.0
+    assert summary["mean_seconds"] == 2.0
+    assert summary["median_seconds"] == 2.0
 
 
 def test_summarize_reports_episode_balanced_primary_metric():

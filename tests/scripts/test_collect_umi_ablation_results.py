@@ -17,6 +17,8 @@ def test_parse_log_collects_parameters_wall_time_and_validation(tmp_path: Path):
     log.write_text(
         "[2026-08-11 10:00:00] starting run on host GPU\n"
         "INFO num_total_params=123456 (123K)\n"
+        "INFO step:200 loss:1.0 updt_s:0.040 data_s:0.003\n"
+        "INFO step:400 loss:0.5 updt_s:0.060 data_s:0.003\n"
         "INFO Validation at step 10000: loss=0.123000, flow_loss=0.123000\n"
         "[2026-08-11 10:02:03] completed run\n"
     )
@@ -26,4 +28,6 @@ def test_parse_log_collects_parameters_wall_time_and_validation(tmp_path: Path):
     assert parsed["status"] == "complete"
     assert parsed["parameters"] == 123456
     assert parsed["wall_seconds"] == 123
+    assert parsed["median_update_seconds"] == 0.05
+    assert parsed["median_updates_per_second"] == 20
     assert parsed["validation"] == [{"step": 10000, "loss": 0.123, "flow_loss": 0.123}]

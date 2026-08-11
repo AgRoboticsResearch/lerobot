@@ -169,7 +169,7 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
-| `act_r18_vae` | exact 1459 early-budget replication | 52M | pending |
+| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k complete; eval pending |
 | `act_r34_vae` | backbone-only scale | TBD | pending |
 | `act_r50_vae` | backbone-only scale | TBD | pending |
 | `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | smoke passed |
@@ -190,6 +190,10 @@ the 100 validation episodes. Reports use episode-balanced means and deterministi
 as the resampling unit. ACT-flow and Diffusion Policy are additionally evaluated
 with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
 seeds are varied only after this screen selects configurations worth promoting.
+Synchronized policy-only GPU latency is measured on the same queries, excluding
+the first cold call; mean, median, p95, and peak allocated inference memory are
+recorded alongside accuracy. This makes the cost of larger backbones and
+iterative samplers explicit.
 
 ## 6. Smoke experiments and resource observations
 
@@ -261,14 +265,16 @@ throughput. Dedicated timed runs are required before latency conclusions.
 The controlled sweep is in progress. The exact ResNet-18 ACT replication gives
 the first scientific sanity check:
 
-| Run | 10k validation loss | Difference from historical |
-| --- | ---: | ---: |
-| historical 1459 ACT | 0.054203 | — |
-| controlled `act_r18_vae`, seed 1000 | 0.054130 | -0.000073 (-0.13%) |
+| Run | 10k validation | 20k validation | 30k validation |
+| --- | ---: | ---: | ---: |
+| historical 1459 ACT | 0.054203 | 0.043292 | 0.039702 |
+| controlled `act_r18_vae`, seed 1000 | 0.054130 (-0.13%) | 0.043604 (+0.72%) | 0.041139 (+3.62%) |
 
-This close agreement makes major dataset, representation, decoder, or software
-drift unlikely at the screening scale. It does not establish reproducibility of
-decoded metrics until the 30k checkpoint is evaluated.
+The close early agreement makes major dataset, representation, decoder, or
+software drift unlikely at the screening scale. The modest 30k divergence is
+large enough that the fresh run, not the historical scalar, is the strict
+contemporary control for architecture comparisons. Reproducibility of decoded
+metrics is still pending the 30k checkpoint evaluation.
 
 The final version of this section will contain run hashes, parameter counts,
 throughput, peak memory, per-step validation curves, decoded metrics, seed means
