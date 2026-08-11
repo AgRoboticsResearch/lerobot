@@ -169,23 +169,24 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
-| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k complete; evaluation running |
-| `act_r34_vae` | backbone-only scale | 62M | 30k complete; eval pending |
-| `act_r50_vae` | backbone-only scale | 65M | 30k complete; eval pending |
-| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k complete; eval pending |
-| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k complete; eval pending |
-| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k complete; eval pending |
-| `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k complete; eval pending |
-| `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k complete; eval pending |
-| `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k complete; eval pending |
+| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete |
+| `act_r34_vae` | backbone-only scale | 62M | 30k + eval complete |
+| `act_r50_vae` | backbone-only scale | 65M | 30k + eval complete; promoted |
+| `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k + eval complete; not promoted |
+| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; promoted |
+| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k + eval complete; promoted |
+| `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
+| `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
+| `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; promoted |
 
 Promotion rules will be based on confidence intervals over decoded physical
 metrics, not the lowest model-specific validation loss. At least the leading
 ACT-capacity model, ACT-L1, and leading ACT-flow configuration should receive
 multiple seeds before a final claim.
 
-Stage-one evaluation uses five evenly spaced valid query frames in every one of
-the 100 validation episodes. Reports use episode-balanced means and deterministic
+Stage-one evaluation uses five evenly spaced query frames in the common valid
+action-offset intersection `[-1, 31]` in every one of the 100 validation
+episodes. Reports use episode-balanced means and deterministic
 95% nonparametric bootstrap intervals (10,000 resamples, seed 0), with episodes
 as the resampling unit. ACT-flow and Diffusion Policy are additionally evaluated
 with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
@@ -214,7 +215,7 @@ throughput. Dedicated timed runs are required before latency conclusions.
 ## 7. Validation and test evidence so far
 
 - Ruff and whitespace checks pass on all changed files.
-- 46 targeted CPU tests pass, 9 hardware/optional tests skip. These cover the
+- 48 targeted CPU tests pass, 9 hardware/optional tests skip. These cover the
   new ACT-flow training/inference path, shared flow integrator, legacy ACT VAE
   behavior, ACT/Diffusion processors, and canonical UMI processor behavior.
 - ACT-flow produces finite differentiable loss, gradients in its noisy-action
@@ -259,10 +260,18 @@ throughput. Dedicated timed runs are required before latency conclusions.
    demonstrates that validation-loss-best and decoded-metric-best disagree for
    every evaluated model. The experiment protocol therefore fixes decoded
    metrics as the cross-model endpoint.
+8. The first evaluation pass chose valid queries from `chunk_size=30`. That is
+   correct for ACT's offsets `[-1, 0, ..., 29]`, but Diffusion Policy requests
+   `[-1, 0, ..., 31]`; its first late query was therefore padded and the launcher
+   stopped after 14 reports. The evaluator now accepts and records explicit
+   offset bounds, the fixed launcher uses the common `[-1, 31]` intersection,
+   and a regression test checks exact frame indices. The 14 earlier reports are
+   preserved under `eval/` as superseded evidence. All scientific results use
+   the clean rerun under `eval_common_h32/`.
 
 ## 9. Results
 
-The controlled sweep is in progress. The exact ResNet-18 ACT replication gives
+The exact ResNet-18 ACT replication gives
 the first scientific sanity check:
 
 | Run | 10k validation | 20k validation | 30k validation |
@@ -273,8 +282,7 @@ the first scientific sanity check:
 The close early agreement makes major dataset, representation, decoder, or
 software drift unlikely at the screening scale. The modest 30k divergence is
 large enough that the fresh run, not the historical scalar, is the strict
-contemporary control for architecture comparisons. Reproducibility of decoded
-metrics is still pending the 30k checkpoint evaluation.
+contemporary control for architecture comparisons.
 
 The first backbone-only comparison is provisionally favorable to ResNet-34:
 
@@ -286,8 +294,8 @@ The first backbone-only comparison is provisionally favorable to ResNet-34:
 
 ResNet-34 reduces total validation loss by 5.7%, 1.0%, and 4.8% at the three
 budgets; its 30k L1 is 0.037265 versus ResNet-18's 0.039285 (5.1% lower). It
-reduces update throughput by roughly 25%. This is a consistent capacity signal,
-but remains provisional until decoded physical metrics are available.
+reduces update throughput by roughly 25%. The decoded results below confirm the
+capacity signal.
 
 ResNet-50 is a stronger signal: its 10k total is 16.7% below ResNet-34
 and 21.5% below ResNet-18, while its L1 (0.035436) is lower by 13.3% and 15.1%
@@ -295,8 +303,7 @@ respectively. At 20k its total (0.037207) remains 13.8% below ResNet-34 and
 14.7% below ResNet-18, with L1 (0.034470) about 14% lower than both. It is also
 2.1× slower per update than ResNet-18. At 30k its total (0.036259) is 7.4%
 below ResNet-34 and 11.9% below ResNet-18; L1 (0.034574) is 7.2% and 12.0%
-lower. The validation gain clearly survives, while decoded metrics must still
-establish whether it survives in physical units.
+lower. The decoded metrics confirm that the gain survives in physical units.
 
 The first transformer-scaling point is unfavorable at the baseline optimizer:
 the 145M ResNet-50 + 768-wide 6e/3d model records 10k total 0.053834 and L1
@@ -345,10 +352,101 @@ end, while updates remain stable at about 0.033 s. This scalar is meaningful
 only within Diffusion Policy and is not evidence that it beats ACT: decoded
 physical errors from the common queries remain the cross-objective endpoint.
 
-The final version of this section will contain run hashes, parameter counts,
-throughput, peak memory, per-step validation curves, decoded metrics, seed means
-or bootstrap confidence intervals, and explicit answers to Q1 and Q2. Smoke
-success remains feasibility evidence only.
+### 9.1 Decoded physical metrics at 30k
+
+All rows below use the corrected common 500-query set. Generative rows average
+inference seeds 1000/2000/3000 within each episode before averaging episodes.
+Latency is synchronized policy-only median latency; memory is peak allocated
+CUDA memory. Lower is better throughout.
+
+| Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Median (ms) | Peak (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT R18 VAE | 18.30 | 27.50 | 3.249 | 5.516 | 7.13 | 267 |
+| ACT R34 VAE | 17.36 | 25.65 | 3.147 | 4.947 | 8.55 | 305 |
+| ACT R50 VAE | 14.90 | **23.65** | 2.677 | **4.390** | 9.89 | 341 |
+| ACT R50 large | **14.57** | 23.83 | **2.650** | 4.462 | 11.51 | 653 |
+| ACT R18 L1 | 17.91 | 28.18 | 3.143 | 5.117 | **6.70** | 200 |
+| ACT-flow uniform, 1e-5 | 18.75 | 30.86 | 3.767 | 6.290 | 29.90 | 203 |
+| ACT-flow uniform, 1e-4 | 37.12 | 57.94 | 5.184 | 7.070 | 29.87 | 203 |
+| ACT-flow beta, 1e-4 | 34.59 | 59.13 | 3.810 | 5.689 | 29.62 | 203 |
+| Diffusion R18 | 15.71 | 27.27 | 3.391 | 5.838 | 23.23 | 345 |
+
+Paired episode bootstrap comparisons (10,000 resamples) establish:
+
+- ResNet-34 versus R18 improves XYZ endpoint by 6.7% (95% CI 1.5–11.7%)
+  and rotation endpoint by 10.3% (4.5–15.9%).
+- ResNet-50 versus R18 improves XYZ endpoint by 14.0% (9.6–18.2%), rotation
+  endpoint by 20.4% (15.3–25.3%), XYZ chunk mean by 18.6% (14.9–22.0%), and
+  rotation chunk mean by 17.6% (13.3–21.7%). All four paired difference
+  intervals exclude zero.
+- R50-large versus backbone-only R50 is tied on all four pose metrics: for
+  endpoint XYZ its improvement is -0.8% (CI -6.0–4.2%), and for endpoint
+  rotation -1.6% (-8.0–4.2%). It adds 80.3M parameters, 16% inference latency,
+  and 312 MiB peak memory without a supported accuracy gain.
+- ACT-L1 versus ACT-VAE is tied in XYZ but improves endpoint rotation by 7.2%
+  (2.1–12.0%). It is the fastest and smallest ACT control.
+
+The R50 result is therefore not merely a lower training loss: it is a sizable,
+statistically supported decoded-pose improvement. Scaling the visual backbone
+is the successful intervention; scaling the already-large transformer at the
+same optimizer is not.
+
+### 9.2 Flow matching and Diffusion Policy isolation
+
+The closest objective isolation is ACT-flow uniform 1e-5 versus ACT-L1. Both
+use the same ResNet-18 encoder, 512-wide ACT transformer, action/state
+representation, no VAE, data, optimizer LR, and queries; only the direct L1
+head versus time-conditioned velocity field and iterative sampler differ.
+Matched flow is worse on every pose metric: endpoint XYZ error is 9.5% higher
+(paired CI 3.7–15.4%), endpoint rotation 22.9% higher (15.9–30.5%), chunk XYZ
+4.7% higher (0.2–9.2%), and chunk rotation 19.9% higher (14.9–25.0%). The 1e-4
+and beta-time variants fail much more severely in translation. Thus this
+particular vanilla conditional-flow formulation has a real deficit at 30k; it
+is not explained by a VLM.
+
+Vanilla non-VLM Diffusion Policy gives a different answer. Relative to ACT-L1,
+it improves chunk XYZ by 12.3% (8.0–16.3%), is tied on endpoint XYZ at +3.2%
+(-2.3–8.5%), but worsens chunk rotation by 7.9% (3.4–12.6%) and endpoint
+rotation by 14.1% (8.2–20.3%). Relative to ACT-VAE it improves chunk XYZ by
+14.2% (9.8–18.4%), ties endpoint XYZ, and ties both rotation metrics at 95%.
+Therefore flow/diffusion objectives are **not intrinsically always worse than
+ACT**: standard DP is competitive and materially better on average translation
+through the chunk. The matched straight-line flow implementation is the weak
+case, while the earlier 100k π0.5 result being slightly better than ACT in XYZ
+also rules out a blanket “all flow models fail” statement.
+
+There is nevertheless an important control-quality cost. ACT-L1 rotation/XYZ
+jerk is 0.091 deg / 0.00073 m, matched flow is 1.093 deg / 0.00466 m, and DP is
+0.481 deg / 0.00186 m; the ground-truth values are 0.158 deg / 0.00067 m.
+Iterative generative samples are substantially less smooth at 30k. Flow is
+4.5× and DP 3.5× slower than ACT-L1 at inference, although both remain below
+30 ms median on the RTX 4090.
+
+### 9.3 Answers and promotion decision after stage one
+
+**Q1:** yes. A ResNet-50 backbone is the strongest tested ACT improvement over
+the fresh 1459 control. ResNet-34 is a smaller positive step; the 145M widened
+transformer is not worthwhile at the tested LR/budget. The claim is currently
+an offline 30k claim, so R18 and R50 are promoted to a longer budget before
+recommending replacement of the multi-million-step historical checkpoint.
+
+**Q2:** no single explanation fits. Matched ACT-flow is significantly worse
+than the architecture-matched L1 policy, so that flow formulation/sampler needs
+work independent of any VLM. But vanilla DP without a VLM is competitive with
+ACT and better on chunk translation, so generative modeling itself is not the
+fundamental problem. VLM fine-tuning, objective/sampler design, and trajectory
+smoothness are separate axes; the existing π0.5 result further indicates that
+the VLM path can work. ACT-L1, uniform flow 1e-5, and DP are promoted with R18
+and R50 to determine whether these conclusions persist at 100k.
+
+Stage two therefore trains fresh 100k runs (not scheduler-incompatible resumes)
+for ACT R18 VAE, ACT R50 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and Diffusion
+R18. Fresh runs are required because Diffusion Policy's cosine scheduler was
+constructed for 30k steps and had already reached its floor; extending that
+optimizer state to 100k would not be equivalent to a 100k schedule. After the
+100k screen, the surviving comparison will be repeated with training seeds
+2000 and 3000 so that training-seed variability, which episode bootstrap cannot
+measure, is included in the final recommendation.
 
 ## 10. Reproduction
 
@@ -359,6 +457,7 @@ manual path selection, while `evaluate_stage1.sh` fixes the deterministic and
 three-seed generative matrix. `collect_results.py` extracts parameter counts, wall
 times, complete validation curves, decoded metrics, and confidence intervals
 into compact external CSV/JSON files without creating a second narrative doc.
+`run_stage2.sh` and `evaluate_stage2.sh` encode the five promoted 100k controls.
 Example:
 
 ```bash

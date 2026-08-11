@@ -8,9 +8,12 @@ import csv
 import json
 import re
 import statistics
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
@@ -20,11 +23,33 @@ VALIDATION_RE = re.compile(r"Validation at step (?P<step>\d+): (?P<metrics>[^\r\
 WRAPPER_TIME_RE = re.compile(
     r"\[(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<event>starting|completed)"
 )
+COMPARISON_METRICS = (
+    "rotation_chunk_mean_deg",
+    "rotation_end_deg",
+    "xyz_chunk_mean_m",
+    "xyz_end_m",
+    "gripper_chunk_mean",
+    "gripper_end",
+    "rot_jerk_deg",
+    "xyz_jerk_m",
+)
+EXTRA_PAIRED_VARIANTS = (
+    ("act_r50_large", "act_r50_vae"),
+    ("act_r18_flow_u_lr1e5", "act_r18_l1"),
+    ("act_r18_flow_u_lr1e4", "act_r18_flow_u_lr1e5"),
+    ("act_r18_flow_beta_lr1e4", "act_r18_flow_u_lr1e4"),
+    ("diffusion_r18", "act_r18_l1"),
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact_root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument(
+        "--eval_dir_name",
+        default="eval_common_h32",
+        help="Evaluation namespace to collect (default: fixed common-horizon reports).",
+    )
     return parser.parse_args()
 
 
@@ -81,6 +106,8 @@ def flatten_evaluation(report_path: Path, run: dict[str, Any]) -> dict[str, Any]
         "num_samples": summary["num_samples"],
         "video_backend": report.get("video_backend"),
         "cuda_peak_memory_bytes": report.get("cuda_peak_memory_bytes"),
+        "query_min_action_offset": report.get("query_action_offset_bounds", {}).get("min"),
+        "query_max_action_offset": report.get("query_action_offset_bounds", {}).get("max"),
     }
     for name, value in report.get("inference_latency_seconds", {}).items():
         row[f"inference_{name}"] = value
@@ -91,6 +118,141 @@ def flatten_evaluation(report_path: Path, run: dict[str, Any]) -> dict[str, Any]
             row[f"{name}_ci_low"] = interval["low"]
             row[f"{name}_ci_high"] = interval["high"]
     return row
+
+
+def aggregate_episode_metrics(reports: list[dict[str, Any]]) -> dict[str, np.ndarray]:
+    """Average inference seeds within each episode, preserving episode pairing."""
+    if not reports:
+        raise ValueError("At least one evaluation report is required")
+    episode_ids = sorted(set.intersection(*(set(report["summary"]["per_episode"]) for report in reports)))
+    if not episode_ids:
+        raise ValueError("Evaluation reports have no common episodes")
+    return {
+        metric: np.asarray(
+            [
+                statistics.mean(
+                    float(report["summary"]["per_episode"][episode_id][metric])
+                    for report in reports
+                )
+                for episode_id in episode_ids
+            ],
+            dtype=np.float64,
+        )
+        for metric in COMPARISON_METRICS
+    }
+
+
+def bootstrap_mean_interval(
+    values: np.ndarray, *, rng: np.random.Generator, num_resamples: int = 10_000
+) -> tuple[float, float]:
+    indices = rng.integers(0, len(values), size=(num_resamples, len(values)))
+    resampled_means = values[indices].mean(axis=1)
+    low, high = np.percentile(resampled_means, [2.5, 97.5])
+    return float(low), float(high)
+
+
+def bootstrap_paired_improvement_interval(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    *,
+    rng: np.random.Generator,
+    num_resamples: int = 10_000,
+) -> tuple[float, float]:
+    indices = rng.integers(0, len(baseline), size=(num_resamples, len(baseline)))
+    baseline_means = baseline[indices].mean(axis=1)
+    candidate_means = candidate[indices].mean(axis=1)
+    improvements = (baseline_means - candidate_means) / baseline_means * 100
+    low, high = np.percentile(improvements, [2.5, 97.5])
+    return float(low), float(high)
+
+
+def summarize_variants(
+    reports_by_run: dict[str, list[dict[str, Any]]], runs_by_name: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return seed-averaged summaries and paired differences from fresh ACT R18."""
+    episode_metrics_by_run = {
+        run_name: aggregate_episode_metrics(reports)
+        for run_name, reports in reports_by_run.items()
+    }
+    summary_rows = []
+    for run_name, metrics in episode_metrics_by_run.items():
+        reports = reports_by_run[run_name]
+        run = runs_by_name[run_name]
+        row = {
+            **run,
+            "num_inference_seeds": len(reports),
+            "inference_median_seconds": statistics.mean(
+                float(report["inference_latency_seconds"]["median_seconds"])
+                for report in reports
+            ),
+            "inference_p95_seconds": statistics.mean(
+                float(report["inference_latency_seconds"]["p95_seconds"]) for report in reports
+            ),
+            "cuda_peak_memory_bytes": max(
+                int(report["cuda_peak_memory_bytes"]) for report in reports
+            ),
+        }
+        rng = np.random.default_rng(0)
+        for metric, values in metrics.items():
+            low, high = bootstrap_mean_interval(values, rng=rng)
+            seed_means = [float(report["summary"]["episode_balanced"][metric]) for report in reports]
+            row[metric] = float(values.mean())
+            row[f"{metric}_ci_low"] = low
+            row[f"{metric}_ci_high"] = high
+            row[f"{metric}_inference_seed_sd"] = float(np.std(seed_means))
+        summary_rows.append(row)
+
+    comparison_pairs = set()
+    for run_name, run in runs_by_name.items():
+        baseline_name = f"act_r18_vae_seed{run['training_seed']}_{run['steps']}steps"
+        if run_name != baseline_name and baseline_name in episode_metrics_by_run:
+            comparison_pairs.add((run_name, baseline_name))
+    for candidate_variant, baseline_variant in EXTRA_PAIRED_VARIANTS:
+        for run_name, run in runs_by_name.items():
+            if run["variant"] != candidate_variant:
+                continue
+            baseline_name = (
+                f"{baseline_variant}_seed{run['training_seed']}_{run['steps']}steps"
+            )
+            if baseline_name in episode_metrics_by_run:
+                comparison_pairs.add((run_name, baseline_name))
+
+    comparison_rows = []
+    for run_name, baseline_name in sorted(comparison_pairs):
+        candidate_metrics = episode_metrics_by_run[run_name]
+        run = runs_by_name[run_name]
+        baseline_metrics = episode_metrics_by_run[baseline_name]
+        for metric in COMPARISON_METRICS:
+            baseline = baseline_metrics[metric]
+            candidate = candidate_metrics[metric]
+            if baseline.shape != candidate.shape:
+                raise ValueError(f"Episode mismatch between {run_name} and {baseline_name}")
+            differences = candidate - baseline
+            rng = np.random.default_rng(0)
+            diff_low, diff_high = bootstrap_mean_interval(differences, rng=rng)
+            rng = np.random.default_rng(0)
+            improvement_low, improvement_high = bootstrap_paired_improvement_interval(
+                baseline, candidate, rng=rng
+            )
+            comparison_rows.append(
+                {
+                    **run,
+                    "baseline_run_name": baseline_name,
+                    "baseline_variant": runs_by_name[baseline_name]["variant"],
+                    "metric": metric,
+                    "candidate_mean": float(candidate.mean()),
+                    "baseline_mean": float(baseline.mean()),
+                    "paired_difference": float(differences.mean()),
+                    "paired_difference_ci_low": diff_low,
+                    "paired_difference_ci_high": diff_high,
+                    "paired_improvement_percent": float(
+                        (baseline.mean() - candidate.mean()) / baseline.mean() * 100
+                    ),
+                    "paired_improvement_percent_ci_low": improvement_low,
+                    "paired_improvement_percent_ci_high": improvement_high,
+                }
+            )
+    return summary_rows, comparison_rows
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -108,24 +270,48 @@ def main() -> None:
     train_rows = []
     validation_rows = []
     evaluation_rows = []
+    reports_by_run: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    runs_by_name = {}
     for run_dir in sorted((args.artifact_root / "train").glob("*")):
         if not run_dir.is_dir() or RUN_RE.fullmatch(run_dir.name) is None:
             continue
         run = parse_run_name(run_dir.name)
+        runs_by_name[run_dir.name] = run
         log = parse_log(args.artifact_root / "logs" / f"{run_dir.name}.log")
         train_rows.append({**run, **{key: value for key, value in log.items() if key != "validation"}})
         validation_rows.extend({**run, **metrics} for metrics in log["validation"])
-        for report_path in sorted((args.artifact_root / "eval" / run_dir.name).glob("seed*/*.json")):
+        for report_path in sorted(
+            (args.artifact_root / args.eval_dir_name / run_dir.name).glob("seed*/*.json")
+        ):
             evaluation_rows.append(flatten_evaluation(report_path, run))
+            report = json.loads(report_path.read_text())
+            bounds = report.get("query_action_offset_bounds")
+            if args.eval_dir_name == "eval_common_h32" and bounds != {"min": -1, "max": 31}:
+                raise ValueError(f"Unexpected common-horizon query bounds in {report_path}: {bounds}")
+            reports_by_run[run_dir.name].append(report)
+
+    variant_rows, comparison_rows = summarize_variants(reports_by_run, runs_by_name)
 
     result_dir = args.artifact_root / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
     write_csv(result_dir / "stage1_runs.csv", train_rows)
     write_csv(result_dir / "stage1_validation.csv", validation_rows)
     write_csv(result_dir / "stage1_evaluations.csv", evaluation_rows)
+    write_csv(result_dir / "stage1_variant_summary.csv", variant_rows)
+    write_csv(result_dir / "stage1_paired_comparisons.csv", comparison_rows)
+    write_csv(
+        result_dir / "stage1_paired_vs_act_r18.csv",
+        [row for row in comparison_rows if row["baseline_variant"] == "act_r18_vae"],
+    )
     (result_dir / "stage1_results.json").write_text(
         json.dumps(
-            {"runs": train_rows, "validation": validation_rows, "evaluations": evaluation_rows},
+            {
+                "runs": train_rows,
+                "validation": validation_rows,
+                "evaluations": evaluation_rows,
+                "variant_summary": variant_rows,
+                "paired_comparisons": comparison_rows,
+            },
             indent=2,
         )
         + "\n"

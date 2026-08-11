@@ -23,8 +23,8 @@ if [[ "${#CHECKPOINTS[@]}" -ne 1 ]]; then
   exit 2
 fi
 
-OUT="$ARTIFACT_ROOT/eval/$RUN_NAME/seed$EVAL_SEED"
-LOG="$ARTIFACT_ROOT/logs/eval_${RUN_NAME}_seed${EVAL_SEED}.log"
+OUT="$ARTIFACT_ROOT/eval_common_h32/$RUN_NAME/seed$EVAL_SEED"
+LOG="$ARTIFACT_ROOT/logs/eval_common_h32_${RUN_NAME}_seed${EVAL_SEED}.log"
 if [[ -e "$OUT" || -e "$LOG" ]]; then
   echo "Refusing to overwrite existing evaluation: $OUT or $LOG" >&2
   exit 2
@@ -38,6 +38,8 @@ PYTHONPATH=src uv run python examples/umi_relative_ee/eval_open_loop_dataset.py 
   --dataset_root="$VAL_ROOT" \
   --repo_id="$VAL_REPO" \
   --samples_per_episode="$SAMPLES_PER_EPISODE" \
+  --query_min_action_offset=-1 \
+  --query_max_action_offset=31 \
   --seed="$EVAL_SEED" \
   --device=cuda \
   --video_backend=pyav \

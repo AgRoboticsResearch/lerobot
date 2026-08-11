@@ -61,6 +61,13 @@ The complete stage-one evaluation matrix is likewise sequential:
 bash examples/umi_relative_ee/act_flow_ablation/evaluate_stage1.sh 30000 1000 5
 ```
 
+Run and evaluate the five stage-one promotions at 100k with:
+
+```bash
+bash examples/umi_relative_ee/act_flow_ablation/run_stage2.sh 100000 1000
+bash examples/umi_relative_ee/act_flow_ablation/evaluate_stage2.sh 100000 1000 5
+```
+
 After training/evaluation, collect compact CSV/JSON evidence outside Git:
 
 ```bash

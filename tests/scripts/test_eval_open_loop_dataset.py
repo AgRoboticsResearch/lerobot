@@ -23,7 +23,8 @@ def test_choose_query_indices_covers_every_episode_with_multiple_valid_frames():
     queries = choose_query_indices(
         records,
         episode_indices=list(range(100)),
-        chunk_size=30,
+        min_action_offset=-1,
+        max_action_offset=29,
         samples_per_episode=10,
     )
 
@@ -34,7 +35,21 @@ def test_choose_query_indices_covers_every_episode_with_multiple_valid_frames():
 
 def test_choose_query_indices_rejects_nonpositive_sample_count():
     with pytest.raises(ValueError, match="samples_per_episode must be positive"):
-        choose_query_indices([], [], chunk_size=30, samples_per_episode=0)
+        choose_query_indices([], [], min_action_offset=-1, max_action_offset=29, samples_per_episode=0)
+
+
+def test_choose_query_indices_supports_common_larger_horizon():
+    records = [{"episode_index": 0, "length": 80, "dataset_from_index": 0}]
+
+    queries = choose_query_indices(
+        records,
+        episode_indices=[0],
+        min_action_offset=-1,
+        max_action_offset=31,
+        samples_per_episode=5,
+    )
+
+    assert [frame for _, _, frame in queries] == [1, 12, 24, 36, 48]
 
 
 def test_bootstrap_episode_confidence_intervals_is_deterministic_and_episode_level():

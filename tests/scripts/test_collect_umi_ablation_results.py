@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from examples.umi_relative_ee.act_flow_ablation.collect_results import parse_log, parse_run_name
+import pytest
+
+from examples.umi_relative_ee.act_flow_ablation.collect_results import (
+    aggregate_episode_metrics,
+    bootstrap_paired_improvement_interval,
+    parse_log,
+    parse_run_name,
+)
 
 
 def test_parse_run_name_preserves_variant_and_numeric_fields():
@@ -31,3 +38,41 @@ def test_parse_log_collects_parameters_wall_time_and_validation(tmp_path: Path):
     assert parsed["median_update_seconds"] == 0.05
     assert parsed["median_updates_per_second"] == 20
     assert parsed["validation"] == [{"step": 10000, "loss": 0.123, "flow_loss": 0.123}]
+
+
+def test_aggregate_episode_metrics_averages_inference_seeds_within_episode():
+    reports = []
+    for seed_offset in (0.0, 2.0):
+        per_episode = {}
+        for episode_id, episode_offset in (("0", 1.0), ("1", 3.0)):
+            per_episode[episode_id] = dict.fromkeys(
+                (
+                    "rotation_chunk_mean_deg",
+                    "rotation_end_deg",
+                    "xyz_chunk_mean_m",
+                    "xyz_end_m",
+                    "gripper_chunk_mean",
+                    "gripper_end",
+                    "rot_jerk_deg",
+                    "xyz_jerk_m",
+                ),
+                seed_offset + episode_offset,
+            )
+        reports.append({"summary": {"per_episode": per_episode}})
+
+    metrics = aggregate_episode_metrics(reports)
+
+    assert metrics["xyz_end_m"].tolist() == pytest.approx([2.0, 4.0])
+
+
+def test_paired_improvement_bootstrap_uses_ratio_of_aggregate_means():
+    import numpy as np
+
+    baseline = np.asarray([1.0, 100.0])
+    candidate = np.asarray([2.0, 50.0])
+    low, high = bootstrap_paired_improvement_interval(
+        baseline, candidate, rng=np.random.default_rng(0), num_resamples=1000
+    )
+
+    aggregate_improvement = (baseline.mean() - candidate.mean()) / baseline.mean() * 100
+    assert low <= aggregate_improvement <= high

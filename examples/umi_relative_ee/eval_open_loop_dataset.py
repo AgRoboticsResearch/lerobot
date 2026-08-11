@@ -66,6 +66,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--num_steps", type=int, default=None)
     parser.add_argument(
+        "--query_min_action_offset",
+        type=int,
+        default=None,
+        help="Override the minimum action delta index used to choose valid query frames.",
+    )
+    parser.add_argument(
+        "--query_max_action_offset",
+        type=int,
+        default=None,
+        help="Override the maximum action delta index used to choose valid query frames.",
+    )
+    parser.add_argument(
         "--legacy_full_action_noise",
         action="store_true",
         help="Deprecated for SmolVLA/π0.5; disables padded masking only for legacy π0 evaluation.",
@@ -81,28 +93,33 @@ def parse_args() -> argparse.Namespace:
 def choose_query_indices(
     episode_records: list[dict[str, Any]],
     episode_indices: list[int],
-    chunk_size: int,
+    min_action_offset: int,
+    max_action_offset: int,
     samples_per_episode: int,
 ) -> list[tuple[int, int, int]]:
     """Return ``(dataset_index, episode_index, frame_index)`` query locations.
 
-    A valid UMI query needs ``[t-1, t, ..., t+chunk_size-1]`` within one episode,
-    so local frame ``t`` is restricted to ``[1, episode_length-chunk_size]``.
+    Every requested action offset relative to local frame ``t`` must remain in
+    the episode. Explicit bounds let a multi-policy evaluation use the common
+    intersection even when policies request different action horizons.
     """
     if samples_per_episode <= 0:
         raise ValueError("samples_per_episode must be positive")
+    if min_action_offset > max_action_offset:
+        raise ValueError("min_action_offset must not exceed max_action_offset")
 
     selected: list[tuple[int, int, int]] = []
     for episode_index in episode_indices:
         record = episode_records[episode_index]
-        first_frame = 1
-        last_frame = int(record["length"]) - chunk_size
+        first_frame = max(0, -min_action_offset)
+        last_frame = int(record["length"]) - 1 - max_action_offset
         if last_frame < first_frame:
             logger.warning(
-                "Skipping episode %d: length=%d is too short for chunk_size=%d",
+                "Skipping episode %d: length=%d is too short for action offsets [%d, %d]",
                 episode_index,
                 record["length"],
-                chunk_size,
+                min_action_offset,
+                max_action_offset,
             )
             continue
         count = min(samples_per_episode, last_frame - first_frame + 1)
@@ -332,10 +349,24 @@ def main() -> None:
         raise ValueError(f"Episode indices out of range for {metadata.total_episodes} episodes: {invalid}")
     if metadata.episodes is None:
         raise RuntimeError("Dataset metadata does not contain episode records")
+    action_delta_indices = policy_config.action_delta_indices
+    if action_delta_indices is None or not action_delta_indices:
+        raise ValueError("UMI relative-EE evaluation requires action delta indices")
+    query_min_action_offset = (
+        min(action_delta_indices)
+        if args.query_min_action_offset is None
+        else args.query_min_action_offset
+    )
+    query_max_action_offset = (
+        max(action_delta_indices)
+        if args.query_max_action_offset is None
+        else args.query_max_action_offset
+    )
     query_indices = choose_query_indices(
         metadata.episodes,
         episode_indices,
-        policy_config.chunk_size,
+        query_min_action_offset,
+        query_max_action_offset,
         args.samples_per_episode,
     )
     if not query_indices:
@@ -349,11 +380,13 @@ def main() -> None:
         video_backend=args.video_backend,
     )
     logger.info(
-        "Evaluating %s on %d/%d episodes and %d query frames",
+        "Evaluating %s on %d/%d episodes and %d query frames with action-offset bounds [%d, %d]",
         policy_config.type,
         len({episode for _, episode, _ in query_indices}),
         metadata.total_episodes,
         len(query_indices),
+        query_min_action_offset,
+        query_max_action_offset,
     )
     if policy_config.type in {"smolvla", "pi0", "pi05"}:
         logger.info(
@@ -447,6 +480,10 @@ def main() -> None:
         "dataset_total_episodes": metadata.total_episodes,
         "requested_episode_indices": episode_indices,
         "samples_per_episode": args.samples_per_episode,
+        "query_action_offset_bounds": {
+            "min": query_min_action_offset,
+            "max": query_max_action_offset,
+        },
         "seed": args.seed,
         "video_backend": args.video_backend,
         "inference_latency_seconds": summarize_inference_latency(inference_seconds),
