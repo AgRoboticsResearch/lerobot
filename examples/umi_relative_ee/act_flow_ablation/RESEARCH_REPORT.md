@@ -448,6 +448,13 @@ optimizer state to 100k would not be equivalent to a 100k schedule. After the
 2000 and 3000 so that training-seed variability, which episode bootstrap cannot
 measure, is included in the final recommendation.
 
+The stage-two sequence was launched on the host RTX 4090 at 2026-08-11 20:41
+Asia/Taipei in tmux session `umi_arch_stage2_20260811`. Its first run,
+`act_r18_vae_seed1000_100000steps`, initialized successfully at about 26.7
+steps/s. Checkpoints/logs remain under
+`/media/zfei/Glowat512/projects/lerobot-arch-exp`; this is an active long-run
+confirmation and is not included in the completed 30k table above.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
