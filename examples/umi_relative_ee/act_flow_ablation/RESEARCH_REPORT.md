@@ -158,6 +158,52 @@ training timesteps, and 10 inference steps.
 runtime inference-step overrides to the nested diffusion model. All objectives
 will be compared only after postprocessing back to absolute 7D physical poses.
 
+### 4.4 Official UMI diffusion architecture ports
+
+The upstream checkout at `/home/zfei/code/universal_manipulation_interface`
+was audited at commit `d095ba9590df789df5189eea5ee7e431689038a6`. The documented
+single-GPU command uses `train_diffusion_unet_timm_umi_workspace`, not the
+transformer-denoiser configuration. Two separately registered policies were
+therefore added:
+
+- `umi_official_dp` ports the documented CLIP ViT-B/16 observation encoder,
+  CLS-token global conditioning, `(256,512,1024)` conditional 1D U-Net,
+  FiLM scale modulation, DDIM with 50 train/16 inference steps, epsilon
+  prediction, 0.1 input perturbation, AdamW 3e-4, 2k-step cosine warmup, and
+  the released EMA warmup (`power=0.75`, cap 0.9999). Its training-only image
+  transforms are 95% random crop/resize and the exact color-jitter settings in
+  the released YAML.
+- `umi_official_transformer_dp` ports the companion
+  `train_diffusion_transformer_umi_workspace`: all 197 ViT tokens are retained,
+  the low-dimensional state becomes a learned token, and a 7-layer, 768-wide,
+  8-head pre-norm transformer decoder denoises the action sequence. It adds the
+  released ±5° rotation augmentation and uses a 3e-5 backbone LR versus 3e-4
+  for the denoiser/observation projections.
+
+Both policies keep independent online and EMA copies in checkpoints; training
+updates only online weights and validation/inference use EMA weights. This is
+implemented behind new policy types and a new `umi-official-dp` dependency
+extra, so ACT, matched ACT-flow, and ordinary `diffusion` defaults and classes
+remain unchanged.
+
+This is an architecture/recipe port, not a claim of bit-for-bit reproduction.
+The necessary dataset/control adaptations are material and will be carried into
+every interpretation:
+
+| Released UMI task | This controlled comparison | Reason |
+| --- | --- | --- |
+| two observations, stride 3 at about 60 Hz | one current image + canonical derived 20D two-pose state | keep exactly the observations already supplied to ACT/DP on the 10 Hz LeRobot dataset |
+| 32D low-dimensional input, including episode-start-relative orientation | canonical 20D relative pose+gripper state | the shared evaluator/processor does not expose the extra episode-start token |
+| 16 strided action slots; deploy 8 | internal horizon 32; decode the common 30 actions | evaluate identical offsets `[-1,31]` and the same endpoint as ACT |
+| no padded action samples | shared padded sampling with padding-masked loss | preserve common query coverage without learning copied boundary actions |
+| batch 64 | batch 64 | preserve the released optimization recipe; report seen samples and compute because this is 8× the main matrix batch |
+
+Consequently these candidates answer whether the released UMI visual encoder
+and denoisers transfer well under the common LeRobot representation. They do
+not isolate the effect of observation history, temporal stride, or the missing
+episode-start orientation. The architecture-matched ACT-L1/flow pair remains
+the clean objective isolation.
+
 ## 5. Experiment matrix
 
 All full experiments use the same 1459 train set, 100-episode validation set,
@@ -178,6 +224,8 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
 | `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
 | `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; promoted |
+| `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; 30k queued after stage two |
+| `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; 30k queued after stage two |
 
 Promotion rules will be based on confidence intervals over decoded physical
 metrics, not the lowest model-specific validation loss. At least the leading
@@ -195,6 +243,13 @@ Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and
 iterative samplers explicit.
+
+The final report will include reproducibly generated figures in addition to
+tables: validation learning curves, decoded physical-error bars with episode
+bootstrap intervals, paired percentage-improvement intervals, and
+accuracy-versus-parameter/latency trade-off plots. Figure inputs will be the
+same compact CSV/JSON evidence produced by `collect_results.py`; the plotting
+script and rendered figures will be versioned in this directory.
 
 ## 6. Smoke experiments and resource observations
 
@@ -227,6 +282,19 @@ throughput. Dedicated timed runs are required before latency conclusions.
 - One-sample host-GPU checkpoint reload and physical-pose decoding passed for
   both ACT-flow and Diffusion Policy. Their very large errors after only two
   optimizer updates are expected and are not performance evidence.
+- Five focused tests for the new official UMI candidates pass, together with
+  the legacy UMI Diffusion processor test. They verify factory registration,
+  canonical relative-action processor wiring, finite differentiable losses,
+  online-to-EMA updates, fixed-noise sampling shape, checkpoint/EMA round-trip,
+  and the transformer's lower-LR backbone parameter group using a tiny
+  timm-compatible test encoder.
+- A real cached `vit_base_patch16_clip_224.openai` CPU load and forward pass
+  produced finite `[1,197,768]` tokens with 85,799,424 encoder parameters.
+  Full construction gives 160,091,530 online trainable parameters for the
+  U-Net candidate and 152,173,066 for the transformer candidate; checkpointed
+  totals double to 320,183,060 and 304,346,132 because EMA is an explicit copy.
+  Launchers pin Hugging Face offline mode for these cached weights, avoiding a
+  metadata network request during queued training.
 
 ### 7.1 Compatibility and isolation audit
 
@@ -298,6 +366,13 @@ This resource contention does not alter previous checkpoints or configs.
    and a regression test checks exact frame indices. The 14 earlier reports are
    preserved under `eval/` as superseded evidence. All scientific results use
    the clean rerun under `eval_common_h32/`.
+9. Adding timm as a new optional extra made the lockfile stale while stage two
+   was active. The lockfile was refreshed before the next sequential subprocess
+   could launch, and the host environment was synced with the union of
+   `training`, `dataset`, `diffusion`, `umi-official-dp`, and `test`; the running
+   R50 process was not restarted or modified. An offline lock attempt first
+   failed because the local cache lacked packages needed for other supported
+   Python/platform resolution splits, so the successful lock used the registry.
 
 ## 9. Results
 
@@ -382,12 +457,16 @@ end, while updates remain stable at about 0.033 s. This scalar is meaningful
 only within Diffusion Policy and is not evidence that it beats ACT: decoded
 physical errors from the common queries remain the cross-objective endpoint.
 
+![Validation learning curves](figures/validation_learning_curves.png)
+
 ### 9.1 Decoded physical metrics at 30k
 
 All rows below use the corrected common 500-query set. Generative rows average
 inference seeds 1000/2000/3000 within each episode before averaging episodes.
 Latency is synchronized policy-only median latency; memory is peak allocated
 CUDA memory. Lower is better throughout.
+
+![Decoded endpoint errors](figures/decoded_endpoint_errors.png)
 
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -409,6 +488,8 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
   endpoint by 20.4% (15.3–25.3%), XYZ chunk mean by 18.6% (14.9–22.0%), and
   rotation chunk mean by 17.6% (13.3–21.7%). All four paired difference
   intervals exclude zero.
+
+![Paired endpoint improvements](figures/paired_endpoint_improvements.png)
 - R50-large versus backbone-only R50 is tied on all four pose metrics: for
   endpoint XYZ its improvement is -0.8% (CI -6.0–4.2%), and for endpoint
   rotation -1.6% (-8.0–4.2%). It adds 80.3M parameters, 16% inference latency,
@@ -451,6 +532,8 @@ jerk is 0.091 deg / 0.00073 m, matched flow is 1.093 deg / 0.00466 m, and DP is
 Iterative generative samples are substantially less smooth at 30k. Flow is
 4.5× and DP 3.5× slower than ACT-L1 at inference, although both remain below
 30 ms median on the RTX 4090.
+
+![Accuracy and latency trade-off](figures/accuracy_latency_tradeoff.png)
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -495,6 +578,13 @@ validation losses were 0.043859/0.038979/0.034967, with corresponding L1
 total and L1 validation values. This is encouraging convergence evidence only;
 the common decoded evaluation is deferred until the final 100k checkpoint.
 
+At the 2026-08-11 23:21 check, R50 reached 67k without NaNs, OOMs, or dataloader
+failures, sustaining about 12.6–13.0 steps/s. Its 40k, 50k, and 60k validation
+total/L1 values were 0.033985/0.033025, 0.032902/0.032421, and
+0.033020/0.032475. The small 50k→60k fluctuation does not erase the large gap
+to R18. The two official UMI candidates will not contend with this job; their
+launcher is scheduled only after the existing five-run stage-two sequence.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
@@ -505,12 +595,22 @@ three-seed generative matrix. `collect_results.py` extracts parameter counts, wa
 times, complete validation curves, decoded metrics, and confidence intervals
 into compact external CSV/JSON files without creating a second narrative doc.
 `run_stage2.sh` and `evaluate_stage2.sh` encode the five promoted 100k controls.
+`run_official_umi_dp.sh` and `evaluate_official_umi_dp.sh` encode the two
+supplemental released-UMI recipe candidates.
+`plot_results.py` renders both SVG and high-resolution PNG figures from the
+collector outputs. Use a writable Matplotlib cache, for example:
+
+```bash
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run python \
+  examples/umi_relative_ee/act_flow_ablation/plot_results.py
+```
 Example:
 
 ```bash
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_vae 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e4 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh diffusion_r18 30000 1000
+bash examples/umi_relative_ee/act_flow_ablation/run_official_umi_dp.sh 30000 1000
 ```
 
 The launcher refuses to overwrite an existing run. Full command-line configs

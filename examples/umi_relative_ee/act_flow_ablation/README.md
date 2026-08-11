@@ -22,6 +22,9 @@ action decoder, data, and optimizer unless the variant names an LR change. The
 flow version only adds noisy-action/time inputs and changes L1 regression to
 rectified-flow velocity regression. `diffusion_r18` is a second, conventional
 non-VLM control using the repository's ResNet + temporal U-Net Diffusion Policy.
+`umi_official_dp` and `umi_official_transformer_dp` port the released UMI
+CLIP-ViT U-Net and transformer-denoiser recipes. They use batch 64 and therefore
+form a supplemental recipe comparison, not the batch-8 objective isolation.
 
 Run on the host (not in a sandbox):
 
@@ -34,6 +37,7 @@ bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e5 
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e4 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_beta_lr1e4 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh diffusion_r18 30000 1000
+bash examples/umi_relative_ee/act_flow_ablation/run_official_umi_dp.sh 30000 1000
 ```
 
 Or run the fixed stage-one matrix sequentially, keeping only one process on the
@@ -66,12 +70,15 @@ Run and evaluate the five stage-one promotions at 100k with:
 ```bash
 bash examples/umi_relative_ee/act_flow_ablation/run_stage2.sh 100000 1000
 bash examples/umi_relative_ee/act_flow_ablation/evaluate_stage2.sh 100000 1000 5
+bash examples/umi_relative_ee/act_flow_ablation/evaluate_official_umi_dp.sh 30000 1000 5
 ```
 
 After training/evaluation, collect compact CSV/JSON evidence outside Git:
 
 ```bash
 uv run python examples/umi_relative_ee/act_flow_ablation/collect_results.py
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run python \
+  examples/umi_relative_ee/act_flow_ablation/plot_results.py
 ```
 
 Do not compare ACT L1, flow velocity MSE, and diffusion epsilon MSE numerically.

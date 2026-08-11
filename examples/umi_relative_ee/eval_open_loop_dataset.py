@@ -332,13 +332,19 @@ def main() -> None:
     )
     if args.num_steps is not None:
         step_field = (
-            "num_inference_steps" if policy_config.type in {"diffusion", "pi0", "pi05"} else "num_steps"
+            "num_inference_steps"
+            if policy_config.type
+            in {"diffusion", "umi_official_dp", "umi_official_transformer_dp", "pi0", "pi05"}
+            else "num_steps"
         )
         setattr(policy_config, step_field, args.num_steps)
         core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
         setattr(core_policy.config, step_field, args.num_steps)
         if policy_config.type == "diffusion":
             core_policy.diffusion.num_inference_steps = args.num_steps
+        elif policy_config.type in {"umi_official_dp", "umi_official_transformer_dp"}:
+            core_policy.diffusion.num_inference_steps = args.num_steps
+            core_policy.ema_diffusion.num_inference_steps = args.num_steps
 
     metadata = LeRobotDatasetMetadata(repo_id, root=dataset_root)
     episode_indices = (
@@ -353,14 +359,10 @@ def main() -> None:
     if action_delta_indices is None or not action_delta_indices:
         raise ValueError("UMI relative-EE evaluation requires action delta indices")
     query_min_action_offset = (
-        min(action_delta_indices)
-        if args.query_min_action_offset is None
-        else args.query_min_action_offset
+        min(action_delta_indices) if args.query_min_action_offset is None else args.query_min_action_offset
     )
     query_max_action_offset = (
-        max(action_delta_indices)
-        if args.query_max_action_offset is None
-        else args.query_max_action_offset
+        max(action_delta_indices) if args.query_max_action_offset is None else args.query_max_action_offset
     )
     query_indices = choose_query_indices(
         metadata.episodes,

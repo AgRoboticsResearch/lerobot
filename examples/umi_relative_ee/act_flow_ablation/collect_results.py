@@ -39,6 +39,10 @@ EXTRA_PAIRED_VARIANTS = (
     ("act_r18_flow_u_lr1e4", "act_r18_flow_u_lr1e5"),
     ("act_r18_flow_beta_lr1e4", "act_r18_flow_u_lr1e4"),
     ("diffusion_r18", "act_r18_l1"),
+    ("umi_official_dp", "diffusion_r18"),
+    ("umi_official_dp", "act_r18_l1"),
+    ("umi_official_transformer_dp", "umi_official_dp"),
+    ("umi_official_transformer_dp", "act_r18_l1"),
 )
 
 
@@ -131,8 +135,7 @@ def aggregate_episode_metrics(reports: list[dict[str, Any]]) -> dict[str, np.nda
         metric: np.asarray(
             [
                 statistics.mean(
-                    float(report["summary"]["per_episode"][episode_id][metric])
-                    for report in reports
+                    float(report["summary"]["per_episode"][episode_id][metric]) for report in reports
                 )
                 for episode_id in episode_ids
             ],
@@ -171,8 +174,7 @@ def summarize_variants(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return seed-averaged summaries and paired differences from fresh ACT R18."""
     episode_metrics_by_run = {
-        run_name: aggregate_episode_metrics(reports)
-        for run_name, reports in reports_by_run.items()
+        run_name: aggregate_episode_metrics(reports) for run_name, reports in reports_by_run.items()
     }
     summary_rows = []
     for run_name, metrics in episode_metrics_by_run.items():
@@ -182,15 +184,12 @@ def summarize_variants(
             **run,
             "num_inference_seeds": len(reports),
             "inference_median_seconds": statistics.mean(
-                float(report["inference_latency_seconds"]["median_seconds"])
-                for report in reports
+                float(report["inference_latency_seconds"]["median_seconds"]) for report in reports
             ),
             "inference_p95_seconds": statistics.mean(
                 float(report["inference_latency_seconds"]["p95_seconds"]) for report in reports
             ),
-            "cuda_peak_memory_bytes": max(
-                int(report["cuda_peak_memory_bytes"]) for report in reports
-            ),
+            "cuda_peak_memory_bytes": max(int(report["cuda_peak_memory_bytes"]) for report in reports),
         }
         rng = np.random.default_rng(0)
         for metric, values in metrics.items():
@@ -211,9 +210,7 @@ def summarize_variants(
         for run_name, run in runs_by_name.items():
             if run["variant"] != candidate_variant:
                 continue
-            baseline_name = (
-                f"{baseline_variant}_seed{run['training_seed']}_{run['steps']}steps"
-            )
+            baseline_name = f"{baseline_variant}_seed{run['training_seed']}_{run['steps']}steps"
             if baseline_name in episode_metrics_by_run:
                 comparison_pairs.add((run_name, baseline_name))
 

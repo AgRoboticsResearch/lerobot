@@ -88,13 +88,15 @@ def make_dataset(
     if use_umi_relative_ee and trainable_config.type not in {
         "act",
         "diffusion",
+        "umi_official_dp",
+        "umi_official_transformer_dp",
         "smolvla",
         "pi05",
         "multi_task_dit",
     }:
         raise ValueError(
-            "UMI relative-EE training is supported for policy.type=act, diffusion, smolvla, pi05, "
-            "or multi_task_dit."
+            "UMI relative-EE training is supported for policy.type=act, diffusion, umi_official_dp, "
+            "umi_official_transformer_dp, smolvla, pi05, or multi_task_dit."
         )
     if use_umi_relative_ee and dataset_config.streaming:
         raise ValueError("UMI relative-EE statistics require a non-streaming dataset.")
