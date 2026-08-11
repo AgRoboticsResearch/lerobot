@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Policy-neutral open-loop evaluation for UMI relative-EE checkpoints.
 
-This evaluator works with ACT, SmolVLA, and π0.5. It feeds recorded observations
+This evaluator works with ACT, Diffusion Policy, SmolVLA, and π0.5. It feeds recorded observations
 to the policy, decodes each predicted chunk through the checkpoint's saved
 postprocessor, and compares the resulting absolute 7D poses with ground truth.
 
@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--task", default=DEFAULT_TASK)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--video_backend",
+        default="pyav",
+        choices=("pyav", "torchcodec"),
+        help="Decoder backend. PyAV is pinned by default to match the 1459 baseline.",
+    )
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--num_steps", type=int, default=None)
     parser.add_argument(
@@ -64,7 +70,8 @@ def parse_args() -> argparse.Namespace:
         help="Deprecated for SmolVLA/π0.5; disables padded masking only for legacy π0 evaluation.",
     )
     parser.add_argument(
-        "--output_dir", default=None,
+        "--output_dir",
+        default=None,
         help="Defaults to outputs/research_report/eval_<datetime> so standalone runs don't clobber.",
     )
     return parser.parse_args()
@@ -192,6 +199,36 @@ def within_chunk_jerk(poses: torch.Tensor) -> dict[str, float]:
     return {"rot_jerk_deg": float(rot_jerk), "xyz_jerk_m": float(xyz_jerk)}
 
 
+def bootstrap_episode_confidence_intervals(
+    episode_means: dict[int, dict[str, float]],
+    metric_names: tuple[str, ...],
+    *,
+    confidence: float = 0.95,
+    num_resamples: int = 10_000,
+    seed: int = 0,
+) -> dict[str, dict[str, float]]:
+    """Bootstrap episode-balanced means, treating episodes as independent units."""
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between 0 and 1")
+    if num_resamples <= 0:
+        raise ValueError("num_resamples must be positive")
+
+    values = np.asarray(
+        [[row[name] for name in metric_names] for row in episode_means.values()], dtype=np.float64
+    )
+    if len(values) == 0:
+        raise ValueError("No episode means were provided")
+    rng = np.random.default_rng(seed)
+    resampled_indices = rng.integers(0, len(values), size=(num_resamples, len(values)))
+    resampled_means = values[resampled_indices].mean(axis=1)
+    tail = (1 - confidence) / 2
+    lower, upper = np.quantile(resampled_means, [tail, 1 - tail], axis=0)
+    return {
+        name: {"low": float(lower[index]), "high": float(upper[index])}
+        for index, name in enumerate(metric_names)
+    }
+
+
 def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
     if not samples:
         raise ValueError("No samples were evaluated")
@@ -226,11 +263,19 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
     episode_balanced = {
         name: float(np.mean([row[name] for row in episode_means.values()])) for name in metric_names
     }
+    confidence_intervals = bootstrap_episode_confidence_intervals(episode_means, metric_names)
     return {
         "num_episodes": len(episode_samples),
         "num_samples": len(samples),
         "primary_metric": "episode_balanced.rot_jerk_deg",
         "episode_balanced": episode_balanced,
+        "episode_balanced_95ci": confidence_intervals,
+        "confidence_interval_method": {
+            "unit": "episode",
+            "resamples": 10_000,
+            "confidence": 0.95,
+            "seed": 0,
+        },
         "sample_weighted": frame_weighted,
         "per_episode": episode_means,
     }
@@ -240,6 +285,7 @@ def main() -> None:
     args = parse_args()
     if args.output_dir is None:
         import datetime as _dt
+
         args.output_dir = f"outputs/research_report/eval_{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.device.startswith("cuda") and not torch.cuda.is_available():
@@ -253,10 +299,14 @@ def main() -> None:
         model_path, device, args.legacy_full_action_noise
     )
     if args.num_steps is not None:
-        step_field = "num_inference_steps" if policy_config.type in {"pi0", "pi05"} else "num_steps"
+        step_field = (
+            "num_inference_steps" if policy_config.type in {"diffusion", "pi0", "pi05"} else "num_steps"
+        )
         setattr(policy_config, step_field, args.num_steps)
         core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
         setattr(core_policy.config, step_field, args.num_steps)
+        if policy_config.type == "diffusion":
+            core_policy.diffusion.num_inference_steps = args.num_steps
 
     metadata = LeRobotDatasetMetadata(repo_id, root=dataset_root)
     episode_indices = (
@@ -281,6 +331,7 @@ def main() -> None:
         root=dataset_root,
         delta_timestamps=resolve_delta_timestamps(policy_config, metadata),
         return_uint8=True,
+        video_backend=args.video_backend,
     )
     logger.info(
         "Evaluating %s on %d/%d episodes and %d query frames",
@@ -373,6 +424,7 @@ def main() -> None:
         "requested_episode_indices": episode_indices,
         "samples_per_episode": args.samples_per_episode,
         "seed": args.seed,
+        "video_backend": args.video_backend,
         "action_dimension_inference": {
             "active_action_dim": policy_config.action_feature.shape[0],
             "model_action_dim": getattr(

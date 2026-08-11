@@ -85,9 +85,16 @@ def make_dataset(
     dataset_config = dataset_config or cfg.dataset
     trainable_config = cfg.trainable_config
     use_umi_relative_ee = bool(getattr(trainable_config, "use_umi_relative_ee", False))
-    if use_umi_relative_ee and trainable_config.type not in {"act", "smolvla", "pi05", "multi_task_dit"}:
+    if use_umi_relative_ee and trainable_config.type not in {
+        "act",
+        "diffusion",
+        "smolvla",
+        "pi05",
+        "multi_task_dit",
+    }:
         raise ValueError(
-            "UMI relative-EE training is supported for policy.type=act, smolvla, pi05, or multi_task_dit."
+            "UMI relative-EE training is supported for policy.type=act, diffusion, smolvla, pi05, "
+            "or multi_task_dit."
         )
     if use_umi_relative_ee and dataset_config.streaming:
         raise ValueError("UMI relative-EE statistics require a non-streaming dataset.")

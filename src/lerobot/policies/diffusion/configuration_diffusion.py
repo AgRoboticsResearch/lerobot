@@ -103,6 +103,13 @@ class DiffusionConfig(PreTrainedConfig):
     horizon: int = 64
     n_action_steps: int = 32
 
+    # UMI relative-EE compatibility. ``horizon`` remains the U-Net's (possibly
+    # padded) temporal width, while ``chunk_size`` is the number of decoded
+    # actions compared with ACT and executed by the robot.
+    use_umi_relative_ee: bool = False
+    umi_rot6d_identity_norm: bool = False
+    chunk_size: int | None = None
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -164,6 +171,18 @@ class DiffusionConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.use_umi_relative_ee:
+            if self.n_obs_steps != 1:
+                raise ValueError("UMI relative-EE Diffusion Policy requires `n_obs_steps=1`.")
+            if self.chunk_size is None:
+                self.chunk_size = self.n_action_steps
+            if not 0 < self.n_action_steps <= self.chunk_size <= self.horizon:
+                raise ValueError(
+                    "UMI relative-EE requires 0 < n_action_steps <= chunk_size <= horizon, "
+                    f"got {self.n_action_steps}, {self.chunk_size}, and {self.horizon}."
+                )
+            self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
+            self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
@@ -246,10 +265,14 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            return None
         return list(range(1 - self.n_obs_steps, 1))
 
     @property
     def action_delta_indices(self) -> list:
+        if self.use_umi_relative_ee:
+            return [-1] + list(range(self.horizon))
         return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
 
     @property

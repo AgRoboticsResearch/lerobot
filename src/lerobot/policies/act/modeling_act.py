@@ -35,6 +35,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
+from ..flow_matching import integrate_flow_matching, reduce_flow_matching_loss
 from ..pretrained import PreTrainedPolicy
 from .configuration_act import ACTConfig
 
@@ -123,7 +124,12 @@ class ACTPolicy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        noise: Tensor | None = None,
+        num_steps: int | None = None,
+    ) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
@@ -131,14 +137,58 @@ class ACTPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
-        actions = self.model(batch)[0]
-        return actions
+        if self.config.action_objective == "l1":
+            return self.model(batch)[0]
+
+        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_STATE].shape[0]
+        if noise is None:
+            noise = torch.randn(
+                batch_size,
+                self.config.chunk_size,
+                self.config.action_feature.shape[0],
+                device=batch[OBS_STATE].device,
+                dtype=batch[OBS_STATE].dtype,
+            )
+        expected_shape = (batch_size, self.config.chunk_size, self.config.action_feature.shape[0])
+        if tuple(noise.shape) != expected_shape:
+            raise ValueError(f"Flow noise must have shape {expected_shape}, got {tuple(noise.shape)}.")
+
+        def denoise_step(noisy_actions: Tensor, time: Tensor) -> Tensor:
+            return self.model(batch, noisy_actions=noisy_actions, time=time)[0]
+
+        return integrate_flow_matching(
+            noise,
+            num_steps or self.config.flow_num_inference_steps,
+            denoise_step,
+            active_action_dim=self.config.action_feature.shape[0],
+            mask_padded_dims=False,
+        )
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+
+        if self.config.action_objective == "flow_matching":
+            actions = batch[ACTION]
+            noise = torch.randn_like(actions)
+            beta = torch.distributions.Beta(
+                self.config.flow_time_sampling_beta_alpha,
+                self.config.flow_time_sampling_beta_beta,
+            )
+            time = beta.sample((actions.shape[0],)).to(device=actions.device, dtype=actions.dtype)
+            time = time * self.config.flow_time_sampling_scale + self.config.flow_time_sampling_offset
+            time_expanded = time[:, None, None]
+            noisy_actions = time_expanded * noise + (1 - time_expanded) * actions
+            target_velocity = noise - actions
+            predicted_velocity = self.model(batch, noisy_actions=noisy_actions, time=time)[0]
+            losses = F.mse_loss(predicted_velocity, target_velocity, reduction="none")
+            loss, loss_per_dim = reduce_flow_matching_loss(losses, batch.get("action_is_pad"))
+            return loss, {
+                "flow_loss": loss.item(),
+                "flow_loss_per_dim": loss_per_dim.detach().cpu().tolist(),
+            }
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -366,6 +416,19 @@ class ACT(nn.Module):
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
+        if self.config.action_objective == "flow_matching":
+            self.flow_action_input_proj = nn.Linear(self.config.action_feature.shape[0], config.dim_model)
+            self.flow_time_encoder = ACTFlowTimeEmbedding(
+                config.dim_model,
+                min_period=config.flow_min_period,
+                max_period=config.flow_max_period,
+            )
+            self.flow_time_mlp = nn.Sequential(
+                nn.Linear(config.dim_model, config.dim_model),
+                nn.SiLU(),
+                nn.Linear(config.dim_model, config.dim_model),
+            )
+
         # Final action regression head on the output of the transformer's decoder.
         self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
 
@@ -377,7 +440,12 @@ class ACT(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
+    def forward(
+        self,
+        batch: dict[str, Tensor],
+        noisy_actions: Tensor | None = None,
+        time: Tensor | None = None,
+    ) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
 
         `batch` should have the following structure:
@@ -494,11 +562,25 @@ class ACT(nn.Module):
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
         # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
-        decoder_in = torch.zeros(
-            (self.config.chunk_size, batch_size, self.config.dim_model),
-            dtype=encoder_in_pos_embed.dtype,
-            device=encoder_in_pos_embed.device,
-        )
+        if self.config.action_objective == "flow_matching":
+            if noisy_actions is None or time is None:
+                raise ValueError("ACT flow matching requires both `noisy_actions` and `time`.")
+            expected_shape = (batch_size, self.config.chunk_size, self.config.action_feature.shape[0])
+            if tuple(noisy_actions.shape) != expected_shape:
+                raise ValueError(
+                    f"Flow noisy actions must have shape {expected_shape}, got {tuple(noisy_actions.shape)}."
+                )
+            if tuple(time.shape) != (batch_size,):
+                raise ValueError(f"Flow time must have shape ({batch_size},), got {tuple(time.shape)}.")
+            decoder_in = self.flow_action_input_proj(noisy_actions)
+            decoder_in = decoder_in + self.flow_time_mlp(self.flow_time_encoder(time)).unsqueeze(1)
+            decoder_in = decoder_in.transpose(0, 1)
+        else:
+            decoder_in = torch.zeros(
+                (self.config.chunk_size, batch_size, self.config.dim_model),
+                dtype=encoder_in_pos_embed.dtype,
+                device=encoder_in_pos_embed.device,
+            )
         decoder_out = self.decoder(
             decoder_in,
             encoder_out,
@@ -512,6 +594,21 @@ class ACT(nn.Module):
         actions = self.action_head(decoder_out)
 
         return actions, (mu, log_sigma_x2)
+
+
+class ACTFlowTimeEmbedding(nn.Module):
+    """Continuous sine/cosine embedding used by the ACT flow-matching control."""
+
+    def __init__(self, dim: int, min_period: float, max_period: float) -> None:
+        super().__init__()
+        if dim % 2:
+            raise ValueError(f"Flow time embedding dimension must be even, got {dim}.")
+        periods = min_period * (max_period / min_period) ** torch.linspace(0, 1, dim // 2)
+        self.register_buffer("angular_frequencies", 2 * torch.pi / periods)
+
+    def forward(self, time: Tensor) -> Tensor:
+        phase = time.unsqueeze(-1) * self.angular_frequencies.to(dtype=time.dtype)
+        return torch.cat([phase.sin(), phase.cos()], dim=-1)
 
 
 class ACTEncoder(nn.Module):

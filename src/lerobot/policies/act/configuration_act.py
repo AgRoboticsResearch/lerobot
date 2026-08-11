@@ -144,6 +144,19 @@ class ACTConfig(PreTrainedConfig):
     dropout: float = 0.1
     kl_weight: float = 10.0
 
+    # Action objective. ``l1`` is canonical ACT. ``flow_matching`` keeps ACT's
+    # visual backbone and observation transformer unchanged, but conditions the
+    # decoder on a noisy action chunk and continuous time. This provides a
+    # non-VLM control for flow-matching experiments.
+    action_objective: str = "l1"
+    flow_num_inference_steps: int = 10
+    flow_time_sampling_beta_alpha: float = 1.0
+    flow_time_sampling_beta_beta: float = 1.0
+    flow_time_sampling_scale: float = 0.999
+    flow_time_sampling_offset: float = 0.001
+    flow_min_period: float = 4e-3
+    flow_max_period: float = 4.0
+
     # Training preset
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
@@ -179,6 +192,24 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
+        if self.action_objective not in {"l1", "flow_matching"}:
+            raise ValueError(
+                f"`action_objective` must be 'l1' or 'flow_matching', got {self.action_objective!r}."
+            )
+        if self.action_objective == "flow_matching" and self.use_vae:
+            raise ValueError("ACT flow matching requires `use_vae=false`.")
+        if self.flow_num_inference_steps <= 0:
+            raise ValueError("`flow_num_inference_steps` must be positive.")
+        if self.flow_time_sampling_beta_alpha <= 0 or self.flow_time_sampling_beta_beta <= 0:
+            raise ValueError("Flow time-sampling beta parameters must be positive.")
+        if not 0 < self.flow_time_sampling_scale <= 1:
+            raise ValueError("`flow_time_sampling_scale` must be in (0, 1].")
+        if not 0 <= self.flow_time_sampling_offset < 1:
+            raise ValueError("`flow_time_sampling_offset` must be in [0, 1).")
+        if self.flow_time_sampling_scale + self.flow_time_sampling_offset > 1:
+            raise ValueError("Flow time scale plus offset must not exceed 1.")
+        if not 0 < self.flow_min_period < self.flow_max_period:
+            raise ValueError("Flow periods must satisfy 0 < min_period < max_period.")
         if self.temporal_ensemble_coeff is not None and self.n_action_steps > 1:
             raise NotImplementedError(
                 "`n_action_steps` must be 1 when using temporal ensembling. This is "

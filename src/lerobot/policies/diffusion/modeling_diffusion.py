@@ -102,8 +102,21 @@ class DiffusionPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
-        # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        has_observation_history = self._queues is not None and len(self._queues[OBS_STATE]) > 0
+        if has_observation_history:
+            # Stack the latest observations populated by ``select_action``.
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        else:
+            # Offline chunk evaluation calls this method directly. A single-observation
+            # policy can construct its history dimension without going through queues.
+            if self.config.n_obs_steps != 1:
+                raise RuntimeError("Direct Diffusion Policy chunk prediction requires `n_obs_steps=1`.")
+            batch = dict(batch)
+            if self.config.image_features:
+                batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+            for key in (OBS_STATE, OBS_IMAGES, OBS_ENV_STATE):
+                if key in batch:
+                    batch[key] = batch[key].unsqueeze(1)
         actions = self.diffusion.generate_actions(batch, noise=noise)
 
         return actions
@@ -149,8 +162,10 @@ class DiffusionPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
         """Run the batch through the model and compute the loss for training or validation."""
+        batch = dict(batch)
+        if self.config.n_obs_steps == 1 and batch[OBS_STATE].ndim == 2:
+            batch[OBS_STATE] = batch[OBS_STATE].unsqueeze(1)
         if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             for key in self.config.image_features:
                 if self.config.n_obs_steps == 1 and batch[key].ndim == 4:
                     batch[key] = batch[key].unsqueeze(1)
