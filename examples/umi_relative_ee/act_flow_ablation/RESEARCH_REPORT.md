@@ -1367,6 +1367,32 @@ remain tied. The evidence therefore points to an objective/architecture/
 optimization interaction and a real accuracy--smoothness--latency trade-off,
 not an intrinsic failure of flow matching itself or a single VLM effect.
 
+The architecture-matched ACT-flow extension also completed its pre-registered
+100k budget. Its held-out velocity MSE followed a non-monotonic trajectory:
+0.052486, 0.047565, 0.040275, 0.040449, 0.039067, 0.046577, 0.045642,
+0.039433, 0.042094, and 0.044822 at 10k increments. Thus 50k was the scalar
+validation minimum even though terminal training loss continued downward near
+0.027--0.035. The exact 100k checkpoint passed the complete durability audit
+(139,010,496-byte model, 277,853,520-byte optimizer, exact step, RNG,
+processors/configs, and `End of training`). Its canonical seed-1000 evaluation
+loaded the 100k checkpoint, while a provenance-separated sensitivity run under
+`eval_checkpoint_h32` explicitly loaded step 50k; the latter remains excluded
+from primary tables and figures.
+
+On identical episodes and query offsets, decoded trajectory quality contradicted
+the scalar validation ranking. Relative to 50k, the 100k checkpoint improved
+translation chunk error by 9.58% (95% paired episode-bootstrap CI 6.62--12.44),
+translation endpoint by 12.26% (7.90--16.34), rotation chunk by 3.43%
+(0.49--6.21), rotation jerk by 20.82% (19.58--22.06), and translation jerk by
+7.89% (6.52--9.21); rotation endpoint and gripper endpoint intervals crossed
+zero. The final decoded values were 15.655 mm translation chunk, 25.995 mm
+translation endpoint, 2.965 degrees rotation chunk, 5.105 degrees rotation
+endpoint, 0.1492 gripper endpoint, 0.666 degrees rotation jerk, and 0.002963 m
+translation jerk. This is direct evidence that held-out flow velocity MSE is
+not a sufficient checkpoint-selection proxy for physical trajectory accuracy
+or smoothness. Fixed-budget reporting plus decoded checkpoint sensitivity is
+therefore retained for the remaining stochastic policies.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
