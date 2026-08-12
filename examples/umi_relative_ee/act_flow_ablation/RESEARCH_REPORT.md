@@ -309,7 +309,12 @@ accuracy-versus-parameter/latency trade-off plots. Figure inputs will be the
 same compact CSV/JSON evidence produced by `collect_results.py`; the plotting
 script and rendered figures will be versioned in this directory. SVG generation
 uses a fixed element-ID salt and omits volatile timestamps, making repeated
-renders from identical inputs byte-for-byte reproducible.
+renders from identical inputs byte-for-byte reproducible. Once confirmation
+runs exist, curves average equal-step validation values across training seeds
+with an SD band; endpoint, paired-improvement, and efficiency figures use the
+training-seed mean and sample SD instead of selecting an arbitrary equal-budget
+run. Single-training-seed error bars remain episode-bootstrap intervals and are
+labelled separately from multi-seed variability.
 
 ## 6. Smoke experiments and resource observations
 

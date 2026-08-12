@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -81,6 +82,13 @@ def budget_label(variant: str, steps: int) -> str:
     return f"{LABELS[variant]} ({steps // 1000}k)"
 
 
+def seed_budget_label(variant: str, steps: int, num_training_seeds: int) -> str:
+    label = budget_label(variant, steps)
+    if num_training_seeds > 1:
+        return f"{label[:-1]}, n={num_training_seeds})"
+    return label
+
+
 def save_figure(fig: plt.Figure, output_dir: Path, name: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     svg_path = output_dir / f"{name}.svg"
@@ -113,17 +121,42 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
                 points = [row for row in groups[(variant, steps)] if row.get(metric)]
                 if not points:
                     continue
-                points.sort(key=lambda row: int(row["step"]))
+                values_by_step: dict[int, list[float]] = defaultdict(list)
+                for row in points:
+                    values_by_step[int(row["step"])].append(float(row[metric]))
+                validation_steps = sorted(values_by_step)
+                means = np.asarray(
+                    [float(np.mean(values_by_step[step])) for step in validation_steps]
+                )
+                standard_deviations = np.asarray(
+                    [
+                        float(np.std(values_by_step[step], ddof=1))
+                        if len(values_by_step[step]) > 1
+                        else np.nan
+                        for step in validation_steps
+                    ]
+                )
+                num_training_seeds = max(len(values) for values in values_by_step.values())
                 axis.plot(
-                    [int(row["step"]) / 1000 for row in points],
-                    [float(row[metric]) for row in points],
+                    np.asarray(validation_steps) / 1000,
+                    means,
                     marker="o",
                     linewidth=2,
                     markersize=4,
                     linestyle="-" if steps == max(budgets) else "--",
-                    label=budget_label(variant, steps),
+                    label=seed_budget_label(variant, steps, num_training_seeds),
                     color=COLORS[variant],
                 )
+                if np.isfinite(standard_deviations).any():
+                    axis.fill_between(
+                        np.asarray(validation_steps) / 1000,
+                        means - standard_deviations,
+                        means + standard_deviations,
+                        where=np.isfinite(standard_deviations),
+                        color=COLORS[variant],
+                        alpha=0.14,
+                        linewidth=0,
+                    )
         axis.set_title(title)
         axis.set_xlabel("Optimizer steps (thousands)")
         axis.set_ylabel(metric.replace("_", " ").upper())
@@ -135,10 +168,22 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
     save_figure(fig, output_dir, "validation_learning_curves")
 
 
-def plot_endpoint_bars(rows: list[dict[str, str]], output_dir: Path) -> None:
-    by_variant = highest_budget_by_variant(rows)
+def plot_endpoint_bars(
+    rows: list[dict[str, str]], seed_rows: list[dict[str, str]], output_dir: Path
+) -> None:
+    by_variant = highest_budget_by_variant(seed_rows)
     variants = ordered_variants(list(by_variant.values()))
-    labels = [budget_label(variant, int(by_variant[variant]["steps"])) for variant in variants]
+    labels = [
+        seed_budget_label(
+            variant,
+            int(by_variant[variant]["steps"]),
+            int(by_variant[variant]["num_training_seeds"]),
+        )
+        for variant in variants
+    ]
+    run_lookup: dict[tuple[str, int], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        run_lookup[(row["variant"], int(row["steps"]))].append(row)
     fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.2))
     specifications = [
         ("xyz_end_m", "Endpoint translation error (mm)", 1000.0),
@@ -146,26 +191,43 @@ def plot_endpoint_bars(rows: list[dict[str, str]], output_dir: Path) -> None:
     ]
     x = np.arange(len(variants))
     for axis, (metric, ylabel, scale) in zip(axes, specifications, strict=True):
-        means = np.asarray([float(by_variant[v][metric]) * scale for v in variants])
-        low = np.asarray([float(by_variant[v][f"{metric}_ci_low"]) * scale for v in variants])
-        high = np.asarray([float(by_variant[v][f"{metric}_ci_high"]) * scale for v in variants])
+        means = np.asarray([float(by_variant[v][f"{metric}_mean"]) * scale for v in variants])
+        low = []
+        high = []
+        for variant, mean in zip(variants, means, strict=True):
+            aggregate = by_variant[variant]
+            num_training_seeds = int(aggregate["num_training_seeds"])
+            if num_training_seeds > 1:
+                spread = float(aggregate[f"{metric}_training_seed_sd"]) * scale
+                low.append(mean - spread)
+                high.append(mean + spread)
+            else:
+                run = run_lookup[(variant, int(aggregate["steps"]))][0]
+                low.append(float(run[f"{metric}_ci_low"]) * scale)
+                high.append(float(run[f"{metric}_ci_high"]) * scale)
+        low_array = np.asarray(low)
+        high_array = np.asarray(high)
         axis.bar(
             x,
             means,
             color=[COLORS[variant] for variant in variants],
-            yerr=np.vstack((means - low, high - means)),
+            yerr=np.vstack((means - low_array, high_array - means)),
             capsize=3,
             linewidth=0,
         )
         axis.set_ylabel(ylabel)
         axis.set_xticks(x, labels, rotation=42, ha="right")
         axis.grid(axis="y", alpha=0.25)
-    fig.suptitle("Decoded physical endpoint error (episode-balanced mean ± 95% bootstrap CI)")
+    fig.suptitle(
+        "Decoded endpoint error (n=1: 95% episode bootstrap CI; n>1: mean ± training-seed SD)"
+    )
     fig.tight_layout()
     save_figure(fig, output_dir, "decoded_endpoint_errors")
 
 
-def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> None:
+def plot_paired_improvements(
+    rows: list[dict[str, str]], seed_rows: list[dict[str, str]], output_dir: Path
+) -> None:
     desired_pairs = {
         ("act_r34_vae", "act_r18_vae"),
         ("act_r50_vae", "act_r18_vae"),
@@ -178,7 +240,7 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
     metrics = ("xyz_end_m", "rotation_end_deg")
     candidates = [
         row
-        for row in rows
+        for row in seed_rows
         if (row["variant"], row["baseline_variant"]) in desired_pairs and row["metric"] in metrics
     ]
     selected_by_key: dict[tuple[str, str, str], dict[str, str]] = {}
@@ -208,9 +270,26 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
             row = lookup.get((*pair, metric))
             if row is None:
                 continue
-            values.append(float(row["paired_improvement_percent"]))
-            lows.append(float(row["paired_improvement_percent_ci_low"]))
-            highs.append(float(row["paired_improvement_percent_ci_high"]))
+            value = float(row["paired_improvement_percent_mean"])
+            num_training_seeds = int(row["num_training_seeds"])
+            if num_training_seeds > 1:
+                spread = float(row["paired_improvement_percent_training_seed_sd"])
+                low = value - spread
+                high = value + spread
+            else:
+                run = next(
+                    candidate
+                    for candidate in rows
+                    if candidate["variant"] == row["variant"]
+                    and candidate["baseline_variant"] == row["baseline_variant"]
+                    and candidate["metric"] == metric
+                    and candidate["steps"] == row["steps"]
+                )
+                low = float(run["paired_improvement_percent_ci_low"])
+                high = float(run["paired_improvement_percent_ci_high"])
+            values.append(value)
+            lows.append(low)
+            highs.append(high)
             indices.append(index)
         values_array = np.asarray(values)
         axis.errorbar(
@@ -227,41 +306,64 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
         y,
         [
             f"{LABELS[candidate]} vs {LABELS[baseline]} "
-            f"({int(lookup[(candidate, baseline, metrics[0])]['steps']) // 1000}k)"
+            f"({int(lookup[(candidate, baseline, metrics[0])]['steps']) // 1000}k, "
+            f"n={lookup[(candidate, baseline, metrics[0])]['num_training_seeds']})"
             for candidate, baseline in pair_order
         ],
     )
     axis.set_xlabel("Paired error reduction (%) — positive favors candidate")
     axis.grid(axis="x", alpha=0.25)
     axis.legend(frameon=False)
-    axis.set_title("Episode-paired improvements with 95% bootstrap intervals")
+    axis.set_title("Paired improvements (n=1: episode CI; n>1: mean ± training-seed SD)")
     fig.tight_layout()
     save_figure(fig, output_dir, "paired_endpoint_improvements")
 
 
 def plot_efficiency(
-    summary_rows: list[dict[str, str]], run_rows: list[dict[str, str]], output_dir: Path
+    summary_rows: list[dict[str, str]],
+    seed_rows: list[dict[str, str]],
+    run_rows: list[dict[str, str]],
+    output_dir: Path,
 ) -> None:
-    latest_summaries = highest_budget_by_variant(summary_rows)
-    run_by_key = {
-        (row["variant"], int(row["steps"])): row
-        for row in run_rows
-        if row.get("learnable_parameters") or row.get("parameters")
-    }
+    latest_summaries = highest_budget_by_variant(seed_rows)
+    summary_by_key: dict[tuple[str, int], list[dict[str, str]]] = defaultdict(list)
+    for row in summary_rows:
+        summary_by_key[(row["variant"], int(row["steps"]))].append(row)
+    run_by_key: dict[tuple[str, int], list[dict[str, str]]] = defaultdict(list)
+    for row in run_rows:
+        if row.get("learnable_parameters") or row.get("parameters"):
+            run_by_key[(row["variant"], int(row["steps"]))].append(row)
     points = [
         row
         for row in latest_summaries.values()
-        if (row["variant"], int(row["steps"])) in run_by_key
+        if (row["variant"], int(row["steps"])) in summary_by_key
+        and (row["variant"], int(row["steps"])) in run_by_key
     ]
     fig, axis = plt.subplots(figsize=(9.5, 6.0))
     for row in points:
         variant = row["variant"]
         steps = int(row["steps"])
-        run = run_by_key[(variant, steps)]
-        parameters_m = float(run.get("learnable_parameters") or run["parameters"]) / 1e6
+        summaries = summary_by_key[(variant, steps)]
+        runs = run_by_key[(variant, steps)]
+        latency_ms = statistics.mean(float(summary["inference_median_seconds"]) for summary in summaries) * 1000
+        parameters_m = statistics.mean(
+            float(run.get("learnable_parameters") or run["parameters"]) for run in runs
+        ) / 1e6
+        endpoint_mm = float(row["xyz_end_m_mean"]) * 1000
+        num_training_seeds = int(row["num_training_seeds"])
+        if num_training_seeds > 1:
+            axis.errorbar(
+                latency_ms,
+                endpoint_mm,
+                yerr=float(row["xyz_end_m_training_seed_sd"]) * 1000,
+                fmt="none",
+                capsize=3,
+                color=COLORS[variant],
+                alpha=0.8,
+            )
         axis.scatter(
-            float(row["inference_median_seconds"]) * 1000,
-            float(row["xyz_end_m"]) * 1000,
+            latency_ms,
+            endpoint_mm,
             s=35 + parameters_m * 1.2,
             color=COLORS[variant],
             alpha=0.85,
@@ -270,8 +372,8 @@ def plot_efficiency(
         )
         offset, horizontal_alignment = EFFICIENCY_ANNOTATIONS.get(variant, ((5, 4), "left"))
         axis.annotate(
-            budget_label(variant, steps),
-            (float(row["inference_median_seconds"]) * 1000, float(row["xyz_end_m"]) * 1000),
+            seed_budget_label(variant, steps, num_training_seeds),
+            (latency_ms, endpoint_mm),
             xytext=offset,
             textcoords="offset points",
             fontsize=8,
@@ -279,7 +381,9 @@ def plot_efficiency(
         )
     axis.set_xlabel("Median policy inference latency (ms)")
     axis.set_ylabel("Endpoint translation error (mm)")
-    axis.set_title("Accuracy–latency trade-off (marker area scales with online parameters)")
+    axis.set_title(
+        "Accuracy–latency trade-off (area: online parameters; n>1 bars: training-seed SD)"
+    )
     axis.grid(alpha=0.25)
     fig.tight_layout()
     save_figure(fig, output_dir, "accuracy_latency_tradeoff")
@@ -291,6 +395,8 @@ def main() -> None:
     validation_rows = read_csv(result_dir / "stage1_validation.csv")
     summary_rows = read_csv(result_dir / "stage1_variant_summary.csv")
     comparison_rows = read_csv(result_dir / "stage1_paired_comparisons.csv")
+    seed_summary_rows = read_csv(result_dir / "training_seed_variant_summary.csv")
+    seed_comparison_rows = read_csv(result_dir / "training_seed_paired_comparisons.csv")
     run_rows = read_csv(result_dir / "stage1_runs.csv")
 
     plt.rcParams.update(
@@ -302,9 +408,9 @@ def main() -> None:
         }
     )
     plot_learning_curves(validation_rows, args.output_dir)
-    plot_endpoint_bars(summary_rows, args.output_dir)
-    plot_paired_improvements(comparison_rows, args.output_dir)
-    plot_efficiency(summary_rows, run_rows, args.output_dir)
+    plot_endpoint_bars(summary_rows, seed_summary_rows, args.output_dir)
+    plot_paired_improvements(comparison_rows, seed_comparison_rows, args.output_dir)
+    plot_efficiency(summary_rows, seed_summary_rows, run_rows, args.output_dir)
     print(f"Rendered report figures under {args.output_dir}")
 
 
