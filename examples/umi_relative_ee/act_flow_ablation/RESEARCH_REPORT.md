@@ -1119,6 +1119,17 @@ the already-running official U-Net process, whose shell functions predate the
 patch. Focused tests cover exact-step mismatch, missing optimizer state, and
 idempotent recovery marking.
 
+LingBot asset prefetch has a related but distinct integrity guard. During a
+transient Hub SSL EOF, `hf download --local-dir` reported success by returning
+the existing directory even though its 10.2 GB `model.safetensors` was still a
+9.02 GB `.incomplete` cache blob. The supervised prefetch now requests the
+trainable file explicitly, retains resumable partial data, and accepts it only
+after the final >9 GB file is materialized and no incomplete blob remains. It
+downloads only the frozen `vae/`, `text_encoder/`, and `tokenizer/` subtrees
+from the source repository (not a redundant transformer), validates their
+configs and weight files, and retries transient network failures. A CLI success
+code is therefore no longer mistaken for model readiness.
+
 ## 11. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
