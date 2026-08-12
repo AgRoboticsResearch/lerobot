@@ -18,10 +18,14 @@ if [[ ! -d "$CHECKPOINTS_DIR" ]]; then
   exit 2
 fi
 mapfile -t CHECKPOINTS < <(find "$CHECKPOINTS_DIR" -mindepth 2 -maxdepth 2 -type d -name pretrained_model | sort)
-if [[ "${#CHECKPOINTS[@]}" -ne 1 ]]; then
-  echo "Expected exactly one saved checkpoint under $CHECKPOINTS_DIR, found ${#CHECKPOINTS[@]}" >&2
+if [[ "${#CHECKPOINTS[@]}" -lt 1 ]]; then
+  echo "Expected at least one saved checkpoint under $CHECKPOINTS_DIR" >&2
   exit 2
 fi
+# Runs may save recovery checkpoints at 10k intervals. Evaluate the numerically
+# greatest step, never an arbitrary lexicographic directory or an earlier state.
+mapfile -t CHECKPOINTS < <(printf '%s\n' "${CHECKPOINTS[@]}" | sort -V)
+FINAL_CHECKPOINT="${CHECKPOINTS[-1]}"
 
 OUT="$ARTIFACT_ROOT/eval_common_h32/$RUN_NAME/seed$EVAL_SEED"
 LOG="$ARTIFACT_ROOT/logs/eval_common_h32_${RUN_NAME}_seed${EVAL_SEED}.log"
@@ -40,7 +44,7 @@ trap record_exit EXIT
 
 echo "[$(date '+%F %T')] evaluating $RUN_NAME with inference seed $EVAL_SEED" | tee "$LOG"
 PYTHONPATH=src uv run python examples/umi_relative_ee/eval_open_loop_dataset.py \
-  --pretrained_path="${CHECKPOINTS[0]}" \
+  --pretrained_path="$FINAL_CHECKPOINT" \
   --dataset_root="$VAL_ROOT" \
   --repo_id="$VAL_REPO" \
   --samples_per_episode="$SAMPLES_PER_EPISODE" \

@@ -19,7 +19,13 @@ NUM_WORKERS="${UMI_NUM_WORKERS:-4}"
 PREFETCH_FACTOR="${UMI_PREFETCH_FACTOR:-4}"
 PERSISTENT_WORKERS="${UMI_PERSISTENT_WORKERS:-true}"
 HF_HUB_OFFLINE_VALUE=0
+HF_HOME_VALUE=""
 SAVE_CHECKPOINT="${UMI_SAVE_CHECKPOINT:-true}"
+# Long research runs need durable recovery points: failures at validation,
+# dependency import, or host interruption must not discard an entire 100k run.
+# Callers can still override this (for example, smoke tests disable saving).
+DEFAULT_SAVE_FREQ=$((STEPS < 10000 ? STEPS : 10000))
+SAVE_FREQ="${UMI_SAVE_FREQ:-$DEFAULT_SAVE_FREQ}"
 RUN_NAME="${VARIANT}_seed${SEED}_${STEPS}steps"
 OUT="$ARTIFACT_ROOT/train/$RUN_NAME"
 LOG="$ARTIFACT_ROOT/logs/$RUN_NAME.log"
@@ -60,7 +66,7 @@ COMMON=(
   --val_freq="$VAL_FREQ"
   --eval_freq=0
   --save_checkpoint="$SAVE_CHECKPOINT"
-  --save_freq="$STEPS"
+  --save_freq="$SAVE_FREQ"
   --output_dir="$OUT"
   --job_name="$RUN_NAME"
   --wandb.enable=false
@@ -226,6 +232,62 @@ case "$VARIANT" in
       --policy.scheduler_warmup_steps=2000
     )
     ;;
+  smolvla_rot6d)
+    BATCH_SIZE="${UMI_SMOLVLA_BATCH_SIZE:-8}"
+    HF_HUB_OFFLINE_VALUE=1
+    POLICY=(
+      --policy.path=lerobot/smolvla_base
+      --policy.input_features=null
+      --policy.chunk_size=30
+      --policy.n_action_steps=30
+      --policy.umi_rotation_representation=rot6d
+      --policy.flow_matching_padding_mode=openpi_full_width
+      --policy.train_state_proj=true
+      --policy.optimizer_lr=0.0001
+      --policy.scheduler_warmup_steps=1000
+      --policy.scheduler_decay_steps="$STEPS"
+      --policy.scheduler_decay_lr=0.0000025
+    )
+    ;;
+  smolvla_axis_angle)
+    BATCH_SIZE="${UMI_SMOLVLA_BATCH_SIZE:-8}"
+    HF_HUB_OFFLINE_VALUE=1
+    POLICY=(
+      --policy.path=lerobot/smolvla_base
+      --policy.input_features=null
+      --policy.chunk_size=30
+      --policy.n_action_steps=30
+      --policy.umi_rotation_representation=axis_angle
+      --policy.flow_matching_padding_mode=openpi_full_width
+      --policy.train_state_proj=true
+      --policy.optimizer_lr=0.0001
+      --policy.scheduler_warmup_steps=1000
+      --policy.scheduler_decay_steps="$STEPS"
+      --policy.scheduler_decay_lr=0.0000025
+    )
+    ;;
+  lingbot_va_axis_angle)
+    BATCH_SIZE="${UMI_LINGBOT_BATCH_SIZE:-1}"
+    HF_HUB_OFFLINE_VALUE=0
+    HF_HOME_VALUE="${UMI_LINGBOT_HF_HOME:-$ARTIFACT_ROOT/hf-cache}"
+    POLICY=(
+      --policy.path="${UMI_LINGBOT_CHECKPOINT:-$ARTIFACT_ROOT/pretrained/lingbot_va_libero_long}"
+      --policy.wan_pretrained_path="${UMI_LINGBOT_FROZEN:-$ARTIFACT_ROOT/pretrained/lingbot_va_frozen_libero_long}"
+      --policy.attn_mode=flex
+      --policy.obs_cam_keys=[observation.images.camera]
+      --policy.camera_layout=width_concat
+      --policy.image_hflip=false
+      --policy.frame_chunk_size=4
+      --policy.action_per_frame=4
+      --policy.used_action_channel_ids=[0,1,2,3,4,5,6]
+      --policy.text_encoder_device=cpu
+      --policy.optimizer_lr=0.00001
+      --policy.scheduler_warmup_steps=1000
+      --peft.method_type=LORA
+      --peft.r=8
+      --peft.lora_alpha=8
+    )
+    ;;
   *)
     echo "Unknown variant: $VARIANT" >&2
     exit 2
@@ -235,6 +297,10 @@ esac
 COMMON+=(--batch_size="$BATCH_SIZE")
 
 echo "[$(date '+%F %T')] starting $RUN_NAME on host GPU" | tee "$LOG"
+if [[ -n "$HF_HOME_VALUE" ]]; then
+  export HF_HOME="$HF_HOME_VALUE"
+  mkdir -p "$HF_HOME"
+fi
 HF_HUB_OFFLINE="$HF_HUB_OFFLINE_VALUE" PYTHONPATH=src uv run python \
   "${COMMON[@]}" "${POLICY[@]}" 2>&1 | tee -a "$LOG"
 echo "[$(date '+%F %T')] completed $RUN_NAME" | tee -a "$LOG"

@@ -38,6 +38,37 @@ def _absolute_aa_to_relative_rot6d(reference: np.ndarray, target: np.ndarray) ->
     return np.concatenate([relative_translation, rot6d, target[..., 6:7]], axis=-1)
 
 
+def _matrix_to_axis_angle(matrix: np.ndarray) -> np.ndarray:
+    """Convert rotation matrices to axis-angle vectors (small-angle stable)."""
+    vector = np.stack(
+        [
+            matrix[..., 2, 1] - matrix[..., 1, 2],
+            matrix[..., 0, 2] - matrix[..., 2, 0],
+            matrix[..., 1, 0] - matrix[..., 0, 1],
+        ],
+        axis=-1,
+    )
+    sin_theta_twice = np.linalg.norm(vector, axis=-1)
+    cos_theta = (np.trace(matrix, axis1=-2, axis2=-1) - 1) / 2
+    theta = np.arctan2(sin_theta_twice / 2, cos_theta)
+    result = vector / (sin_theta_twice[..., None] + 1e-8) * theta[..., None]
+    return np.where((sin_theta_twice < 1e-7)[..., None], vector / 2, result)
+
+
+def _absolute_aa_to_relative_aa(reference: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Derive 7D chunk-relative xyz/axis-angle/gripper actions for LingBot."""
+    reference_rotation = _axis_angle_to_matrix(reference[..., 3:6])
+    target_rotation = _axis_angle_to_matrix(target[..., 3:6])
+    reference_rotation_t = np.swapaxes(reference_rotation, -2, -1)
+    relative_rotation = reference_rotation_t @ target_rotation
+    relative_translation = (
+        reference_rotation_t @ (target[..., :3] - reference[..., :3])[..., None]
+    )[..., 0]
+    return np.concatenate(
+        [relative_translation, _matrix_to_axis_angle(relative_rotation), target[..., 6:7]], axis=-1
+    )
+
+
 def _valid_query_starts(episode_indices: np.ndarray, query_length: int) -> np.ndarray:
     """Return starts for contiguous ``[t-1, t, ..., t+chunk-1]`` queries."""
     starts: list[np.ndarray] = []
@@ -95,6 +126,19 @@ def _force_identity_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -> None
                 array[sl] = value
 
 
+def _force_identity_state_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -> None:
+    """Leave the shared 20D state rotation unchanged without touching 7D actions."""
+    feature_stats = stats.get("observation.state")
+    if not feature_stats:
+        return
+    for stat_name, value in _IDENTITY_ROT6D_STATS.items():
+        array = feature_stats.get(stat_name)
+        if array is None:
+            continue
+        for sl in _ROT6D_STATE_SLICES:
+            array[sl] = value
+
+
 def compute_umi_relative_ee_stats(
     hf_dataset, chunk_size: int, identity_rot6d: bool = False
 ) -> dict[str, dict[str, np.ndarray]]:
@@ -146,4 +190,75 @@ def compute_umi_relative_ee_stats(
             "UMI relative-EE: rot6d action/state stats forced to identity "
             "(rotation left unnormalized)"
         )
+    return stats
+
+
+def compute_umi_relative_axis_angle_stats(
+    hf_dataset,
+    chunk_size: int,
+    *,
+    symmetric_rotation_scale: bool = False,
+    identity_state_rot6d: bool = False,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Compute exact stats for LingBot's relative 7D single-arm action notation.
+
+    The underlying transform and chunk reference are identical to canonical UMI;
+    only the relative rotation notation changes from 6D matrix rows to axis-angle.
+    State remains the shared 20D rot6d representation because it is used only by
+    the reversible processor bridge, not by LingBot's model.
+    """
+    actions = np.asarray(hf_dataset[ACTION], dtype=np.float32)
+    if actions.ndim != 2 or actions.shape[1] != 7:
+        raise ValueError(
+            "UMI LingBot training requires action shape [frames, 7] with "
+            f"[xyz, axis-angle, gripper], got {actions.shape}"
+        )
+    episode_indices = np.asarray(hf_dataset["episode_index"])
+    starts = _valid_query_starts(episode_indices, chunk_size + 1)
+    if len(starts) == 0:
+        raise ValueError(
+            f"No episode contains the required {chunk_size + 1} contiguous frames "
+            f"for chunk_size={chunk_size}"
+        )
+
+    logger.info("Computing UMI LingBot axis-angle stats from %d valid chunks", len(starts))
+    action_stats = RunningQuantileStats()
+    state_stats = RunningQuantileStats()
+    offsets = np.arange(1, chunk_size + 1)
+
+    for batch_start in range(0, len(starts), 20_000):
+        batch = starts[batch_start : batch_start + 20_000]
+        base = actions[batch + 1]
+        targets = actions[batch[:, None] + offsets[None, :]]
+        expanded_base = np.broadcast_to(base[:, None, :], targets.shape)
+        action_stats.update(_absolute_aa_to_relative_aa(expanded_base, targets))
+
+        state_pair = np.stack([actions[batch], base], axis=1)
+        state_base = np.broadcast_to(base[:, None, :], state_pair.shape)
+        relative_state = _absolute_aa_to_relative_rot6d(state_base, state_pair).reshape(-1, 20)
+        state_stats.update(relative_state)
+
+    action_statistics = action_stats.get_statistics()
+    if symmetric_rotation_scale:
+        # A rotation vector's direction is its rotation axis. Independent
+        # per-coordinate MIN_MAX scales would shear that direction and therefore
+        # change the represented rotation. Use one symmetric scalar bound for all
+        # three Lie-algebra coordinates so normalization is simply r -> r / bound.
+        rotation_bound = max(
+            float(np.abs(action_statistics["min"][3:6]).max()),
+            float(np.abs(action_statistics["max"][3:6]).max()),
+        )
+        rotation_bound = max(rotation_bound, 1e-7)
+        action_statistics["min"][3:6] = -rotation_bound
+        action_statistics["max"][3:6] = rotation_bound
+        logger.info(
+            "UMI axis-angle rotation uses shared symmetric MIN_MAX bound %.6f rad", rotation_bound
+        )
+
+    stats = {
+        ACTION: action_statistics,
+        "observation.state": state_stats.get_statistics(),
+    }
+    if identity_state_rot6d:
+        _force_identity_state_rot6d_stats(stats)
     return stats

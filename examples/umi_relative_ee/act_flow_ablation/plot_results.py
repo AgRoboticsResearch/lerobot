@@ -31,6 +31,9 @@ LABELS = {
     "diffusion_r18": "DP R18",
     "umi_official_dp": "UMI ViT+U-Net",
     "umi_official_transformer_dp": "UMI ViT+Transformer",
+    "smolvla_rot6d": "SmolVLA rot6d",
+    "smolvla_axis_angle": "SmolVLA axis-angle",
+    "lingbot_va_axis_angle": "LingBot-VA axis-angle",
 }
 ORDER = list(LABELS)
 ACT_L1_VARIANTS = tuple(
@@ -44,6 +47,9 @@ DIFFUSION_VARIANTS = (
     "diffusion_r18",
     "umi_official_dp",
     "umi_official_transformer_dp",
+    "smolvla_rot6d",
+    "smolvla_axis_angle",
+    "lingbot_va_axis_angle",
 )
 COLORS = {
     "act_r18_vae": "#4C78A8",
@@ -59,6 +65,9 @@ COLORS = {
     "diffusion_r18": "#F2CF5B",
     "umi_official_dp": "#B279A2",
     "umi_official_transformer_dp": "#7A5195",
+    "smolvla_rot6d": "#54A24B",
+    "smolvla_axis_angle": "#E17C05",
+    "lingbot_va_axis_angle": "#9C755F",
 }
 EFFICIENCY_ANNOTATIONS = {
     "act_r18_vae": ((-5, -13), "right"),

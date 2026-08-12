@@ -325,6 +325,7 @@ def inference_step_field(policy_config: PreTrainedConfig) -> str:
         "diffusion",
         "umi_official_dp",
         "umi_official_transformer_dp",
+        "lingbot_va",
         "pi0",
         "pi05",
     }:

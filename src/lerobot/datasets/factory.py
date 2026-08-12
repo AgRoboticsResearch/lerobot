@@ -28,7 +28,7 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
-from .umi_relative_ee_stats import compute_umi_relative_ee_stats
+from .umi_relative_ee_stats import compute_umi_relative_axis_angle_stats, compute_umi_relative_ee_stats
 
 
 def resolve_delta_timestamps(
@@ -93,10 +93,11 @@ def make_dataset(
         "smolvla",
         "pi05",
         "multi_task_dit",
+        "lingbot_va",
     }:
         raise ValueError(
             "UMI relative-EE training is supported for policy.type=act, diffusion, umi_official_dp, "
-            "umi_official_transformer_dp, smolvla, pi05, or multi_task_dit."
+            "umi_official_transformer_dp, smolvla, pi05, multi_task_dit, or lingbot_va."
         )
     if use_umi_relative_ee and dataset_config.streaming:
         raise ValueError("UMI relative-EE statistics require a non-streaming dataset.")
@@ -157,29 +158,50 @@ def make_dataset(
         )
 
     if use_umi_relative_ee:
+        is_lingbot = trainable_config.type == "lingbot_va"
+        uses_axis_angle = is_lingbot or (
+            trainable_config.type == "smolvla"
+            and getattr(trainable_config, "umi_rotation_representation", "rot6d") == "axis_angle"
+        )
+        chunk_size = getattr(trainable_config, "chunk_size", None) or trainable_config.horizon
         if not is_validation:
             dataset.meta.stats.update(
-                compute_umi_relative_ee_stats(
+                compute_umi_relative_axis_angle_stats(
                     dataset.hf_dataset,
-                    getattr(trainable_config, "chunk_size", None) or trainable_config.horizon,
-                    identity_rot6d=bool(getattr(trainable_config, "umi_rot6d_identity_norm", False)),
+                    chunk_size,
+                    symmetric_rotation_scale=(trainable_config.type == "smolvla"),
+                    identity_state_rot6d=bool(
+                        getattr(trainable_config, "umi_rot6d_identity_norm", False)
+                    ),
+                )
+                if uses_axis_angle
+                else compute_umi_relative_ee_stats(
+                    dataset.hf_dataset,
+                    chunk_size,
+                    identity_rot6d=bool(
+                        getattr(trainable_config, "umi_rot6d_identity_norm", False)
+                    ),
                 )
             )
         dataset.meta.info.features[ACTION] = {
             "dtype": "float32",
-            "shape": [10],
-            "names": [
-                "dx",
-                "dy",
-                "dz",
-                "rot6d_0",
-                "rot6d_1",
-                "rot6d_2",
-                "rot6d_3",
-                "rot6d_4",
-                "rot6d_5",
-                "gripper",
-            ],
+            "shape": [7 if uses_axis_angle else 10],
+            "names": (
+                ["dx", "dy", "dz", "daxis_angle_x", "daxis_angle_y", "daxis_angle_z", "gripper"]
+                if uses_axis_angle
+                else [
+                    "dx",
+                    "dy",
+                    "dz",
+                    "rot6d_0",
+                    "rot6d_1",
+                    "rot6d_2",
+                    "rot6d_3",
+                    "rot6d_4",
+                    "rot6d_5",
+                    "gripper",
+                ]
+            ),
         }
         dataset.meta.info.features[OBS_STATE] = {
             "dtype": "float32",
@@ -187,10 +209,11 @@ def make_dataset(
             "names": [f"umi_relative_state_{index}" for index in range(20)],
         }
         logging.info(
-            "Prepared %s UMI relative-EE dataset for %s: raw action 7D -> model action 10D, "
+            "Prepared %s UMI relative-EE dataset for %s: raw action 7D -> model action %s, "
             "derived state 20D",
             "validation" if is_validation else "training",
             trainable_config.type,
+            "7D axis-angle" if uses_axis_angle else "10D rot6d",
         )
 
     if dataset_config.use_imagenet_stats:

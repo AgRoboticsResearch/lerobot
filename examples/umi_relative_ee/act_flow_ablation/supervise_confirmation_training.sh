@@ -75,7 +75,9 @@ run_with_retries() {
   fi
   for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
     workers=4
-    if [[ "$attempt" -gt 1 ]]; then
+    if [[ "$attempt" -eq 2 ]]; then
+      workers=2
+    elif [[ "$attempt" -gt 2 ]]; then
       workers=0
     fi
     archive_incomplete "$variant" "$seed"

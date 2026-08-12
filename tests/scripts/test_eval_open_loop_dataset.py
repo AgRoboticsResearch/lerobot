@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -23,6 +25,10 @@ from lerobot.policies.act.configuration_act import ACTConfig
 def test_inference_step_field_handles_act_generative_objectives(objective, expected):
     config = ACTConfig(action_objective=objective, use_vae=objective == "l1")
     assert inference_step_field(config) == expected
+
+
+def test_inference_step_field_handles_lingbot_video_sampler():
+    assert inference_step_field(SimpleNamespace(type="lingbot_va")) == "num_inference_steps"
 
 
 def test_choose_query_indices_covers_every_episode_with_multiple_valid_frames():

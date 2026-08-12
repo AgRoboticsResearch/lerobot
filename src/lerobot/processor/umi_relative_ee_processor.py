@@ -95,6 +95,40 @@ def relative_rot6d_to_absolute_aa(relative: Tensor, reference: Tensor) -> Tensor
     )
 
 
+def absolute_aa_to_relative_aa(reference: Tensor, target: Tensor) -> Tensor:
+    """Compute ``inverse(T_reference) @ T_target`` as 7D xyz/axis-angle/gripper.
+
+    LingBot-VA's released single-arm convention reserves exactly seven active
+    channels inside its 30D multi-embodiment action tensor.  Unlike the canonical
+    UMI policy representation, there is therefore no room for a 6D rotation.  This
+    helper derives the same chunk-start-relative SE(3) transform as
+    :func:`absolute_aa_to_relative_rot6d`, then records its rotation as a 3D
+    axis-angle vector.
+    """
+    reference_rotation = axis_angle_to_matrix(reference[..., 3:6])
+    target_rotation = axis_angle_to_matrix(target[..., 3:6])
+    reference_rotation_t = reference_rotation.transpose(-2, -1)
+    relative_rotation = reference_rotation_t @ target_rotation
+    relative_translation = (
+        reference_rotation_t @ (target[..., :3] - reference[..., :3]).unsqueeze(-1)
+    ).squeeze(-1)
+    return torch.cat(
+        [relative_translation, matrix_to_axis_angle(relative_rotation), target[..., 6:7]], dim=-1
+    )
+
+
+def relative_aa_to_absolute_aa(relative: Tensor, reference: Tensor) -> Tensor:
+    """Compose a 7D relative xyz/axis-angle/gripper action with an absolute pose."""
+    reference_rotation = axis_angle_to_matrix(reference[..., 3:6])
+    absolute_rotation = reference_rotation @ axis_angle_to_matrix(relative[..., 3:6])
+    absolute_translation = reference[..., :3] + (
+        reference_rotation @ relative[..., :3].unsqueeze(-1)
+    ).squeeze(-1)
+    return torch.cat(
+        [absolute_translation, matrix_to_axis_angle(absolute_rotation), relative[..., 6:7]], dim=-1
+    )
+
+
 def to_umi_relative_actions(actions: Tensor, state: Tensor) -> Tensor:
     """Convert a batch of absolute 7D action chunks to relative 10D chunks."""
     if actions.shape[-1] != 7 or state.shape[-1] != 7:
@@ -123,6 +157,36 @@ def to_umi_absolute_actions(actions: Tensor, state: Tensor) -> Tensor:
     if actions.ndim == 3:
         state = state.unsqueeze(1).expand(*actions.shape[:-1], 7)
     return relative_rot6d_to_absolute_aa(actions, state)
+
+
+def to_umi_relative_axis_angle_actions(actions: Tensor, state: Tensor) -> Tensor:
+    """Convert absolute 7D action chunks to LingBot-compatible relative 7D chunks."""
+    if actions.shape[-1] != 7 or state.shape[-1] != 7:
+        raise ValueError(
+            "UMI relative axis-angle requires 7D [xyz, axis-angle, gripper] input; "
+            f"got action={actions.shape[-1]}D and state={state.shape[-1]}D"
+        )
+    if state.ndim == 3:
+        state = state[:, -1]
+    state = state.to(device=actions.device, dtype=actions.dtype)
+    if actions.ndim == 3:
+        state = state.unsqueeze(1).expand(*actions.shape[:-1], 7)
+    return absolute_aa_to_relative_aa(state, actions)
+
+
+def to_umi_absolute_axis_angle_actions(actions: Tensor, state: Tensor) -> Tensor:
+    """Convert LingBot-compatible relative 7D chunks back to absolute 7D poses."""
+    if actions.shape[-1] != 7 or state.shape[-1] != 7:
+        raise ValueError(
+            "UMI relative axis-angle requires 7D actions and a 7D reference state; "
+            f"got action={actions.shape[-1]}D and state={state.shape[-1]}D"
+        )
+    if state.ndim == 3:
+        state = state[:, -1]
+    state = state.to(device=actions.device, dtype=actions.dtype)
+    if actions.ndim == 3:
+        state = state.unsqueeze(1).expand(*actions.shape[:-1], 7)
+    return relative_aa_to_absolute_aa(actions, state)
 
 
 def to_umi_relative_state(state: Tensor) -> Tensor:
@@ -215,6 +279,43 @@ class UmiRelativeActionsStep(ProcessorStep):
             feature = action_features[ACTION]
             action_features[ACTION] = PolicyFeature(type=feature.type, shape=(10,))
         return result
+
+
+@ProcessorStepRegistry.register("umi_relative_axis_angle_actions")
+@dataclass
+class UmiRelativeAxisAngleActionsStep(ProcessorStep):
+    """Convert absolute 7D chunks to relative 7D LingBot actions and cache the base."""
+
+    enabled: bool = True
+    cache_key: str = "umi_relative_ee_axis_angle"
+    _last_state: Tensor | None = field(default=None, init=False, repr=False)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION, {})
+        raw_state = observation.get(OBS_STATE) if observation else None
+        state = raw_state[..., -1, :] if raw_state is not None and raw_state.ndim >= 3 else raw_state
+        if state is not None:
+            self._last_state = state.detach().cpu().clone()
+            _STATE_CACHE[self.cache_key] = self._last_state
+        action = transition.get(TransitionKey.ACTION)
+        if not self.enabled or action is None or state is None:
+            return transition
+        result = deepcopy(transition)
+        result[TransitionKey.ACTION] = to_umi_relative_axis_angle_actions(action, state)
+        return result
+
+    def get_cached_state(self) -> Tensor | None:
+        return self._last_state
+
+    def reset(self) -> None:
+        self._last_state = None
+        _STATE_CACHE.pop(self.cache_key, None)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "cache_key": self.cache_key}
+
+    def transform_features(self, features):
+        return features
 
 
 @ProcessorStepRegistry.register("umi_relative_state")
@@ -337,6 +438,92 @@ class UmiAbsoluteActionsStep(ProcessorStep):
             "enabled": self.enabled,
             "cache_key": self.cache_key,
             "single_action_reference_steps": self.single_action_reference_steps,
+        }
+
+    def transform_features(self, features):
+        return features
+
+
+@ProcessorStepRegistry.register("umi_absolute_axis_angle_actions")
+@dataclass
+class UmiAbsoluteAxisAngleActionsStep(ProcessorStep):
+    """Convert relative 7D LingBot chunks back to absolute 7D EE targets."""
+
+    enabled: bool = True
+    cache_key: str = "umi_relative_ee_axis_angle"
+    relative_step: UmiRelativeAxisAngleActionsStep | None = field(default=None, repr=False)
+    single_action_reference_steps: int = 1
+    initial_single_action_reference_steps: int | None = None
+    _single_action_reference: Tensor | None = field(default=None, init=False, repr=False)
+    _single_action_steps_remaining: int = field(default=0, init=False, repr=False)
+    _is_first_group: bool = field(default=True, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.single_action_reference_steps < 1:
+            raise ValueError("single_action_reference_steps must be at least 1")
+        if (
+            self.initial_single_action_reference_steps is not None
+            and self.initial_single_action_reference_steps < 1
+        ):
+            raise ValueError("initial_single_action_reference_steps must be at least 1")
+
+    def set_single_action_reference_steps(self, steps: int) -> None:
+        if steps < 1:
+            raise ValueError("single_action_reference_steps must be at least 1")
+        self.single_action_reference_steps = steps
+        self._clear_single_action_reference()
+
+    def _clear_single_action_reference(self) -> None:
+        self._single_action_reference = None
+        self._single_action_steps_remaining = 0
+
+    def _reference_for_action(self, action: Tensor, current_state: Tensor) -> Tensor:
+        if action.ndim >= 3 or self.single_action_reference_steps == 1:
+            self._clear_single_action_reference()
+            return current_state
+        if self._single_action_steps_remaining == 0:
+            self._single_action_reference = current_state.detach().clone()
+            self._single_action_steps_remaining = (
+                self.initial_single_action_reference_steps
+                if self._is_first_group and self.initial_single_action_reference_steps is not None
+                else self.single_action_reference_steps
+            )
+            self._is_first_group = False
+        if self._single_action_reference is None:
+            raise RuntimeError("UMI axis-angle single-action reference was not initialized")
+        reference = self._single_action_reference
+        self._single_action_steps_remaining -= 1
+        if self._single_action_steps_remaining == 0:
+            self._single_action_reference = None
+        return reference
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled:
+            return transition
+        state = self.relative_step.get_cached_state() if self.relative_step is not None else None
+        if state is None:
+            state = _STATE_CACHE.get(self.cache_key)
+        if state is None:
+            raise RuntimeError("UMI postprocessor has no chunk-base state; run the preprocessor first")
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        state = self._reference_for_action(action, state)
+        result = deepcopy(transition)
+        result[TransitionKey.ACTION] = to_umi_absolute_axis_angle_actions(action, state)
+        return result
+
+    def reset(self) -> None:
+        self._clear_single_action_reference()
+        self._is_first_group = True
+        _STATE_CACHE.pop(self.cache_key, None)
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "cache_key": self.cache_key,
+            "single_action_reference_steps": self.single_action_reference_steps,
+            "initial_single_action_reference_steps": self.initial_single_action_reference_steps,
         }
 
     def transform_features(self, features):

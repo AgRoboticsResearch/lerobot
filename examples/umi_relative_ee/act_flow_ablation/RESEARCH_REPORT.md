@@ -414,6 +414,12 @@ throughput. Dedicated timed runs are required before latency conclusions.
   squared-cosine scheduler, deterministic fixed-noise DDIM output, strict
   noise-shape rejection, and save/reload equality of fixed-noise output plus
   diffusion configuration.
+- CPU construction with the exact queued feature geometry (20D derived state,
+  10D action, image input, chunk 30) succeeds for both newly queued controls.
+  R50-V1 ACT has exactly 64,654,218 parameters and resolves the cached V1
+  weights; ACT-DP has exactly 34,728,266 finite parameters and constructs a
+  100-training-step epsilon-prediction `DDIMScheduler`. Both remained on CPU,
+  so this launch-fidelity check did not contend with the active host GPU job.
 - Diffusion's UMI config produces `[-1, 0, ..., 31]`, strips the leading action
   into the two-pose derived state, and reconnects the same relative-action step
   to postprocessing.
@@ -884,7 +890,154 @@ It warns after 20 minutes without a training/evaluation log update or below
 50 GiB free, but deliberately never kills a process; recovery and forward
 progress remain owned by the bounded-retry supervisors above.
 
-## 10. Reproduction
+## 10. Throughput intervention and concurrent scheduling
+
+At 2026-08-12 11:53, the first official UMI U-Net run was at step 15,465/30,000.
+It was definitely training on CUDA with PyAV, but used `num_workers=0` after the
+earlier four-worker PyAV attempt segfaulted at step 2,195. Its stable timing was
+approximately `data_s=0.685--0.690` and `updt_s=0.190`, or only 1.14--1.16
+steps/s. The long idle intervals were therefore serialized video decoding, not
+CPU model execution and not TorchCodec: both the failed and surviving commands
+explicitly selected `dataset.video_backend=pyav`. Merely uninstalling
+TorchCodec would not alter that selected code path and would remove a useful
+future decoder control, so it was retained.
+
+Because this experiment did not save intermediate weights, restarting it
+necessarily discarded about 15.5k optimization steps (roughly 3.8 hours). The
+10k validation observation, loss 0.018457, remains in the archived log as
+provenance but is not treated as a checkpoint result. Before restarting, the
+launcher was changed to permit an explicit save interval and the official
+queue was configured to save at 10k, 20k, and 30k. Two PyAV workers were chosen
+as the conservative middle point between the unstable four-worker setting and
+the slow zero-worker fallback.
+
+The first restart smoke exposed an in-progress LingBot integration error:
+`ConstantWithWarmupSchedulerConfig` was referenced but absent from this
+branch. This happened before any optimization step. A registered linear-warmup
+then constant scheduler was added, its LingBot import was tested, and the
+supervisor was relaunched. This is an important operational lesson: optional
+policy modules must remain import-safe because factory registration can affect
+unrelated policies even when that candidate is not selected.
+
+The repaired real run began at 11:56:40 with batch 64, CUDA, PyAV, and two
+workers. At step 200 it measured `data_s=0.063`, `updt_s=0.227`, and 3.73
+steps/s: data latency fell by about 90.8% and end-to-end throughput improved
+about 3.3x. This directly isolates loader concurrency as the utilization fix.
+With the GPU still having about 12 GiB free, the missing architecture-matched
+ACT diffusion control (`act_r18_diffusion_lr1e5`, seed 1000, 30k) was started
+concurrently. Combined allocation stabilized near 15.5/24.6 GB and 100% GPU
+utilization. Under contention the official run remained near 2.97 steps/s,
+while ACT-DP ran near 11.4--12.2 steps/s; aggregate progress increased without
+OOM. This companion is expendable if memory pressure appears, while the
+official run remains the protected primary job.
+
+Retry policy now follows a measured 4 -> 2 -> 0 worker ladder where relevant,
+rather than jumping directly from maximum multiprocessing to serialized
+decoding. The scientific and operational conclusions are distinct: decoder
+workers change throughput, not the policy objective, while concurrent training
+changes wall-clock scheduling and must never be used to compare raw per-step
+speed between models.
+
+### SmolVLA rotation-notation control
+
+The SmolVLA comparison holds the pretrained checkpoint, action expert, flow
+objective, optimizer, state representation, chunk length, and padded-action
+strategy fixed. The only intended action-space difference is `rot6d` (10D:
+xyz + two rotation-matrix rows + gripper) versus axis-angle (7D: xyz + a
+rotation vector + gripper). Both use the same chunk-start transform
+`inverse(T_start) @ T_target`; both retain the shared 20D rot6d state bridge.
+
+Axis-angle cannot be normalized independently per coordinate without changing
+its geometry: the vector direction is the rotation axis, so three different
+MIN_MAX slopes shear that axis. The implementation therefore computes one
+scalar bound equal to the largest absolute training-set rotation-vector
+coordinate and assigns `[-bound, +bound]` to all three rotation dimensions.
+Normalization is then a scalar multiplication and preserves both the axis and
+relative component ratios. Position and gripper retain dataset-derived
+per-coordinate statistics. Focused tests cover the 7D SE(3) round trip,
+processor selection and chunk reference, serialized horizons, and the shared
+symmetric bound; the combined SmolVLA/LingBot/UMI processor suite currently has
+32 passing CPU tests after also covering evaluator sampler-field selection and
+the non-UMI LingBot identity-denormalization path.
+
+The guarded extension queue trains both SmolVLA notations at seed 1000 for 30k
+and at seeds 1000/2000/3000 for 100k, followed by three inference seeds per
+checkpoint. This is deliberately paired: same dataset queries, initialization,
+training budget, and model width allow the notation effect to be estimated
+without attributing a VLM change to rotation representation.
+
+### LingBot-VA candidate and interpretation boundary
+
+LingBot-VA is included as a pretrained VLA/world-model candidate, not as the
+answer to the architecture-matched flow-isolation question. Its fixed latent
+action tensor has 30 channels, but this single-arm dataset maps exactly seven
+active channels `[0..6]` to relative xyz, relative axis-angle, and gripper;
+unused channels remain zero and are action-masked in the loss. Raw dataset
+actions remain absolute 7D poses and are reversibly converted by the same
+chunk-start bridge used in the SmolVLA axis-angle condition.
+
+Small Hub-manifest inspection changed the initialization choice before the
+10.2 GB transformer download. `lerobot/lingbot_va_base` is a 3-camera,
+14-active-action, 256x320 checkpoint. `lerobot/lingbot_va_libero_long` is the
+released 2-camera single-arm checkpoint with exactly channels 0..6,
+128x128 images, four actions per video frame, and four latent frames per chunk.
+The latter is therefore the closest defensible initialization for one-camera
+strawberry adaptation. Training overrides only the camera list to
+`observation.images.camera`, disables the LIBERO-specific horizontal flip,
+uses flex attention, and applies rank-8 LoRA; frozen Wan VAE and UMT5 weights
+remain outside the optimizer. The first predicted chunk contains 12 executable
+actions because LingBot treats latent frame zero as observed conditioning;
+subsequent chunks contain 16. The postprocessor serializes separate 12-step
+initial and 16-step subsequent chunk references so queued actions are composed
+against the correct absolute pose.
+
+This candidate has major confounds relative to ACT: a 5B pretrained video-action
+DiT, pretrained text/video features, a different executable horizon, and
+world-model latent loss. A better result would demonstrate useful transfer, not
+that generic flow matching is intrinsically superior; a worse result could be
+caused by the one-camera/domain shift, optimization or memory constraints, or
+the objective. The ACT-L1/ACT-flow/ACT-DP trio remains the causal Q2 control.
+
+### Shared-environment dependency incident
+
+At 12:12 on 2026-08-12, an attempt to add LingBot dependencies with a narrow
+`uv sync --extra lingbot_va --extra umi-official-dp` pruned 134 packages not in
+that selected environment, including PyAV, datasets, and test tools. Already
+loaded training workers continued temporarily, but both live runs failed when
+validation spawned fresh workers: the partially removed PyAV package raised
+`ModuleNotFoundError: av.subtitles`. ACT-DP reached exactly step 10,000 before
+the failure; at that time its launcher did not yet save until 30k, so those
+weights were not recoverable. The official run also had no completed recovery
+checkpoint before its validation boundary.
+
+The full dataset/training/SmolVLA/LingBot/test/development environment was
+restored, `import av, av.subtitles` was explicitly verified, and both runs were
+restarted with two PyAV workers and 10k save intervals. Broken TorchCodec 0.11.1
+was then removed from the repository virtual environment: it could not load
+against PyTorch 2.11 and the host FFmpeg/libgcc combination, while every
+experiment command explicitly selects PyAV. Post-recovery measurements returned
+to roughly 2.94 steps/s for the contended official job and 11.5--12.1 steps/s
+for ACT-DP at about 15.3 GB combined VRAM.
+
+The recovered ACT-DP run entered its step-10,000 validation at 12:41:40 with
+two PyAV workers and completed at 12:42:34 with
+`loss=diffusion_loss=0.020295`. The 139,010,496-byte model file plus optimizer,
+RNG, processor, and config state were independently verified under checkpoint
+`010000`, and training resumed beyond step 11k. This demonstrates that fresh
+validation workers now import and decode correctly and, unlike the failed
+attempt, leaves a durable recovery point. To reduce the blast radius of any
+later host or validation failure, `run_one.sh` now defaults every run longer
+than 10k steps to 10k recovery checkpoints (while retaining an explicit
+environment override).
+
+The operational lesson is stronger than merely “install PyAV”: never run a
+pruning environment synchronization against a virtual environment used by live
+training. Large candidate dependencies must be installed additively or in a
+separate environment, and imports used by future DataLoader workers must be
+tested before the next validation/checkpoint boundary. Failed logs were kept
+with incident-specific names; they are provenance, not scientific endpoints.
+
+## 11. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
 the fixed matrix sequentially so models do not contend for the single GPU, and

@@ -49,6 +49,8 @@ EXTRA_PAIRED_VARIANTS = (
     ("umi_official_dp", "act_r18_l1"),
     ("umi_official_transformer_dp", "umi_official_dp"),
     ("umi_official_transformer_dp", "act_r18_l1"),
+    ("smolvla_axis_angle", "smolvla_rot6d"),
+    ("lingbot_va_axis_angle", "smolvla_axis_angle"),
 )
 
 

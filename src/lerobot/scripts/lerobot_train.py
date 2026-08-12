@@ -436,12 +436,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
     if (
-        getattr(active_cfg, "use_relative_actions", False)
+        (
+            getattr(active_cfg, "use_relative_actions", False)
+            or getattr(active_cfg, "use_umi_relative_ee", False)
+        )
         and processor_pretrained_path is not None
         and not cfg.resume
     ):
         logging.warning(
-            "use_relative_actions=true with pretrained processors can skip relative transforms if "
+            "Relative-action training with pretrained processors can skip current transforms if "
             "the checkpoint processors do not define them. Building processors from current policy config."
         )
         processor_pretrained_path = None

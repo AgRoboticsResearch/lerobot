@@ -55,7 +55,9 @@ run_with_retries() {
   fi
   for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
     attempt_workers="$workers"
-    if [[ "$attempt" -gt 1 && "$workers" -gt 0 ]]; then
+    if [[ "$attempt" -eq 2 && "$workers" -gt 2 ]]; then
+      attempt_workers=2
+    elif [[ "$attempt" -gt 2 && "$workers" -gt 0 ]]; then
       attempt_workers=0
     fi
     archive_incomplete "$variant" "$steps"
@@ -108,7 +110,10 @@ for variant in umi_official_dp umi_official_transformer_dp; do
     echo "[$(timestamp)] no safe batch for $variant; advancing queue"
     continue
   fi
-  run_with_retries "$variant" "$OFFICIAL_STEPS" 0 "$SELECTED_BATCH" || true
+  # Two PyAV loader processes overlap decoding with GPU work. Four workers
+  # previously segfaulted on this dataset, while zero workers spent ~0.69 s/step
+  # decoding synchronously and left the GPU idle between ~0.19 s updates.
+  UMI_SAVE_FREQ=10000 run_with_retries "$variant" "$OFFICIAL_STEPS" 2 "$SELECTED_BATCH" || true
 done
 
 for variant in act_r18_l1 act_r18_flow_u_lr1e5 diffusion_r18; do

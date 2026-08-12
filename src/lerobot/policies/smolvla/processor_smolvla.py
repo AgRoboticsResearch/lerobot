@@ -28,8 +28,10 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     TokenizerProcessorStep,
     UmiAbsoluteActionsStep,
+    UmiAbsoluteAxisAngleActionsStep,
     UmiDeriveStateFromActionStep,
     UmiRelativeActionsStep,
+    UmiRelativeAxisAngleActionsStep,
     UmiRelativeStateStep,
     UnnormalizerProcessorStep,
     make_umi_cache_key,
@@ -72,7 +74,14 @@ def make_smolvla_pre_post_processors(
     """
 
     cache_key = make_umi_cache_key()
-    relative_step = UmiRelativeActionsStep(cache_key=cache_key)
+    use_axis_angle = (
+        config.use_umi_relative_ee and config.umi_rotation_representation == "axis_angle"
+    )
+    relative_step = (
+        UmiRelativeAxisAngleActionsStep(cache_key=cache_key)
+        if use_axis_angle
+        else UmiRelativeActionsStep(cache_key=cache_key)
+    )
 
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
@@ -106,10 +115,18 @@ def make_smolvla_pre_post_processors(
         ),
         *(
             [
-                UmiAbsoluteActionsStep(
-                    cache_key=cache_key,
-                    relative_step=relative_step,
-                    single_action_reference_steps=config.n_action_steps,
+                (
+                    UmiAbsoluteAxisAngleActionsStep(
+                        cache_key=cache_key,
+                        relative_step=relative_step,
+                        single_action_reference_steps=config.n_action_steps,
+                    )
+                    if use_axis_angle
+                    else UmiAbsoluteActionsStep(
+                        cache_key=cache_key,
+                        relative_step=relative_step,
+                        single_action_reference_steps=config.n_action_steps,
+                    )
                 )
             ]
             if config.use_umi_relative_ee

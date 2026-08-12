@@ -31,6 +31,10 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Canonical UMI-style relative end-effector mode shared with ACT and π0.5.
     use_umi_relative_ee: bool = False
+    # Rotation notation for the chunk-start-relative action. ``rot6d`` is the
+    # maintained canonical UMI representation (10D total); ``axis_angle`` is a
+    # controlled 7D notation ablation shared with the LingBot single-arm adapter.
+    umi_rotation_representation: str = "rot6d"
     # Leave the 6D-rotation action/state components unnormalized (identity stats)
     # instead of per-dim MIN_MAX scaling, matching canonical UMI. A/B test for
     # rotation jumpiness. See examples/umi_relative_ee/rotation_normalization.md.
@@ -142,16 +146,24 @@ class SmolVLAConfig(PreTrainedConfig):
         )
         self.use_umi_relative_ee = self.use_umi_relative_ee or legacy_umi
         if self.use_umi_relative_ee:
+            if self.umi_rotation_representation not in {"rot6d", "axis_angle"}:
+                raise ValueError(
+                    "umi_rotation_representation must be 'rot6d' or 'axis_angle', "
+                    f"got {self.umi_rotation_representation!r}."
+                )
             if self.n_obs_steps != 1:
                 raise ValueError("SmolVLA UMI relative-EE mode requires n_obs_steps=1.")
-            if self.max_state_dim < 20 or self.max_action_dim < 10:
+            required_action_dim = 10 if self.umi_rotation_representation == "rot6d" else 7
+            if self.max_state_dim < 20 or self.max_action_dim < required_action_dim:
                 raise ValueError(
-                    "SmolVLA UMI relative-EE mode requires max_state_dim>=20 and max_action_dim>=10."
+                    "SmolVLA UMI relative-EE mode requires max_state_dim>=20 and "
+                    f"max_action_dim>={required_action_dim} for "
+                    f"{self.umi_rotation_representation}."
                 )
             self.derive_state_from_action = True
             self.use_relative_actions = True
-            self.pose_dim = 6
-            self.use_rot6d = True
+            self.pose_dim = 6 if self.umi_rotation_representation == "rot6d" else 3
+            self.use_rot6d = self.umi_rotation_representation == "rot6d"
             self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
             self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
 

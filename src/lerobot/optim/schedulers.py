@@ -138,6 +138,24 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("constant_with_warmup")
+@dataclass
+class ConstantWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Linearly warm up to the configured optimizer LR, then keep it constant."""
+
+    num_warmup_steps: int
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        del num_training_steps
+
+        def lr_lambda(current_step: int) -> float:
+            if self.num_warmup_steps <= 0 or current_step >= self.num_warmup_steps:
+                return 1.0
+            return float(current_step + 1) / float(self.num_warmup_steps + 1)
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
     state_dict = scheduler.state_dict()
     write_json(state_dict, save_dir / SCHEDULER_STATE)

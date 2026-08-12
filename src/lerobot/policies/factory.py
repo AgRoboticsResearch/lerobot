@@ -32,7 +32,9 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
     UmiAbsoluteActionsStep,
+    UmiAbsoluteAxisAngleActionsStep,
     UmiRelativeActionsStep,
+    UmiRelativeAxisAngleActionsStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -55,6 +57,7 @@ from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
@@ -93,13 +96,27 @@ def _reconnect_relative_absolute_steps(
         (
             step
             for step in preprocessor.steps
-            if isinstance(step, (UmiRelativeActionsStep, RelativeRot6dActionsProcessorStep))
+            if isinstance(
+                step,
+                (
+                    UmiRelativeActionsStep,
+                    UmiRelativeAxisAngleActionsStep,
+                    RelativeRot6dActionsProcessorStep,
+                ),
+            )
         ),
         None,
     )
     if umi_relative_step is not None:
         for step in postprocessor.steps:
-            if isinstance(step, (UmiAbsoluteActionsStep, AbsoluteRot6dActionsProcessorStep)):
+            if isinstance(
+                step,
+                (
+                    UmiAbsoluteActionsStep,
+                    UmiAbsoluteAxisAngleActionsStep,
+                    AbsoluteRot6dActionsProcessorStep,
+                ),
+            ):
                 step.relative_step = umi_relative_step
                 if policy_cfg is not None:
                     step.set_single_action_reference_steps(policy_cfg.n_action_steps)
@@ -141,6 +158,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .act.modeling_act import ACTPolicy
 
         return ACTPolicy
+    elif name == "lingbot_va":
+        from .lingbot_va.modeling_lingbot_va import LingBotVAPolicy
+
+        return LingBotVAPolicy
     elif name == "multi_task_dit":
         from .multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
 
@@ -221,6 +242,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return UmiOfficialTransformerDPConfig(**kwargs)
     elif policy_type == "act":
         return ACTConfig(**kwargs)
+    elif policy_type == "lingbot_va":
+        return LingBotVAConfig(**kwargs)
     elif policy_type == "multi_task_dit":
         return MultiTaskDiTConfig(**kwargs)
     elif policy_type == "vqbet":
@@ -365,6 +388,14 @@ def make_pre_post_processors(
         from .act.processor_act import make_act_pre_post_processors
 
         processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingBotVAConfig):
+        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
+
+        processors = make_lingbot_va_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
