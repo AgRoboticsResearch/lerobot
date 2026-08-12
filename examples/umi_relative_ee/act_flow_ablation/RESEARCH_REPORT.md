@@ -1205,6 +1205,15 @@ worsening overfit curve. The fixed 100k run continues under its exact-completion
 guard; final and best-validation decoded checkpoints should both be retained in
 the analysis if their common-query behavior differs materially.
 
+To test that question without changing the primary endpoint, a separate
+checkpoint-selection evaluator is queued after the canonical final ACT
+evaluation. It explicitly resolves recovery step `060000` and writes only to
+`eval_checkpoint_h32`, which the canonical collector does not scan. It uses the
+same 100 episodes, five fixed queries per episode, horizon bounds, PyAV backend,
+and deterministic seed as the final-checkpoint evaluation. Thus it can diagnose
+whether the validation minimum selects a better decoded policy while the main
+tables and figures remain an unbiased fixed-100k comparison.
+
 Two canonical early-evaluation waiters advance analysis without forking the
 protocol: official U-Net inference seed 1000 starts after its exact 30k durable
 completion, and deterministic ACT-L1 seed 1000 starts after its 100k companion

@@ -22,6 +22,7 @@ SESSIONS=(
   umi_official_transformer_dp_completion_guard_20260812
   umi_official_dp_early_eval_20260812
   umi_act_l1_100k_early_eval_20260812
+  umi_act_l1_checkpoint_selection_20260812
   umi_official_transformer_dp_early_eval_20260812
   umi_lingbot_prefetch_20260812
 )
