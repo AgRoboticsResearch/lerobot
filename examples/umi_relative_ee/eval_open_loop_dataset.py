@@ -313,6 +313,25 @@ def summarize_inference_latency(seconds: list[float]) -> dict[str, float | int]:
     }
 
 
+def inference_step_field(policy_config: PreTrainedConfig) -> str:
+    """Resolve the effective sampler-step field for a loaded policy config."""
+    if policy_config.type == "act":
+        objective = getattr(policy_config, "action_objective", "l1")
+        if objective == "flow_matching":
+            return "flow_num_inference_steps"
+        if objective == "diffusion":
+            return "diffusion_num_inference_steps"
+    if policy_config.type in {
+        "diffusion",
+        "umi_official_dp",
+        "umi_official_transformer_dp",
+        "pi0",
+        "pi05",
+    }:
+        return "num_inference_steps"
+    return "num_steps"
+
+
 def main() -> None:
     args = parse_args()
     if args.output_dir is None:
@@ -331,12 +350,7 @@ def main() -> None:
         model_path, device, args.legacy_full_action_noise
     )
     if args.num_steps is not None:
-        step_field = (
-            "num_inference_steps"
-            if policy_config.type
-            in {"diffusion", "umi_official_dp", "umi_official_transformer_dp", "pi0", "pi05"}
-            else "num_steps"
-        )
+        step_field = inference_step_field(policy_config)
         setattr(policy_config, step_field, args.num_steps)
         core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
         setattr(core_policy.config, step_field, args.num_steps)

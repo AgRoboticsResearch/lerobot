@@ -4,10 +4,25 @@ import torch
 from examples.umi_relative_ee.eval_open_loop_dataset import (
     bootstrap_episode_confidence_intervals,
     choose_query_indices,
+    inference_step_field,
     rotation_error_deg,
     summarize,
     summarize_inference_latency,
 )
+from lerobot.policies.act.configuration_act import ACTConfig
+
+
+@pytest.mark.parametrize(
+    ("objective", "expected"),
+    [
+        ("flow_matching", "flow_num_inference_steps"),
+        ("diffusion", "diffusion_num_inference_steps"),
+        ("l1", "num_steps"),
+    ],
+)
+def test_inference_step_field_handles_act_generative_objectives(objective, expected):
+    config = ACTConfig(action_objective=objective, use_vae=objective == "l1")
+    assert inference_step_field(config) == expected
 
 
 def test_choose_query_indices_covers_every_episode_with_multiple_valid_frames():
@@ -59,12 +74,8 @@ def test_bootstrap_episode_confidence_intervals_is_deterministic_and_episode_lev
         2: {"metric": 5.0},
     }
 
-    first = bootstrap_episode_confidence_intervals(
-        episode_means, ("metric",), num_resamples=1000, seed=7
-    )
-    second = bootstrap_episode_confidence_intervals(
-        episode_means, ("metric",), num_resamples=1000, seed=7
-    )
+    first = bootstrap_episode_confidence_intervals(episode_means, ("metric",), num_resamples=1000, seed=7)
+    second = bootstrap_episode_confidence_intervals(episode_means, ("metric",), num_resamples=1000, seed=7)
 
     assert first == second
     assert first["metric"]["low"] <= 3.0 <= first["metric"]["high"]

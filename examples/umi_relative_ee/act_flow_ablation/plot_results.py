@@ -33,6 +33,18 @@ LABELS = {
     "umi_official_transformer_dp": "UMI ViT+Transformer",
 }
 ORDER = list(LABELS)
+ACT_L1_VARIANTS = tuple(
+    variant
+    for variant in ORDER
+    if variant.startswith("act_") and "flow" not in variant and "diffusion" not in variant
+)
+ACT_FLOW_VARIANTS = tuple(variant for variant in ORDER if "flow" in variant)
+DIFFUSION_VARIANTS = (
+    "act_r18_diffusion_lr1e5",
+    "diffusion_r18",
+    "umi_official_dp",
+    "umi_official_transformer_dp",
+)
 COLORS = {
     "act_r18_vae": "#4C78A8",
     "act_r34_vae": "#72A0C1",
@@ -111,13 +123,9 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
     for row in rows:
         groups[(row["variant"], int(row["steps"]))].append(row)
     panels = [
-        ("ACT held-out L1", [v for v in ORDER if v.startswith("act_") and "flow" not in v], "l1_loss"),
-        ("ACT-flow held-out velocity MSE", [v for v in ORDER if "flow" in v], "flow_loss"),
-        (
-            "Diffusion held-out noise MSE",
-            ["diffusion_r18", "umi_official_dp", "umi_official_transformer_dp"],
-            "loss",
-        ),
+        ("ACT held-out L1", ACT_L1_VARIANTS, "l1_loss"),
+        ("ACT-flow held-out velocity MSE", ACT_FLOW_VARIANTS, "flow_loss"),
+        ("Diffusion held-out noise MSE", DIFFUSION_VARIANTS, "loss"),
     ]
     fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.2))
     for axis, (title, variants, metric) in zip(axes, panels, strict=True):

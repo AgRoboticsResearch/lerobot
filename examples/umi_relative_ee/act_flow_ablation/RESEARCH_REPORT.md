@@ -191,8 +191,13 @@ training timesteps, and 10 inference steps.
 ### 4.4 Common evaluator
 
 `eval_open_loop_dataset.py` now supports Diffusion Policy and correctly applies
-runtime inference-step overrides to the nested diffusion model. All objectives
-will be compared only after postprocessing back to absolute 7D physical poses.
+runtime inference-step overrides to the nested diffusion model. Its override
+resolver now also distinguishes ACT-flow's `flow_num_inference_steps` from
+ACT-DP's `diffusion_num_inference_steps`; this prevents a requested ACT sampler
+override from creating an unused generic attribute. The controlled launchers
+use each checkpoint's saved ten-step default, but the explicit path is covered
+for reproducible sensitivity studies. All objectives will be compared only
+after postprocessing back to absolute 7D physical poses.
 
 ### 4.5 Official UMI diffusion architecture ports
 
@@ -359,6 +364,10 @@ with an SD band; endpoint, paired-improvement, and efficiency figures use the
 training-seed mean and hierarchical interval instead of selecting an arbitrary
 equal-budget run. Single-training-seed error bars reduce to episode-bootstrap
 intervals and are labelled separately from multi-seed uncertainty.
+Learning-curve objective panels use explicit, complete, disjoint variant groups
+rather than substring inference. A regression test specifically requires
+`act_r18_diffusion_lr1e5` to appear in the diffusion noise-MSE panel, so its
+result cannot silently disappear into the ACT-L1 group when artifacts arrive.
 
 ## 6. Smoke experiments and resource observations
 
