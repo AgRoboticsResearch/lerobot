@@ -188,6 +188,14 @@ ViTs, resets it to `None`, and returns token 0. Likewise, its
 not alter the pretrained CLIP ViT used here. These apparent YAML/code
 discrepancies therefore do not require extra layers in the port.
 
+The scheduler and EMA code paths were checked separately. The installed
+`DDIMScheduler` defaults are `set_alpha_to_one=True` and `steps_offset=0`,
+matching the values written explicitly in the upstream YAML. The EMA decay
+equation, first-update behavior, parameter update, and optimization-step
+increment match upstream. The port additionally copies buffers on every EMA
+update; that is inert for this pretrained ViT plus GroupNorm U-Net because
+there are no BatchNorm running statistics to average.
+
 Both policies keep independent online and EMA copies in checkpoints; training
 updates only online weights and validation/inference use EMA weights. This is
 implemented behind new policy types and a new `umi-official-dp` dependency
