@@ -1245,6 +1245,10 @@ The corrected 500-query result then completed with the required `100000`
 suffix. Canonical collection (15 runs, 64 validation points, 26 evaluations)
 and all four PNG/SVG figure families were regenerated from it; the exact-step
 collector would now reject reintroduction of the archived stale report.
+Sleeping seed-1000, confirmation, extended-candidate, and transformer early
+evaluation supervisors were audited; only processes that had sourced the old
+predicate were restarted with their original dependency waits. No active
+trainer or completion guard was interrupted.
 
 To test that question without changing the primary endpoint, a separate
 checkpoint-selection evaluator is queued after the canonical final ACT
