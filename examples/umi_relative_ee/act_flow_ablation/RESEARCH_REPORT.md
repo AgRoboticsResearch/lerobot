@@ -1197,6 +1197,14 @@ reporting the best-validation checkpoint alongside the final 100k checkpoint;
 they do not justify stopping the fixed-budget run early, because decoded common
 queries—not validation loss alone—are the comparison endpoint.
 
+The last pre-terminal recovery boundary at 90k also passed the full durability
+predicate. Validation L1 recovered to 0.031907, better than 70k/80k but still
+2.79% above the 60k minimum, while recent training L1 was near 0.017. The late
+trajectory is therefore non-monotonic rather than a simple continuously
+worsening overfit curve. The fixed 100k run continues under its exact-completion
+guard; final and best-validation decoded checkpoints should both be retained in
+the analysis if their common-query behavior differs materially.
+
 Two canonical early-evaluation waiters advance analysis without forking the
 protocol: official U-Net inference seed 1000 starts after its exact 30k durable
 completion, and deterministic ACT-L1 seed 1000 starts after its 100k companion
