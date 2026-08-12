@@ -1205,6 +1205,17 @@ worsening overfit curve. The fixed 100k run continues under its exact-completion
 guard; final and best-validation decoded checkpoints should both be retained in
 the analysis if their common-query behavior differs materially.
 
+The final 100k validation then reached 0.030966, the lowest held-out L1 in the
+run and 0.24% below the previous 60k minimum. The final checkpoint passed the
+full completion predicate (136,884,976-byte model, 273,604,264-byte optimizer,
+exact step 100000, RNG/config/processor state, terminal trainer message, and
+wrapper marker), and its completion guard released the canonical evaluator.
+The apparent late-regression concern therefore resolved by the fixed endpoint:
+the primary 100k checkpoint is also the validation-selected checkpoint. The
+60k decoded sensitivity run remains useful for measuring how much physical
+trajectory quality can vary across nearly tied validation losses, not for
+replacing the pre-registered final endpoint.
+
 To test that question without changing the primary endpoint, a separate
 checkpoint-selection evaluator is queued after the canonical final ACT
 evaluation. It explicitly resolves recovery step `060000` and writes only to
