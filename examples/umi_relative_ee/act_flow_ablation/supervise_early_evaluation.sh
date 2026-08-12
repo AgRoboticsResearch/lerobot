@@ -13,6 +13,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 SAMPLES_PER_EPISODE="${UMI_EVAL_SAMPLES_PER_EPISODE:-5}"
+GPU_SETTLE_SECONDS="${UMI_EARLY_EVAL_GPU_SETTLE_SECONDS:-300}"
+MIN_FREE_GPU_MIB="${UMI_EARLY_EVAL_MIN_FREE_GPU_MIB:-4096}"
 . "$SCRIPT_DIR/training_completion.sh"
 
 timestamp() { date '+%F %T'; }
@@ -34,6 +36,24 @@ if ! training_is_complete "$ARTIFACT_ROOT" "$RUN_NAME" "$STEPS"; then
   echo "[$(timestamp)] training did not reach durable completion; not evaluating $RUN_NAME"
   exit 1
 fi
+
+# Completion can immediately release a large trainer allocation while the main
+# queue starts its next smoke test. Give that transition time to settle, then
+# require enough headroom for inference. This avoids racing a newly launching
+# trainer into an otherwise preventable CUDA OOM.
+if [[ "$GPU_SETTLE_SECONDS" -gt 0 ]]; then
+  echo "[$(timestamp)] waiting ${GPU_SETTLE_SECONDS}s for the training handoff to settle"
+  sleep "$GPU_SETTLE_SECONDS"
+fi
+while true; do
+  free_gpu_mib="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d ' ')"
+  if [[ "$free_gpu_mib" =~ ^[0-9]+$ && "$free_gpu_mib" -ge "$MIN_FREE_GPU_MIB" ]]; then
+    echo "[$(timestamp)] GPU headroom accepted: ${free_gpu_mib} MiB free"
+    break
+  fi
+  echo "[$(timestamp)] waiting for GPU headroom: ${free_gpu_mib:-unknown} MiB free; need ${MIN_FREE_GPU_MIB} MiB"
+  sleep 30
+done
 
 for seed in "${INFERENCE_SEEDS[@]}"; do
   if evaluation_complete "$seed"; then
@@ -57,4 +77,3 @@ for seed in "${INFERENCE_SEEDS[@]}"; do
 done
 
 echo "[$(timestamp)] early evaluator finished: $RUN_NAME"
-

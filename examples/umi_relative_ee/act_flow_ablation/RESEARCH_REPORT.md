@@ -1149,6 +1149,15 @@ output path, completion marker, and bounded archive/retry behavior as the main
 evaluation supervisor. Later matrix evaluation therefore skips successful
 early results and still fills every missing generative seed.
 
+There is a subtle single-GPU handoff race at this boundary: the main queue can
+start the next transformer's batch-size smoke test at the same moment an early
+evaluator observes the previous trainer's completion. The early-evaluation
+wrapper now waits five minutes for allocations to settle and then requires at
+least 4 GiB of reported free VRAM before loading a checkpoint. This guard was
+loaded by restarting only the two sleeping waiter sessions; neither active
+trainer was interrupted. It reduces avoidable OOM risk without serializing the
+entire experiment chain.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
