@@ -196,6 +196,14 @@ increment match upstream. The port additionally copies buffers on every EMA
 update; that is inert for this pretrained ViT plus GroupNorm U-Net because
 there are no BatchNorm running statistics to average.
 
+Training/validation mode handling was traced through the actual LeRobot loop.
+Each optimizer and scheduler step completes before `policy.update()` advances
+EMA. Training loss uses online weights; deterministic held-out validation calls
+`policy.eval()`, which selects `ema_diffusion`, and forks/reset RNG to seed 0
+for reproducible diffusion timesteps and noise. Thus validation and deployment
+both measure the averaged copy rather than accidentally mixing online and EMA
+models.
+
 Both policies keep independent online and EMA copies in checkpoints; training
 updates only online weights and validation/inference use EMA weights. This is
 implemented behind new policy types and a new `umi-official-dp` dependency
