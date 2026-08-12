@@ -1339,6 +1339,34 @@ denoising is worse than the official U-Net: the pre-registered common-query
 decoded evaluation at exact step 30k remains the architecture comparison, and
 the retained 10k checkpoint is a distinct checkpoint-selection question.
 
+That exact-step comparison is now complete for inference seeds 1000, 2000, and
+3000. All three reports identify `checkpoints/030000/pretrained_model` in both
+their filename and payload. Averaged across inference seeds, the transformer
+decoded to 14.499 mm translation chunk error, 25.069 mm translation endpoint
+error, 2.727 degrees rotation chunk error, 4.883 degrees rotation endpoint
+error, 0.1742 gripper endpoint error, 0.2373 degrees rotation jerk, and 0.000964
+m translation jerk. In the registered episode-paired comparison against the
+official U-Net, the transformer improved translation chunk error by 10.15%
+(95% CI 6.21--13.95), translation endpoint by 12.83% (7.80--17.64), rotation
+chunk by 15.80% (12.17--19.36), rotation endpoint by 16.36% (11.65--20.82),
+rotation jerk by 20.89% (18.18--23.39), and translation jerk by 19.42%
+(16.68--21.97). Gripper chunk and endpoint intervals crossed zero. Mean
+inference latency ranged from 51.5--58.2 ms for the transformer versus
+47.2--49.2 ms for the U-Net, while measured peak CUDA allocation was slightly
+lower (1,186.8 versus 1,276.5 MiB).
+
+This isolation falsifies a simple "transformer denoisers are the problem"
+explanation for the earlier flow/diffusion deficit: under the released UMI
+ViT-token recipe, the transformer is consistently more accurate and smoother
+than the official U-Net, with only a modest latency penalty. It also falsifies
+the converse claim that the stochastic family is uniformly superior to ACT:
+against the matched-budget ACT-L1 control, the transformer improves translation
+chunk and endpoint errors by 19.03% and 11.03%, but worsens rotation jerk by
+161.68% and translation jerk by 31.45%; rotation endpoint and gripper endpoint
+remain tied. The evidence therefore points to an objective/architecture/
+optimization interaction and a real accuracy--smoothness--latency trade-off,
+not an intrinsic failure of flow matching itself or a single VLM effect.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
