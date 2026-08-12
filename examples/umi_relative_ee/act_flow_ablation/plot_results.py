@@ -70,13 +70,13 @@ COLORS = {
     "lingbot_va_axis_angle": "#9C755F",
 }
 EFFICIENCY_ANNOTATIONS = {
-    "act_r18_vae": ((40, 6), "left"),
-    "act_r34_vae": ((5, 10), "left"),
-    "act_r18_l1": ((10, 14), "left"),
+    "act_r18_vae": ((-8, 20), "right"),
+    "act_r34_vae": ((8, 30), "left"),
+    "act_r18_l1": ((-12, -2), "right"),
     "act_r18_diffusion_lr1e5": ((5, -14), "left"),
-    "act_r50_vae": ((5, -18), "left"),
+    "act_r50_vae": ((15, -15), "left"),
     "act_r50_v1_vae": ((5, 15), "left"),
-    "act_r50_large": ((55, -2), "left"),
+    "act_r50_large": ((15, 15), "left"),
 }
 
 
