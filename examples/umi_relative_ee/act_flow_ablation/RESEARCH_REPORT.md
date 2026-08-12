@@ -263,7 +263,11 @@ script and rendered figures will be versioned in this directory.
 All training smoke tests ran on the host GPU, not in the sandbox, against the
 real 1459 dataset. The workstation has one RTX 4090 (24,564 MiB). The original
 source filesystem was 95% full, so new full artifacts use the external project
-directory. At inspection time the external mount had 345 GB free.
+directory. At the initial inspection the external mount had 345 GB free. After
+the screen, interrupted-run preservation, and queued long-run setup, artifacts
+occupied only 7.4 GB and the mount still had 337 GB free; the 100k confirmation
+matrix therefore has ample checkpoint headroom. The repository filesystem had
+only 27 GB free, reinforcing the decision not to place model artifacts there.
 
 | Run | Result | Parameters | Cold first step | Notes |
 | --- | --- | ---: | ---: | --- |
