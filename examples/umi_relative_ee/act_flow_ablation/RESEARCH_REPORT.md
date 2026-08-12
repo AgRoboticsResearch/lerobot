@@ -703,6 +703,41 @@ seed. The strict R50-V1 and multi-training-seed controls remain essential before
 attributing the improvement to backbone capacity or recommending R50
 unconditionally.
 
+### 9.1.2 Strict R50-V1 initialization control
+
+The strict control was completed at 30k before its 100k continuation was
+started. R50-V1 uses the same ResNet-50 width as the strong R50-V2 recipe but
+keeps the V1/ImageNet initialization and optimizer configuration, isolating the
+initialization-plus-capacity change that was confounded in the first screen.
+The checkpoint has 65.0M learnable parameters and was evaluated on the same
+500 fixed queries with inference seeds 1000/2000/3000. The three reports are
+identical in decoded pose metrics (the seed only changes stochastic-sampler
+bookkeeping), providing a useful reproducibility check.
+
+| Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Rot jerk (deg) | Median (ms) | Peak (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT R50 V1 VAE, 30k | 14.39 | **23.19** | **2.603** | **4.359** | 0.1671 | **0.122** | **10.77** | 341 |
+| ACT R50 V2 VAE, 30k | 14.90 | 23.65 | 2.677 | 4.390 | 0.1602 | 0.098 | 9.89 | 341 |
+| ACT R18 VAE, 30k | 18.30 | 27.50 | 3.249 | 5.516 | 0.1662 | 0.126 | 7.13 | 267 |
+
+Relative to the R18 VAE control, R50-V1 improves chunk XYZ by 21.4% (paired
+episode bootstrap 95% CI 17.7--24.8%), endpoint XYZ by 15.7% (11.1--19.8%),
+chunk rotation by 19.9% (15.9--23.7%), and endpoint rotation by 21.0%
+(16.4--25.3%). Relative to R50-V2, however, the differences are small and
+their episode intervals cross zero for endpoint and chunk pose errors. V1 is
+slightly better on all four pose means at this budget, but has higher
+rotational jerk and a slightly worse gripper endpoint. This means the earlier
+R50-V2 gain cannot yet be credited to width alone: both R50 recipes beat R18,
+while V1 versus V2 is effectively tied at 30k and still mixes initialization,
+VAE details, and finite-budget optimization.
+
+The R50-V1 100k continuation is now running from a fresh seed-1000 start. At
+the latest host check it had passed 5k/100k at about 13 updates/s, with 95%
+GPU utilization, 4.6 GiB allocated CUDA memory, finite losses, and no native
+loader or CUDA errors. Its exact 100k decoded evaluation is intentionally
+deferred until the checkpoint is durable; this avoids selecting a transient
+validation minimum and preserves the fixed-budget comparison.
+
 The corrected exact-step ACT-L1 result changes the practical deterministic
 recommendation. Relative to R18 VAE, direct L1 improves chunk XYZ by **12.52%**
 (paired episode CI 9.05--15.88%), gripper endpoint by **9.53%**
