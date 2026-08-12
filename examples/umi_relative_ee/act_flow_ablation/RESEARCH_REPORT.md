@@ -22,7 +22,8 @@ loss. An improvement must appear on held-out decoded physical trajectories and
 must justify its memory, latency, and training cost. The staged test is:
 
 1. reproduce the existing ResNet-18 ACT at an early common budget;
-2. change only ResNet-18 → ResNet-34 → ResNet-50;
+2. scale ResNet-18 → ResNet-34 → ResNet-50 and explicitly control the
+   torchvision ImageNet-V1/V2 initialization choice;
 3. test a wider/deeper transformer only if backbone scaling is promising;
 4. promote promising candidates to longer training and multiple seeds;
 5. compare decoded xyz, rotation, gripper, and within-chunk jerk, not only ACT
@@ -41,12 +42,17 @@ The decisive control changes only the objective:
 - `act_r18_flow_*`: the same ResNet-18, state/image encoder, transformer
   encoder/decoder, data, and chunk geometry, but rectified-flow velocity
   regression with noisy action and time inputs.
+- `act_r18_diffusion_lr1e5`: exactly the same learned time-conditioned ACT
+  architecture as the matched flow model, but epsilon prediction with the
+  standard squared-cosine DDIM schedule.
 
 The VAE is removed from both because the 1459 ACT's KL has collapsed to nearly
 zero, and the VAE encoder is absent at inference. This makes the L1/flow pair
 much closer in trainable and inference architecture than ACT-VAE versus a VLM.
 The repository's conventional ResNet + temporal U-Net Diffusion Policy is a
-second non-VLM generative control. Together these distinguish:
+second non-VLM generative control. The exact ACT-flow/ACT-DP pair is needed
+because a U-Net comparison still changes denoiser architecture. Together these
+distinguish:
 
 - flow loses in ACT-flow and Diffusion Policy → objective/data representation
   is a plausible bottleneck;
@@ -56,6 +62,9 @@ second non-VLM generative control. Together these distinguish:
   optimization matters more than the generic objective;
 - both non-VLM generative controls work → flow/diffusion itself is not the
   explanation.
+- ACT-DP beats ACT-flow at fixed learned architecture → path, target, or sampler
+  is the likely cause; both lose similarly → shared iterative conditioning or
+  optimization is more suspect than flow matching specifically.
 
 ## 2. Literature evidence used in the design
 
@@ -147,7 +156,29 @@ parameter tensors and that every shared tensor name and shape matches ACT-L1.
 Uniform time is the vanilla default. A Beta(1.5, 1.0) variant mirrors the time
 bias used by local OpenPI-style VLA configs.
 
-### 4.2 Conventional non-VLM Diffusion Policy
+### 4.2 Architecture-identical ACT epsilon diffusion
+
+The matched flow result alone cannot separate a weakness of straight-path flow
+from a weakness of the time-conditioned ACT transformer. A new explicit
+`diffusion` ACT objective therefore reuses the exact noisy-action projection,
+continuous sinusoidal time embedding, two-layer time MLP, ResNet, observation
+encoder, ACT decoder, positional embeddings, and action head used by
+`flow_matching`. The two policies have exactly the same learned parameter names
+and tensor shapes. Only the training target/path and sampler change:
+
+- ACT-flow regresses `noise - action` along the linear interpolation and uses
+  ten fixed Euler steps from noise to action;
+- ACT-DP samples one of 100 squared-cosine diffusion timesteps, regresses
+  epsilon, and uses a clipped ten-step DDIM sampler.
+
+Both use batch 8, AdamW LR 1e-5 (including the backbone), identical UMI
+processors, action-padding mask, training seeds, and fixed evaluation queries.
+This is the strictest practical answer to “vanilla DP with the same architecture
+as ACT.” Scheduler state has no learned parameters. A structural test proves
+exact learned-architecture equality between ACT-flow and ACT-DP; finite-gradient,
+fixed-noise determinism, scheduler-recipe, and bad-shape tests also pass.
+
+### 4.3 Conventional non-VLM Diffusion Policy
 
 The existing Diffusion Policy now accepts the canonical UMI processors and
 representation. Because its U-Net requires a horizon divisible by its temporal
@@ -157,13 +188,13 @@ first 30 actions. It uses one current observation, canonical derived 20D state,
 The planned control uses ResNet-18, a `(256,512,1024)` 1D U-Net, 100 DDIM
 training timesteps, and 10 inference steps.
 
-### 4.3 Common evaluator
+### 4.4 Common evaluator
 
 `eval_open_loop_dataset.py` now supports Diffusion Policy and correctly applies
 runtime inference-step overrides to the nested diffusion model. All objectives
 will be compared only after postprocessing back to absolute 7D physical poses.
 
-### 4.4 Official UMI diffusion architecture ports
+### 4.5 Official UMI diffusion architecture ports
 
 The upstream checkout at `/home/zfei/code/universal_manipulation_interface`
 was audited at commit `d095ba9590df789df5189eea5ee7e431689038a6`. The documented
@@ -267,13 +298,15 @@ controlled architecture-and-exposure comparison.
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
 | `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete; 100k train complete |
-| `act_r34_vae` | backbone-only scale | 62M | 30k + eval complete |
-| `act_r50_vae` | backbone-only scale | 65M | 30k + eval complete; 100k train complete |
+| `act_r34_vae` | larger backbone, ImageNet-V1 initialization | 62M | 30k + eval complete |
+| `act_r50_vae` | larger backbone + torchvision-recommended ImageNet-V2 initialization | 65M | 30k + eval complete; 100k train complete |
+| `act_r50_v1_vae` | strict R18/R34-aligned ImageNet-V1 initialization control | 65M | 30k + 100k queued live before seed-1000 evaluation |
 | `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k + eval complete; not promoted |
 | `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; 100k queued |
 | `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k + eval complete; 100k queued |
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
 | `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
+| `act_r18_diffusion_lr1e5` | epsilon/DDIM objective at exact ACT-flow learned architecture and LR | 35M | 30k + 100k queued live before seed-1000 evaluation |
 | `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; 100k queued |
 | `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; supervised 30k retry active |
 | `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; queued behind U-Net retry |
@@ -365,6 +398,12 @@ throughput. Dedicated timed runs are required before latency conclusions.
 - ACT-flow produces finite differentiable loss, gradients in its noisy-action
   projection, deterministic outputs under fixed input noise, and rejects bad
   noise shapes.
+- Eleven focused ACT generative-objective tests pass. In addition to the flow
+  checks, they prove ACT-flow and ACT-DP have identical learned parameter names
+  and shapes **and identical initialization under the same seed**, and verify
+  ACT-DP's finite differentiable epsilon loss,
+  squared-cosine scheduler, deterministic fixed-noise DDIM output, and strict
+  noise-shape rejection.
 - Diffusion's UMI config produces `[-1, 0, ..., 31]`, strips the leading action
   into the two-pose derived state, and reconnects the same relative-action step
   to postprocessing.
@@ -398,7 +437,8 @@ external Glowat512 artifact root, so historical checkpoint directories remain
 read-only.
 
 Legacy ACT retains `action_objective="l1"` and `use_vae=true` defaults. Its old
-forward/inference code is selected unless flow matching is explicitly requested.
+forward/inference code is selected unless flow matching or ACT diffusion is
+explicitly requested.
 As a direct compatibility experiment, the historical 800k checkpoint at
 `outputs/train/act_umi_identity_rot6d_1459` loads on the research branch as
 L1+VAE with exactly 51,579,786 parameters and no missing/unexpected-weight
@@ -480,20 +520,33 @@ software drift unlikely at the screening scale. The modest 30k divergence is
 large enough that the fresh run, not the historical scalar, is the strict
 contemporary control for architecture comparisons.
 
-The first backbone-only comparison is provisionally favorable to ResNet-34:
+The first larger-backbone recipe comparison is provisionally favorable to ResNet-34:
 
 | ACT backbone | Parameters | Median update | 10k val | 20k val | 30k val |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | ResNet-18 | 51,579,786 | 0.036 s | 0.054130 | 0.043604 | 0.041139 |
 | ResNet-34 | 61,680,522 | 0.048–0.049 s | 0.051064 | 0.043164 | 0.039170 |
-| ResNet-50 | 64,654,218 | 0.075 s | 0.042517 | 0.037207 | 0.036259 |
+| ResNet-50 V2 | 64,654,218 | 0.075 s | 0.042517 | 0.037207 | 0.036259 |
+
+This completed screen originally changed two coupled choices: R18/R34 use
+torchvision ImageNet-V1 weights, whereas the recommended R50 launcher used
+ImageNet-V2. The decoded gain below therefore supports the larger-R50-V2
+**recipe**, but cannot yet allocate the gain entirely to architecture. The
+added `act_r50_v1_vae` control holds the initialization family at V1, runs at
+30k and 100k for seed 1000, and joins the 100k seeds 2000/3000 confirmation.
+R50-V1 versus R18-V1 isolates capacity more strictly; R50-V2 versus R50-V1
+isolates initialization at fixed architecture. Static torchvision resolution
+confirms `ResNet50_Weights.IMAGENET1K_V1` is a valid distinct enum, but only the
+V2 `11ad3fa6` checkpoint is currently cached; the foreground host launcher is
+allowed to fetch V1 before training and completion must not be claimed until
+that load and the real run succeed.
 
 ResNet-34 reduces total validation loss by 5.7%, 1.0%, and 4.8% at the three
 budgets; its 30k L1 is 0.037265 versus ResNet-18's 0.039285 (5.1% lower). It
 reduces update throughput by roughly 25%. The decoded results below confirm the
 capacity signal.
 
-ResNet-50 is a stronger signal: its 10k total is 16.7% below ResNet-34
+ResNet-50 V2 is a stronger recipe signal: its 10k total is 16.7% below ResNet-34
 and 21.5% below ResNet-18, while its L1 (0.035436) is lower by 13.3% and 15.1%
 respectively. At 20k its total (0.037207) remains 13.8% below ResNet-34 and
 14.7% below ResNet-18, with L1 (0.034470) about 14% lower than both. It is also
@@ -503,12 +556,12 @@ lower. The decoded metrics confirm that the gain survives in physical units.
 
 The first transformer-scaling point is unfavorable at the baseline optimizer:
 the 145M ResNet-50 + 768-wide 6e/3d model records 10k total 0.053834 and L1
-0.037560, versus 0.042517 and 0.035436 for backbone-only ResNet-50. It is also
+0.037560, versus 0.042517 and 0.035436 for standard-width ResNet-50 V2. It is also
 about 1.3× slower than that model and 2.6× slower than ResNet-18. Because the
 larger model's training curve descends more slowly, this result tests equal-LR
 architecture scaling; it does not rule out a higher-LR large-model variant.
 By 30k the large model nearly catches up but still does not win: total 0.036617
-versus 0.036259, and L1 0.035273 versus 0.034574 for backbone-only ResNet-50.
+versus 0.036259, and L1 0.035273 versus 0.034574 for standard-width ResNet-50 V2.
 At the fixed budget it adds 80.3M parameters and about 32% update time without
 a validation benefit.
 
@@ -563,7 +616,7 @@ CUDA memory. Lower is better throughout.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT R18 VAE | 18.30 | 27.50 | 3.249 | 5.516 | 7.13 | 267 |
 | ACT R34 VAE | 17.36 | 25.65 | 3.147 | 4.947 | 8.55 | 305 |
-| ACT R50 VAE | 14.90 | **23.65** | 2.677 | **4.390** | 9.89 | 341 |
+| ACT R50 V2 VAE | 14.90 | **23.65** | 2.677 | **4.390** | 9.89 | 341 |
 | ACT R50 large | **14.57** | 23.83 | **2.650** | 4.462 | 11.51 | 653 |
 | ACT R18 L1 | 17.91 | 28.18 | 3.143 | 5.117 | **6.70** | 200 |
 | ACT-flow uniform, 1e-5 | 18.75 | 30.86 | 3.767 | 6.290 | 29.90 | 203 |
@@ -575,23 +628,25 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
 
 - ResNet-34 versus R18 improves XYZ endpoint by 6.7% (95% CI 1.5–11.7%)
   and rotation endpoint by 10.3% (4.5–15.9%).
-- ResNet-50 versus R18 improves XYZ endpoint by 14.0% (9.6–18.2%), rotation
+- ResNet-50 V2 versus R18 V1 improves XYZ endpoint by 14.0% (9.6–18.2%), rotation
   endpoint by 20.4% (15.3–25.3%), XYZ chunk mean by 18.6% (14.9–22.0%), and
   rotation chunk mean by 17.6% (13.3–21.7%). All four paired difference
   intervals exclude zero.
 
 ![Paired endpoint improvements](figures/paired_endpoint_improvements.png)
-- R50-large versus backbone-only R50 is tied on all four pose metrics: for
+- R50-large versus standard-width R50 V2 is tied on all four pose metrics: for
   endpoint XYZ its improvement is -0.8% (CI -6.0–4.2%), and for endpoint
   rotation -1.6% (-8.0–4.2%). It adds 80.3M parameters, 16% inference latency,
   and 312 MiB peak memory without a supported accuracy gain.
 - ACT-L1 versus ACT-VAE is tied in XYZ but improves endpoint rotation by 7.2%
   (2.1–12.0%). It is the fastest and smallest ACT control.
 
-The R50 result is therefore not merely a lower training loss: it is a sizable,
-statistically supported decoded-pose improvement. Scaling the visual backbone
-is the successful intervention; scaling the already-large transformer at the
-same optimizer is not.
+The R50-V2 result is therefore not merely a lower training loss: it is a
+sizable, statistically supported decoded-pose improvement for the combined
+backbone-plus-initialization recipe. Scaling the already-large transformer at
+the same optimizer is not supported. Attribution of the R50 gain specifically
+to backbone capacity remains provisional until the queued R50-V1 control is
+decoded across training seeds.
 
 ### 9.2 Flow matching and Diffusion Policy isolation
 
@@ -617,6 +672,14 @@ through the chunk. The matched straight-line flow implementation is the weak
 case, while the earlier 100k π0.5 result being slightly better than ACT in XYZ
 also rules out a blanket “all flow models fail” statement.
 
+This still leaves one residual architectural confound between matched ACT-flow
+and the competitive temporal-U-Net DP. The queued `act_r18_diffusion_lr1e5`
+run closes it: ACT-DP versus ACT-flow changes only objective/path/sampler;
+ACT-DP versus ACT-L1 measures iterative epsilon diffusion inside the same ACT
+family; standard DP versus ACT-DP exposes the denoiser/optimizer recipe. No
+conclusion from the completed 30k screen is retroactively assigned to this new
+candidate before its real checkpoints and decoded evaluations exist.
+
 There is nevertheless an important control-quality cost. ACT-L1 rotation/XYZ
 jerk is 0.091 deg / 0.00073 m, matched flow is 1.093 deg / 0.00466 m, and DP is
 0.481 deg / 0.00186 m; the ground-truth values are 0.158 deg / 0.00067 m.
@@ -628,11 +691,14 @@ Iterative generative samples are substantially less smooth at 30k. Flow is
 
 ### 9.3 Answers and promotion decision after stage one
 
-**Q1:** yes. A ResNet-50 backbone is the strongest tested ACT improvement over
-the fresh 1459 control. ResNet-34 is a smaller positive step; the 145M widened
-transformer is not worthwhile at the tested LR/budget. The claim is currently
-an offline 30k claim, so R18 and R50 are promoted to a longer budget before
-recommending replacement of the multi-million-step historical checkpoint.
+**Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
+tested ACT improvement over the fresh 1459 control. ResNet-34-V1 is a smaller
+positive step; the 145M widened transformer is not worthwhile at the tested
+LR/budget. Because the R50 comparison also changed ImageNet initialization,
+“capacity alone improves ACT” remains a hypothesis rather than a completed
+attribution. R50-V1, R50-V2, and R18-V1 are promoted to the longer/multi-seed
+comparison before recommending replacement of the multi-million-step
+historical checkpoint.
 
 **Q2:** no single explanation fits. Matched ACT-flow is significantly worse
 than the architecture-matched L1 policy, so that flow formulation/sampler needs
@@ -640,12 +706,15 @@ work independent of any VLM. But vanilla DP without a VLM is competitive with
 ACT and better on chunk translation, so generative modeling itself is not the
 fundamental problem. VLM fine-tuning, objective/sampler design, and trajectory
 smoothness are separate axes; the existing π0.5 result further indicates that
-the VLM path can work. ACT-L1, uniform flow 1e-5, and DP are promoted with R18
-and R50 to determine whether these conclusions persist at 100k.
+the VLM path can work. ACT-L1, uniform flow 1e-5, architecture-matched ACT-DP,
+and standard DP are promoted with R18,
+R50-V1, and R50-V2 to determine whether these conclusions persist at 100k.
 
 Stage two therefore trains fresh 100k runs (not scheduler-incompatible resumes)
-for ACT R18 VAE, ACT R50 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and Diffusion
-R18. Fresh runs are required because Diffusion Policy's cosine scheduler was
+for ACT R18 VAE, ACT R50 V2 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and
+Diffusion R18; the newly identified R50-V1 and architecture-matched ACT-DP
+controls are inserted as separate 30k/100k successors before evaluation. Fresh
+runs are required because Diffusion Policy's cosine scheduler was
 constructed for 30k steps and had already reached its floor; extending that
 optimizer state to 100k would not be equivalent to a 100k schedule. After the
 100k screen, the surviving comparison will be repeated with training seeds
@@ -709,6 +778,24 @@ evidence that removing multiprocessing changed the observed failure behavior;
 it does not by itself prove that the entire 30k run will complete, so the
 supervisor and bounded retries remain active.
 
+At the 2026-08-12 10:10 check, the same retry PID had advanced to update
+8,518/30,000 (28.4%) at approximately 1.14 updates/s, with a log age below one
+second. The independent five-minute monitor reported 12,405 MiB allocated GPU
+memory, 64°C, 97% utilization at its latest sample, and about 337 GiB free on
+the artifact mount. No restart or new failure signature occurred. The first
+held-out validation is scheduled at update 10,000; until it is emitted, this is
+health/progress evidence only, not model-quality evidence.
+
+The retry crossed that first validation boundary without restarting. At update
+10,000 it reported held-out epsilon-prediction loss **0.018457**; the nearby
+training windows were approximately 0.021–0.022, gradient norm had declined to
+about 0.109, and throughput remained approximately 1.14 updates/s. At the
+2026-08-12 10:38 check it had reached 10,273/30,000. This is favorable
+within-run convergence/stability evidence. It is deliberately not compared
+numerically with ACT L1, ACT flow velocity MSE, or the other DP recipes because
+their objectives, timestep distributions, and loss scales differ. Decoded
+physical metrics remain the cross-policy decision endpoint.
+
 To prevent a second child failure from silently stopping the study,
 `supervise_remaining.sh` now records every child exit status, preserves failed
 attempts under the external artifact root's `interrupted/` directory, retries
@@ -718,23 +805,57 @@ each full job up to three times, smoke-tests official candidates at batch sizes
 and ResNet-18 Diffusion Policy 100k runs. Only one foreground child uses the
 host GPU at a time.
 
-A separate `supervise_evaluations.sh` watchdog waits for that training tmux
-session to disappear before touching the GPU. It evaluates completed 100k ACT
-R18/R50/ACT-L1 checkpoints once, evaluates stochastic ACT-flow and Diffusion
-Policy checkpoints with seeds 1000/2000/3000, applies the same three-seed
+A non-contending `supervise_capacity_control.sh` successor first waits for that
+training tmux session, then trains R50-V1 and architecture-matched ACT-DP at
+30k and 100k for seed 1000 with the
+same bounded retry/single-process fallback. A refreshed
+`supervise_evaluations.sh` watchdog waits for this capacity-control session
+before touching the GPU. It evaluates completed 100k ACT R18/R50-V2/R50-V1/
+ACT-L1 checkpoints once, evaluates R50-V1 at 30k, and evaluates stochastic
+ACT-flow, ACT-DP, and Diffusion Policy checkpoints with seeds 1000/2000/3000.
+It applies the same three-seed
 protocol to both official 30k UMI candidates, and archives/retries interrupted
 evaluation seeds independently. It then runs result collection and figure
 generation. Thus an evaluation failure cannot discard completed training or
 prevent later candidates from being measured.
 
+`insert_capacity_control_chain.sh` performs the live insertion defensively. It
+requires the main training supervisor to exist, requires evaluation and both
+confirmation sessions to contain their exact expected waiting messages, and
+refuses to touch any non-idle successor. Only then does it remove successors in
+reverse dependency order, rebuild capacity-control → evaluation → confirmation
+training → confirmation evaluation, refresh the monitor, and verify all six
+sessions. This prevents a rewire from accidentally killing active GPU work.
+
+At 2026-08-12 10:11, the three successor panes were rechecked and still
+contained the exact expected idle wait messages. The guarded insertion was then
+requested, but the execution environment rejected host mutation *before the
+script started* because the workspace had exhausted approval credits. No tmux
+session or GPU process changed. The original main-training → evaluation →
+confirmation-training → confirmation-evaluation chain therefore remained live;
+the additional-control scripts were staged and tested but were not yet in that
+live dependency graph. Using an indirect command path to evade that boundary
+would have made the safety audit meaningless and was not attempted.
+
+After explicit continuation approval, the same guarded script succeeded at
+2026-08-12 10:38:25. It did not touch the active main-training session. A
+read-back verified all six live sessions and every dependency message:
+capacity control waits for main training, evaluation waits for capacity
+control, confirmation training waits for evaluation, and confirmation
+evaluation waits for confirmation training. The refreshed monitor also saw all
+five workload/dependency sessions on its first heartbeat. R50-V1 and ACT-DP are
+therefore genuinely in the live queue before evaluation, not merely represented
+in launcher source.
+
 Independent training-seed confirmation is also encoded as a non-contending
 successor rather than mixed into the screen. After all seed-1000 evaluations,
-`supervise_confirmation_training.sh` trains the five promoted controlled
+`supervise_confirmation_training.sh` trains the seven promoted controlled
 variants at seeds 2000 and 3000 with the same 100k budget, preserving and
 retrying incomplete attempts. `supervise_confirmation_evaluations.sh` then
 applies one inference seed to deterministic ACT variants and three inference
 seeds to each generative variant. This yields three independent training seeds
-for the Q1 R18/R50 comparison and for the Q2 ACT-L1/ACT-flow/standard-DP
+for the Q1 R18/R50-V1/R50-V2 comparison and for the Q2
+ACT-L1/ACT-flow/ACT-DP/standard-DP
 comparison while keeping sampler variability nested inside training runs. A
 first attempt uses the established four-worker path; after any child failure,
 later attempts switch to single-process decoding (`num_workers=0`, no persistent
@@ -742,7 +863,7 @@ workers), so a repeat does not exercise the same PyAV multiprocessing boundary
 that caused the official U-Net native crash.
 
 `monitor_experiment_chain.sh` independently records five-minute heartbeats for
-the four-session chain: live dependency sessions, relevant process count,
+the six-session chain: live dependency sessions, relevant process count,
 latest-log age, artifact-disk headroom, and GPU temperature/power/memory/use.
 It warns after 20 minutes without a training/evaluation log update or below
 50 GiB free, but deliberately never kills a process; recovery and forward
@@ -757,10 +878,12 @@ manual path selection, while `evaluate_stage1.sh` fixes the deterministic and
 three-seed generative matrix. `collect_results.py` extracts parameter counts, wall
 times, complete validation curves, decoded metrics, and confidence intervals
 into compact external CSV/JSON files without creating a second narrative doc.
-`run_stage2.sh` and `evaluate_stage2.sh` encode the five promoted 100k controls.
+`run_stage2.sh` and `evaluate_stage2.sh` encode the seven promoted 100k controls.
 `run_official_umi_dp.sh` and `evaluate_official_umi_dp.sh` encode the two
 supplemental released-UMI recipe candidates. `supervise_remaining.sh` is the
-fault-tolerant single-GPU queue used for the remaining long runs, and
+fault-tolerant single-GPU queue used for the remaining long runs;
+`supervise_capacity_control.sh` inserts the strict R50-V1 initialization and
+architecture-matched ACT-DP controls before evaluation; and
 `supervise_evaluations.sh` is its non-contending evaluation successor. Figures
 label the training budget explicitly; when both 30k and 100k results exist,
 endpoint/efficiency charts select the highest completed budget per variant and

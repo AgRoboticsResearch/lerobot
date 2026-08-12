@@ -23,6 +23,7 @@ import math
 from collections import deque
 from collections.abc import Callable
 from itertools import chain
+from typing import TYPE_CHECKING
 
 import einops
 import numpy as np
@@ -34,6 +35,12 @@ from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.import_utils import _diffusers_available, require_package
+
+if TYPE_CHECKING or _diffusers_available:
+    from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+else:
+    DDIMScheduler = None
 
 from ..flow_matching import integrate_flow_matching, reduce_flow_matching_loss
 from ..pretrained import PreTrainedPolicy
@@ -64,6 +71,15 @@ class ACTPolicy(PreTrainedPolicy):
         self.config = config
 
         self.model = ACT(config)
+        if config.action_objective == "diffusion":
+            require_package("diffusers", extra="diffusion")
+            self.noise_scheduler = DDIMScheduler(
+                num_train_timesteps=config.diffusion_num_train_timesteps,
+                beta_schedule=config.diffusion_beta_schedule,
+                prediction_type="epsilon",
+                clip_sample=config.diffusion_clip_sample,
+                clip_sample_range=config.diffusion_clip_sample_range,
+            )
 
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
@@ -151,14 +167,32 @@ class ACTPolicy(PreTrainedPolicy):
             )
         expected_shape = (batch_size, self.config.chunk_size, self.config.action_feature.shape[0])
         if tuple(noise.shape) != expected_shape:
-            raise ValueError(f"Flow noise must have shape {expected_shape}, got {tuple(noise.shape)}.")
+            objective = "Flow" if self.config.action_objective == "flow_matching" else "Diffusion"
+            raise ValueError(f"{objective} noise must have shape {expected_shape}, got {tuple(noise.shape)}.")
+
+        if self.config.action_objective == "diffusion":
+            inference_steps = self.config.diffusion_num_inference_steps if num_steps is None else num_steps
+            if not 0 < inference_steps <= self.config.diffusion_num_train_timesteps:
+                raise ValueError(
+                    "Diffusion inference steps must be positive and no greater than the training timesteps."
+                )
+            self.noise_scheduler.set_timesteps(inference_steps, device=noise.device)
+            sample = noise
+            for timestep in self.noise_scheduler.timesteps:
+                discrete_time = torch.full((batch_size,), timestep, device=noise.device, dtype=torch.long)
+                continuous_time = discrete_time.to(dtype=noise.dtype) / max(
+                    self.config.diffusion_num_train_timesteps - 1, 1
+                )
+                predicted_noise = self.model(batch, noisy_actions=sample, time=continuous_time)[0]
+                sample = self.noise_scheduler.step(predicted_noise, timestep, sample).prev_sample
+            return sample
 
         def denoise_step(noisy_actions: Tensor, time: Tensor) -> Tensor:
             return self.model(batch, noisy_actions=noisy_actions, time=time)[0]
 
         return integrate_flow_matching(
             noise,
-            num_steps or self.config.flow_num_inference_steps,
+            self.config.flow_num_inference_steps if num_steps is None else num_steps,
             denoise_step,
             active_action_dim=self.config.action_feature.shape[0],
             mask_padded_dims=False,
@@ -188,6 +222,27 @@ class ACTPolicy(PreTrainedPolicy):
             return loss, {
                 "flow_loss": loss.item(),
                 "flow_loss_per_dim": loss_per_dim.detach().cpu().tolist(),
+            }
+
+        if self.config.action_objective == "diffusion":
+            actions = batch[ACTION]
+            noise = torch.randn_like(actions)
+            timesteps = torch.randint(
+                0,
+                self.config.diffusion_num_train_timesteps,
+                (actions.shape[0],),
+                device=actions.device,
+            ).long()
+            noisy_actions = self.noise_scheduler.add_noise(actions, noise, timesteps)
+            continuous_time = timesteps.to(dtype=actions.dtype) / max(
+                self.config.diffusion_num_train_timesteps - 1, 1
+            )
+            predicted_noise = self.model(batch, noisy_actions=noisy_actions, time=continuous_time)[0]
+            losses = F.mse_loss(predicted_noise, noise, reduction="none")
+            loss, loss_per_dim = reduce_flow_matching_loss(losses, batch.get("action_is_pad"))
+            return loss, {
+                "diffusion_loss": loss.item(),
+                "diffusion_loss_per_dim": loss_per_dim.detach().cpu().tolist(),
             }
 
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
@@ -416,7 +471,7 @@ class ACT(nn.Module):
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
-        if self.config.action_objective == "flow_matching":
+        if self.config.action_objective in {"flow_matching", "diffusion"}:
             self.flow_action_input_proj = nn.Linear(self.config.action_feature.shape[0], config.dim_model)
             self.flow_time_encoder = ACTFlowTimeEmbedding(
                 config.dim_model,
@@ -562,16 +617,18 @@ class ACT(nn.Module):
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
         # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
-        if self.config.action_objective == "flow_matching":
+        if self.config.action_objective in {"flow_matching", "diffusion"}:
             if noisy_actions is None or time is None:
-                raise ValueError("ACT flow matching requires both `noisy_actions` and `time`.")
+                raise ValueError(
+                    f"ACT {self.config.action_objective} requires both `noisy_actions` and `time`."
+                )
             expected_shape = (batch_size, self.config.chunk_size, self.config.action_feature.shape[0])
             if tuple(noisy_actions.shape) != expected_shape:
                 raise ValueError(
-                    f"Flow noisy actions must have shape {expected_shape}, got {tuple(noisy_actions.shape)}."
+                    f"Generative noisy actions must have shape {expected_shape}, got {tuple(noisy_actions.shape)}."
                 )
             if tuple(time.shape) != (batch_size,):
-                raise ValueError(f"Flow time must have shape ({batch_size},), got {tuple(time.shape)}.")
+                raise ValueError(f"Generative time must have shape ({batch_size},), got {tuple(time.shape)}.")
             decoder_in = self.flow_action_input_proj(noisy_actions)
             decoder_in = decoder_in + self.flow_time_mlp(self.flow_time_encoder(time)).unsqueeze(1)
             decoder_in = decoder_in.transpose(0, 1)

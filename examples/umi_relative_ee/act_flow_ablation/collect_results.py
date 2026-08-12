@@ -36,11 +36,15 @@ COMPARISON_METRICS = (
     "xyz_jerk_m",
 )
 EXTRA_PAIRED_VARIANTS = (
+    ("act_r50_vae", "act_r50_v1_vae"),
     ("act_r50_large", "act_r50_vae"),
     ("act_r18_flow_u_lr1e5", "act_r18_l1"),
+    ("act_r18_diffusion_lr1e5", "act_r18_l1"),
+    ("act_r18_diffusion_lr1e5", "act_r18_flow_u_lr1e5"),
     ("act_r18_flow_u_lr1e4", "act_r18_flow_u_lr1e5"),
     ("act_r18_flow_beta_lr1e4", "act_r18_flow_u_lr1e4"),
     ("diffusion_r18", "act_r18_l1"),
+    ("diffusion_r18", "act_r18_diffusion_lr1e5"),
     ("umi_official_dp", "diffusion_r18"),
     ("umi_official_dp", "act_r18_l1"),
     ("umi_official_transformer_dp", "umi_official_dp"),
@@ -87,9 +91,7 @@ def parse_log(log_path: Path) -> dict[str, Any]:
     text = log_path.read_text(errors="replace")
     learnable_parameter_match = LEARNABLE_PARAM_RE.search(text)
     total_parameter_match = TOTAL_PARAM_RE.search(text)
-    learnable_parameters = (
-        int(learnable_parameter_match["params"]) if learnable_parameter_match else None
-    )
+    learnable_parameters = int(learnable_parameter_match["params"]) if learnable_parameter_match else None
     total_parameters = int(total_parameter_match["params"]) if total_parameter_match else None
     update_seconds = [float(match["seconds"]) for match in UPDATE_TIME_RE.finditer(text)]
     times: dict[str, datetime] = {}
@@ -247,9 +249,7 @@ def hierarchical_bootstrap_mean_interval(
     values = np.stack(groups)
     num_groups, num_episodes = values.shape
     group_indices = rng.integers(0, num_groups, size=(num_resamples, num_groups))
-    episode_indices = rng.integers(
-        0, num_episodes, size=(num_resamples, num_groups, num_episodes)
-    )
+    episode_indices = rng.integers(0, num_episodes, size=(num_resamples, num_groups, num_episodes))
     resampled = values[group_indices[:, :, None], episode_indices]
     low, high = np.percentile(resampled.mean(axis=(1, 2)), [2.5, 97.5])
     return float(low), float(high)
@@ -276,9 +276,7 @@ def hierarchical_bootstrap_paired_improvement_interval(
     candidates = np.stack(candidate_groups)
     num_groups, num_episodes = baselines.shape
     group_indices = rng.integers(0, num_groups, size=(num_resamples, num_groups))
-    episode_indices = rng.integers(
-        0, num_episodes, size=(num_resamples, num_groups, num_episodes)
-    )
+    episode_indices = rng.integers(0, num_episodes, size=(num_resamples, num_groups, num_episodes))
     resampled_baselines = baselines[group_indices[:, :, None], episode_indices]
     resampled_candidates = candidates[group_indices[:, :, None], episode_indices]
     baseline_means = resampled_baselines.mean(axis=(1, 2))
@@ -414,9 +412,7 @@ def summarize_training_seed_variability(
 
     comparisons: dict[tuple[str, str, int, str], list[dict[str, Any]]] = defaultdict(list)
     for row in comparison_rows:
-        comparisons[
-            (row["variant"], row["baseline_variant"], row["steps"], row["metric"])
-        ].append(row)
+        comparisons[(row["variant"], row["baseline_variant"], row["steps"], row["metric"])].append(row)
 
     comparison_seed_rows = []
     for (variant, baseline, steps, metric), rows in sorted(comparisons.items()):
@@ -439,23 +435,18 @@ def summarize_training_seed_variability(
         baseline_episode_ids = [episode_data_by_run[row["baseline_run_name"]][0] for row in rows]
         all_episode_ids = candidate_episode_ids + baseline_episode_ids
         if any(ids != all_episode_ids[0] for ids in all_episode_ids[1:]):
-            raise ValueError(
-                f"Episode ID mismatch across paired training seeds for {variant} vs {baseline}"
-            )
+            raise ValueError(f"Episode ID mismatch across paired training seeds for {variant} vs {baseline}")
         candidate_groups = [episode_data_by_run[row["run_name"]][1][metric] for row in rows]
-        baseline_groups = [
-            episode_data_by_run[row["baseline_run_name"]][1][metric] for row in rows
-        ]
+        baseline_groups = [episode_data_by_run[row["baseline_run_name"]][1][metric] for row in rows]
         difference_low, difference_high = hierarchical_bootstrap_mean_interval(
-            [candidate - baseline_values for candidate, baseline_values in zip(
-                candidate_groups, baseline_groups, strict=True
-            )],
+            [
+                candidate - baseline_values
+                for candidate, baseline_values in zip(candidate_groups, baseline_groups, strict=True)
+            ],
             rng=np.random.default_rng(0),
         )
-        improvement_low, improvement_high = (
-            hierarchical_bootstrap_paired_improvement_interval(
-                baseline_groups, candidate_groups, rng=np.random.default_rng(0)
-            )
+        improvement_low, improvement_high = hierarchical_bootstrap_paired_improvement_interval(
+            baseline_groups, candidate_groups, rng=np.random.default_rng(0)
         )
         comparison_seed_rows.append(
             {
@@ -513,9 +504,7 @@ def main() -> None:
         train_rows.append({**run, **{key: value for key, value in log.items() if key != "validation"}})
         validation_rows.extend({**run, **metrics} for metrics in log["validation"])
         for report_path in sorted(
-            (args.artifact_root / args.eval_dir_name / run_dir.name).glob(
-                "seed*/*_open_loop_metrics.json"
-            )
+            (args.artifact_root / args.eval_dir_name / run_dir.name).glob("seed*/*_open_loop_metrics.json")
         ):
             evaluation_rows.append(flatten_evaluation(report_path, run))
             report = json.loads(report_path.read_text())
@@ -526,18 +515,14 @@ def main() -> None:
                 expected_samples_per_episode=args.expected_samples_per_episode,
             )
             if inference_seed in inference_seeds_by_run[run_dir.name]:
-                raise ValueError(
-                    f"Duplicate inference seed {inference_seed} for evaluation {run_dir.name}"
-                )
+                raise ValueError(f"Duplicate inference seed {inference_seed} for evaluation {run_dir.name}")
             inference_seeds_by_run[run_dir.name].add(inference_seed)
             bounds = report.get("query_action_offset_bounds")
             if args.eval_dir_name == "eval_common_h32" and bounds != {"min": -1, "max": 31}:
                 raise ValueError(f"Unexpected common-horizon query bounds in {report_path}: {bounds}")
             reports_by_run[run_dir.name].append(report)
 
-    variant_rows, comparison_rows, episode_data_by_run = summarize_variants(
-        reports_by_run, runs_by_name
-    )
+    variant_rows, comparison_rows, episode_data_by_run = summarize_variants(reports_by_run, runs_by_name)
     variant_seed_rows, comparison_seed_rows = summarize_training_seed_variability(
         variant_rows, comparison_rows, episode_data_by_run
     )

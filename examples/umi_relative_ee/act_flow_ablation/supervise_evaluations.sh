@@ -104,8 +104,16 @@ echo "[$(timestamp)] evaluation supervisor started; log=$SUPERVISOR_LOG"
 
 evaluate_deterministic act_r18_vae 100000
 evaluate_deterministic act_r50_vae 100000
+evaluate_deterministic act_r50_v1_vae 100000
+if [[ "$TRAINING_SEED" -eq 1000 ]]; then
+  evaluate_deterministic act_r50_v1_vae 30000
+fi
 evaluate_deterministic act_r18_l1 100000
 evaluate_generative act_r18_flow_u_lr1e5 100000
+evaluate_generative act_r18_diffusion_lr1e5 100000
+if [[ "$TRAINING_SEED" -eq 1000 ]]; then
+  evaluate_generative act_r18_diffusion_lr1e5 30000
+fi
 evaluate_generative diffusion_r18 100000
 evaluate_generative umi_official_dp 30000
 evaluate_generative umi_official_transformer_dp 30000

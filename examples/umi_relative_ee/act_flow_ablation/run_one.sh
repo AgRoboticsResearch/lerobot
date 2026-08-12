@@ -94,6 +94,13 @@ case "$VARIANT" in
       --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V2
     )
     ;;
+  act_r50_v1_vae)
+    POLICY+=(
+      --policy.use_vae=true
+      --policy.vision_backbone=resnet50
+      --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
+    )
+    ;;
   act_r50_large)
     POLICY+=(
       --policy.use_vae=true
@@ -136,6 +143,16 @@ case "$VARIANT" in
       --policy.flow_time_sampling_beta_beta=1.0
       --policy.optimizer_lr=0.0001
       --policy.optimizer_lr_backbone=0.0001
+    )
+    ;;
+  act_r18_diffusion_lr1e5)
+    POLICY+=(
+      --policy.use_vae=false
+      --policy.action_objective=diffusion
+      --policy.diffusion_num_train_timesteps=100
+      --policy.diffusion_num_inference_steps=10
+      --policy.diffusion_beta_schedule=squaredcos_cap_v2
+      --policy.diffusion_clip_sample=true
     )
     ;;
   diffusion_r18)

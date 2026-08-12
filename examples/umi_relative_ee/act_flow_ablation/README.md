@@ -16,15 +16,22 @@ filesystem has little free space and must not hold new checkpoint sweeps.
 The complete decision log, literature analysis, experiment results, failures,
 and lessons learned are consolidated in [`RESEARCH_REPORT.md`](RESEARCH_REPORT.md).
 
-`act_r18_l1` and `act_r18_flow_*` are the decisive objective control. Both omit
+`act_r18_l1`, `act_r18_flow_*`, and `act_r18_diffusion_lr1e5` are the decisive
+objective controls. All omit
 the collapsed ACT VAE and share the same ResNet-18, observation transformer,
 action decoder, data, and optimizer unless the variant names an LR change. The
 flow version only adds noisy-action/time inputs and changes L1 regression to
-rectified-flow velocity regression. `diffusion_r18` is a second, conventional
+rectified-flow velocity regression. ACT-DP uses exactly the same learned
+time-conditioned transformer as ACT-flow but swaps velocity regression/Euler
+integration for epsilon prediction/DDIM. `diffusion_r18` is a second, conventional
 non-VLM control using the repository's ResNet + temporal U-Net Diffusion Policy.
 `umi_official_dp` and `umi_official_transformer_dp` port the released UMI
 CLIP-ViT U-Net and transformer-denoiser recipes. They use batch 64 and therefore
 form a supplemental recipe comparison, not the batch-8 objective isolation.
+For ACT capacity, `act_r50_vae` uses torchvision's recommended ImageNet-V2
+weights, while `act_r50_v1_vae` holds initialization at ImageNet-V1 like the
+R18/R34 controls. The latter is the strict backbone-capacity comparison; their
+direct pair isolates the initialization recipe at fixed R50 architecture.
 
 Run on the host (not in a sandbox):
 
@@ -32,10 +39,12 @@ Run on the host (not in a sandbox):
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_vae 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r34_vae 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r50_vae 30000 1000
+bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r50_v1_vae 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_l1 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e5 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e4 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_beta_lr1e4 30000 1000
+bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_diffusion_lr1e5 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh diffusion_r18 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_official_umi_dp.sh 30000 1000
 ```
@@ -65,7 +74,7 @@ The complete stage-one evaluation matrix is likewise sequential:
 bash examples/umi_relative_ee/act_flow_ablation/evaluate_stage1.sh 30000 1000 5
 ```
 
-Run and evaluate the five stage-one promotions at 100k with:
+Run and evaluate the promoted stage-one controls at 100k with:
 
 ```bash
 bash examples/umi_relative_ee/act_flow_ablation/run_stage2.sh 100000 1000

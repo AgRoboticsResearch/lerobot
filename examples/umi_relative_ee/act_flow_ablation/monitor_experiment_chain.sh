@@ -11,6 +11,7 @@ STALE_SECONDS="${UMI_MONITOR_STALE_SECONDS:-1200}"
 MIN_FREE_KB="${UMI_MONITOR_MIN_FREE_KB:-52428800}"
 SESSIONS=(
   umi_arch_supervisor_20260812
+  umi_arch_capacity_control_20260812
   umi_arch_eval_supervisor_20260812
   umi_arch_confirmation_train_20260812
   umi_arch_confirmation_eval_20260812

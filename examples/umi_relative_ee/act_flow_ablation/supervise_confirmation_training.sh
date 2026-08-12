@@ -15,7 +15,15 @@ WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 SUPERVISOR_LOG="$ARTIFACT_ROOT/logs/confirmation_train_supervisor_$(date '+%Y%m%d_%H%M%S').log"
-VARIANTS=(act_r18_vae act_r50_vae act_r18_l1 act_r18_flow_u_lr1e5 diffusion_r18)
+VARIANTS=(
+  act_r18_vae
+  act_r50_vae
+  act_r50_v1_vae
+  act_r18_l1
+  act_r18_flow_u_lr1e5
+  act_r18_diffusion_lr1e5
+  diffusion_r18
+)
 
 mkdir -p "$ARTIFACT_ROOT/logs" "$ARTIFACT_ROOT/interrupted"
 exec > >(tee -a "$SUPERVISOR_LOG") 2>&1

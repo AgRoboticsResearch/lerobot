@@ -20,12 +20,14 @@ DEFAULT_OUTPUT = Path(__file__).resolve().parent / "figures"
 LABELS = {
     "act_r18_vae": "ACT R18",
     "act_r34_vae": "ACT R34",
-    "act_r50_vae": "ACT R50",
+    "act_r50_v1_vae": "ACT R50 V1",
+    "act_r50_vae": "ACT R50 V2",
     "act_r50_large": "ACT R50 large",
     "act_r18_l1": "ACT-L1",
     "act_r18_flow_u_lr1e5": "ACT-flow 1e-5",
     "act_r18_flow_u_lr1e4": "ACT-flow 1e-4",
     "act_r18_flow_beta_lr1e4": "ACT-flow beta",
+    "act_r18_diffusion_lr1e5": "ACT-DP 1e-5",
     "diffusion_r18": "DP R18",
     "umi_official_dp": "UMI ViT+U-Net",
     "umi_official_transformer_dp": "UMI ViT+Transformer",
@@ -34,12 +36,14 @@ ORDER = list(LABELS)
 COLORS = {
     "act_r18_vae": "#4C78A8",
     "act_r34_vae": "#72A0C1",
+    "act_r50_v1_vae": "#3478B8",
     "act_r50_vae": "#1F5A94",
     "act_r50_large": "#163A5F",
     "act_r18_l1": "#59A14F",
     "act_r18_flow_u_lr1e5": "#E45756",
     "act_r18_flow_u_lr1e4": "#F28E8B",
     "act_r18_flow_beta_lr1e4": "#B33B3A",
+    "act_r18_diffusion_lr1e5": "#EDB120",
     "diffusion_r18": "#F2CF5B",
     "umi_official_dp": "#B279A2",
     "umi_official_transformer_dp": "#7A5195",
@@ -47,7 +51,9 @@ COLORS = {
 EFFICIENCY_ANNOTATIONS = {
     "act_r18_vae": ((-5, -13), "right"),
     "act_r18_l1": ((5, 5), "left"),
+    "act_r18_diffusion_lr1e5": ((5, -14), "left"),
     "act_r50_vae": ((-5, -14), "right"),
+    "act_r50_v1_vae": ((5, 15), "left"),
     "act_r50_large": ((5, 5), "left"),
 }
 
@@ -125,9 +131,7 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
                 for row in points:
                     values_by_step[int(row["step"])].append(float(row[metric]))
                 validation_steps = sorted(values_by_step)
-                means = np.asarray(
-                    [float(np.mean(values_by_step[step])) for step in validation_steps]
-                )
+                means = np.asarray([float(np.mean(values_by_step[step])) for step in validation_steps])
                 standard_deviations = np.asarray(
                     [
                         float(np.std(values_by_step[step], ddof=1))
@@ -168,9 +172,7 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
     save_figure(fig, output_dir, "validation_learning_curves")
 
 
-def plot_endpoint_bars(
-    rows: list[dict[str, str]], seed_rows: list[dict[str, str]], output_dir: Path
-) -> None:
+def plot_endpoint_bars(rows: list[dict[str, str]], seed_rows: list[dict[str, str]], output_dir: Path) -> None:
     by_variant = highest_budget_by_variant(seed_rows)
     variants = ordered_variants(list(by_variant.values()))
     labels = [
@@ -217,9 +219,7 @@ def plot_endpoint_bars(
         axis.set_ylabel(ylabel)
         axis.set_xticks(x, labels, rotation=42, ha="right")
         axis.grid(axis="y", alpha=0.25)
-    fig.suptitle(
-        "Decoded endpoint error (95% episode or hierarchical training-seed bootstrap CI)"
-    )
+    fig.suptitle("Decoded endpoint error (95% episode or hierarchical training-seed bootstrap CI)")
     fig.tight_layout()
     save_figure(fig, output_dir, "decoded_endpoint_errors")
 
@@ -230,9 +230,14 @@ def plot_paired_improvements(
     desired_pairs = {
         ("act_r34_vae", "act_r18_vae"),
         ("act_r50_vae", "act_r18_vae"),
+        ("act_r50_v1_vae", "act_r18_vae"),
+        ("act_r50_vae", "act_r50_v1_vae"),
         ("act_r50_large", "act_r50_vae"),
         ("act_r18_flow_u_lr1e5", "act_r18_l1"),
+        ("act_r18_diffusion_lr1e5", "act_r18_l1"),
+        ("act_r18_diffusion_lr1e5", "act_r18_flow_u_lr1e5"),
         ("diffusion_r18", "act_r18_l1"),
+        ("diffusion_r18", "act_r18_diffusion_lr1e5"),
         ("umi_official_dp", "diffusion_r18"),
         ("umi_official_transformer_dp", "umi_official_dp"),
     }
@@ -343,10 +348,12 @@ def plot_efficiency(
         steps = int(row["steps"])
         summaries = summary_by_key[(variant, steps)]
         runs = run_by_key[(variant, steps)]
-        latency_ms = statistics.mean(float(summary["inference_median_seconds"]) for summary in summaries) * 1000
-        parameters_m = statistics.mean(
-            float(run.get("learnable_parameters") or run["parameters"]) for run in runs
-        ) / 1e6
+        latency_ms = (
+            statistics.mean(float(summary["inference_median_seconds"]) for summary in summaries) * 1000
+        )
+        parameters_m = (
+            statistics.mean(float(run.get("learnable_parameters") or run["parameters"]) for run in runs) / 1e6
+        )
         endpoint_mm = float(row["xyz_end_m_mean"]) * 1000
         num_training_seeds = int(row["num_training_seeds"])
         if num_training_seeds > 1:
@@ -381,9 +388,7 @@ def plot_efficiency(
         )
     axis.set_xlabel("Median policy inference latency (ms)")
     axis.set_ylabel("Endpoint translation error (mm)")
-    axis.set_title(
-        "Accuracy–latency trade-off (area: online parameters; n>1 bars: hierarchical CI)"
-    )
+    axis.set_title("Accuracy–latency trade-off (area: online parameters; n>1 bars: hierarchical CI)")
     axis.grid(alpha=0.25)
     fig.tight_layout()
     save_figure(fig, output_dir, "accuracy_latency_tradeoff")
