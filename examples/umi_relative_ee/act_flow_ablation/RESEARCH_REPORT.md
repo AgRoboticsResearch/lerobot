@@ -366,11 +366,13 @@ throughput. Dedicated timed runs are required before latency conclusions.
 - One-sample host-GPU checkpoint reload and physical-pose decoding passed for
   both ACT-flow and Diffusion Policy. Their very large errors after only two
   optimizer updates are expected and are not performance evidence.
-- Five focused tests for the new official UMI candidates pass, together with
+- Seven focused tests for the new official UMI candidates pass, together with
   the legacy UMI Diffusion processor test. They verify factory registration,
   canonical relative-action processor wiring, finite differentiable losses,
   online-to-EMA updates, fixed-noise sampling shape, checkpoint/EMA round-trip,
-  and the transformer's lower-LR backbone parameter group using a tiny
+  the transformer's lower-LR backbone parameter group, and the distinct
+  released image paths (U-Net restores ImageNet normalization after pixel-space
+  augmentation; transformer retains pixel-space values) using a tiny
   timm-compatible test encoder.
 - A real cached `vit_base_patch16_clip_224.openai` CPU load and forward pass
   produced finite `[1,197,768]` tokens with 85,799,424 encoder parameters.

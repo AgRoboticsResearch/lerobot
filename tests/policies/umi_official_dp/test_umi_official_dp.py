@@ -14,6 +14,7 @@ from lerobot.policies.umi_official_dp.configuration_umi_official_dp import (
 from lerobot.policies.umi_official_dp.modeling_umi_official_dp import (
     UmiOfficialDPPolicy,
     UmiOfficialTransformerDPPolicy,
+    UmiOfficialVisionEncoder,
 )
 from lerobot.processor import UmiAbsoluteActionsStep, UmiRelativeActionsStep
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -88,6 +89,32 @@ def _batch(batch_size: int = 2):
         ACTION: torch.randn(batch_size, 32, 10).clamp(-1, 1),
         "action_is_pad": torch.zeros(batch_size, 32, dtype=torch.bool),
     }
+
+
+@pytest.mark.parametrize(
+    ("config_class", "expected_space"),
+    [
+        (UmiOfficialDPConfig, "imagenet"),
+        (UmiOfficialTransformerDPConfig, "pixel"),
+    ],
+)
+def test_official_image_preprocessing_matches_released_normalization(config_class, expected_space):
+    inputs, outputs = _features()
+    config = config_class(
+        device="cpu",
+        input_features=inputs,
+        output_features=outputs,
+        vision_pretrained=False,
+        image_size=(32, 32),
+    )
+    encoder = UmiOfficialVisionEncoder(config).eval()
+    pixels = torch.linspace(0.05, 0.95, 3 * 32 * 32).reshape(1, 3, 32, 32)
+    imagenet = (pixels - encoder.imagenet_mean) / encoder.imagenet_std
+
+    preprocessed = encoder._preprocess(imagenet)
+
+    expected = imagenet if expected_space == "imagenet" else pixels
+    torch.testing.assert_close(preprocessed, expected)
 
 
 def test_unet_candidate_forward_ema_and_sampling():
