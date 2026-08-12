@@ -47,6 +47,26 @@ def test_flow_matching_requires_non_vae_act():
         make_flow_config(use_vae=True)
 
 
+def test_flow_matching_only_adds_objective_required_decoder_conditioning_parameters():
+    l1_policy = ACTPolicy(make_flow_config(action_objective="l1"))
+    flow_policy = ACTPolicy(make_flow_config())
+    l1_parameters = dict(l1_policy.model.named_parameters())
+    flow_parameters = dict(flow_policy.model.named_parameters())
+    flow_only_parameters = {name for name in flow_parameters if name.startswith("flow_")}
+
+    assert flow_only_parameters == {
+        "flow_action_input_proj.weight",
+        "flow_action_input_proj.bias",
+        "flow_time_mlp.0.weight",
+        "flow_time_mlp.0.bias",
+        "flow_time_mlp.2.weight",
+        "flow_time_mlp.2.bias",
+    }
+    assert set(flow_parameters) - flow_only_parameters == set(l1_parameters)
+    for name, parameter in l1_parameters.items():
+        assert flow_parameters[name].shape == parameter.shape
+
+
 def test_flow_matching_forward_is_finite_and_differentiable():
     policy = ACTPolicy(make_flow_config())
     loss, metrics = policy(make_batch())

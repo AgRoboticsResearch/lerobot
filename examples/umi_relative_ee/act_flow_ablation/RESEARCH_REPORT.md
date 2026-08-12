@@ -139,8 +139,13 @@ compatible) or `flow_matching`. Flow mode requires `use_vae=false` and adds:
 
 Everything upstream of decoder inputs—ResNet, image tokens, state token,
 transformer encoder, decoder blocks, normalization, and UMI processors—is the
-same as no-VAE ACT-L1. Uniform time is the vanilla default. A Beta(1.5, 1.0)
-variant mirrors the time bias used by local OpenPI-style VLA configs.
+same as no-VAE ACT-L1, as are the learned decoder positional queries and final
+action head. Flow necessarily replaces the L1 decoder's zero content vectors
+with projected noisy actions plus time embeddings; a structural regression test
+proves that these six projection/MLP parameters are the only flow-only learned
+parameter tensors and that every shared tensor name and shape matches ACT-L1.
+Uniform time is the vanilla default. A Beta(1.5, 1.0) variant mirrors the time
+bias used by local OpenPI-style VLA configs.
 
 ### 4.2 Conventional non-VLM Diffusion Policy
 
