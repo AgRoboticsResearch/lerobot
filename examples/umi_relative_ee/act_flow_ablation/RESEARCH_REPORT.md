@@ -643,6 +643,7 @@ CUDA memory. Lower is better throughout.
 | ACT-flow uniform, 1e-5 | 18.75 | 30.86 | 3.767 | 6.290 | 29.90 | 203 |
 | ACT-flow uniform, 1e-4 | 37.12 | 57.94 | 5.184 | 7.070 | 29.87 | 203 |
 | ACT-flow beta, 1e-4 | 34.59 | 59.13 | 3.810 | 5.689 | 29.62 | 203 |
+| ACT-DP, 1e-5 | 24.50 | 38.70 | 5.025 | 8.319 | 137.04 | 203 |
 | Diffusion R18 | 15.71 | 27.27 | 3.391 | 5.838 | 23.23 | 345 |
 
 Paired episode bootstrap comparisons (10,000 resamples) establish:
@@ -693,20 +694,28 @@ through the chunk. The matched straight-line flow implementation is the weak
 case, while the earlier 100k π0.5 result being slightly better than ACT in XYZ
 also rules out a blanket “all flow models fail” statement.
 
-This still leaves one residual architectural confound between matched ACT-flow
-and the competitive temporal-U-Net DP. The queued `act_r18_diffusion_lr1e5`
-run closes it: ACT-DP versus ACT-flow changes only objective/path/sampler;
-ACT-DP versus ACT-L1 measures iterative epsilon diffusion inside the same ACT
-family; standard DP versus ACT-DP exposes the denoiser/optimizer recipe. No
-conclusion from the completed 30k screen is retroactively assigned to this new
-candidate before its real checkpoints and decoded evaluations exist.
+The completed architecture-matched ACT-DP control closes that residual
+confound at seed 1000. Across inference seeds 1000/2000/3000 it obtains endpoint
+XYZ 38.70 mm (95% episode CI 36.63--40.69) and rotation 8.319 deg
+(7.931--8.723). Relative to ACT-L1 on paired identical queries, this is 37.36%
+worse in endpoint translation (paired improvement CI -45.46% to -29.81%) and
+62.60% worse in endpoint rotation (-72.89% to -53.09%). It is also worse than
+matched ACT-flow 1e-5 by 25.40% in endpoint translation (-29.09% to -21.93%)
+and 32.26% in endpoint rotation (-37.49% to -26.94%). Conversely, standard
+temporal-U-Net DP remains near ACT-L1 in endpoint translation and far better
+than ACT-DP. Therefore changing flow to epsilon diffusion inside this ACT
+denoiser does not rescue performance; denoiser/conditioning/optimization recipe
+matters at least as much as the broad generative objective. These intervals
+capture episodes and inference seeds but not training-seed variability, so the
+queued 100k and seed-2000/3000 confirmations remain necessary.
 
 There is nevertheless an important control-quality cost. ACT-L1 rotation/XYZ
 jerk is 0.091 deg / 0.00073 m, matched flow is 1.093 deg / 0.00466 m, and DP is
 0.481 deg / 0.00186 m; the ground-truth values are 0.158 deg / 0.00067 m.
 Iterative generative samples are substantially less smooth at 30k. Flow is
-4.5× and DP 3.5× slower than ACT-L1 at inference, although both remain below
-30 ms median on the RTX 4090.
+4.5×, standard DP 3.5×, and ACT-DP 20.4× slower than ACT-L1 at inference;
+ACT-DP's ten transformer denoising passes cost 137 ms median even though its
+online peak allocation is only about 203 MiB.
 
 ![Accuracy and latency trade-off](figures/accuracy_latency_tradeoff.png)
 
@@ -721,15 +730,17 @@ attribution. R50-V1, R50-V2, and R18-V1 are promoted to the longer/multi-seed
 comparison before recommending replacement of the multi-million-step
 historical checkpoint.
 
-**Q2:** no single explanation fits. Matched ACT-flow is significantly worse
-than the architecture-matched L1 policy, so that flow formulation/sampler needs
-work independent of any VLM. But vanilla DP without a VLM is competitive with
-ACT and better on chunk translation, so generative modeling itself is not the
-fundamental problem. VLM fine-tuning, objective/sampler design, and trajectory
-smoothness are separate axes; the existing π0.5 result further indicates that
-the VLM path can work. ACT-L1, uniform flow 1e-5, architecture-matched ACT-DP,
-and standard DP are promoted with R18,
-R50-V1, and R50-V2 to determine whether these conclusions persist at 100k.
+**Q2:** no single explanation fits. Matched ACT-flow and same-architecture
+ACT-DP are both significantly worse than ACT-L1, so simply swapping velocity
+flow for epsilon diffusion does not fix this ACT-transformer generative path.
+But vanilla temporal-U-Net DP without a VLM is competitive with ACT and better
+on chunk translation, so flow/diffusion itself is not the fundamental problem.
+Denoiser architecture, conditioning, optimizer/sampler design, VLM fine-tuning,
+and trajectory smoothness are separate axes; the existing π0.5 result further
+indicates that the VLM path can work. ACT-L1, uniform flow 1e-5,
+architecture-matched ACT-DP, and standard DP are promoted with R18, R50-V1,
+and R50-V2 to determine whether these conclusions persist at 100k and across
+training seeds.
 
 Stage two therefore trains fresh 100k runs (not scheduler-incompatible resumes)
 for ACT R18 VAE, ACT R50 V2 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and
@@ -1035,6 +1046,26 @@ with `loss=diffusion_loss=0.018327`, improving 9.70% from the 10k value. A
 second complete model/optimizer/RNG checkpoint was verified under `020000`.
 This is still an intermediate training-curve observation; the causal comparison
 uses the common decoded evaluation of the final promoted checkpoint.
+
+At step 30,000 the recovered ACT-DP run completed validation with
+`loss=diffusion_loss=0.014094`, a 30.55% reduction from its 10k value and
+23.09% from 20k. The trainer then wrote full checkpoint `030000` and logged
+`End of training`. The outer shell pipeline nevertheless returned status 2
+without a traceback and therefore omitted its usual completion marker. This
+was not treated as success by assertion: the complete checkpoint inventory was
+verified and the saved policy was independently loaded for a real host-GPU
+decoded validation smoke (one episode/query), which succeeded. The original
+status-2 line remains in the log, followed by an explicit recovered-complete
+provenance marker; the model was not wastefully retrained. Full fixed-query
+evaluation was then launched as a low-memory companion to the continuing
+official UMI run.
+
+The recovered official UMI U-Net run likewise crossed its first durable
+boundary: step-10,000 validation completed with `loss=0.018488`, and a
+~1.28 GB model plus ~1.28 GB optimizer state (with RNG/processors/config) was
+verified under checkpoint `010000`. Training resumed past 10.8k. This closes
+the specific PyAV/fresh-worker recovery question for both concurrent policies;
+later official-UMI conclusions still wait for its 30k decoded evaluation.
 
 The operational lesson is stronger than merely “install PyAV”: never run a
 pruning environment synchronization against a virtual environment used by live
