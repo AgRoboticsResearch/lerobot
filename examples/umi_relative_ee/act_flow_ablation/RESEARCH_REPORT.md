@@ -180,6 +180,14 @@ therefore added:
   released ±5° rotation augmentation and uses a 3e-5 backbone LR versus 3e-4
   for the denoiser/observation projections.
 
+The CLS detail follows executed upstream code rather than a literal reading of
+one YAML field: the U-Net YAML requests `feature_aggregation: attention_pool_2d`,
+but `TimmObsEncoder` warns that aggregation is ignored for
+ViTs, resets it to `None`, and returns token 0. Likewise, its
+`use_group_norm: True` conversion is guarded by `not pretrained`, so it does
+not alter the pretrained CLIP ViT used here. These apparent YAML/code
+discrepancies therefore do not require extra layers in the port.
+
 Both policies keep independent online and EMA copies in checkpoints; training
 updates only online weights and validation/inference use EMA weights. This is
 implemented behind new policy types and a new `umi-official-dp` dependency
