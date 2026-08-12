@@ -17,6 +17,8 @@ SESSIONS=(
   umi_arch_confirmation_eval_20260812
   umi_arch_extended_candidates_20260812
   umi_act_l1_100k_companion_20260812
+  umi_official_dp_early_eval_20260812
+  umi_act_l1_100k_early_eval_20260812
 )
 MONITOR_LOG="$ARTIFACT_ROOT/logs/chain_monitor_$(date '+%Y%m%d_%H%M%S').log"
 

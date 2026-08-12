@@ -1141,6 +1141,14 @@ without OOM. The chain monitor now
 tracks this companion session, and the main queue will skip its ACT-L1 slot if
 the independently guarded run has completed rather than duplicate it.
 
+Two canonical early-evaluation waiters advance analysis without forking the
+protocol: official U-Net inference seed 1000 starts after its exact 30k durable
+completion, and deterministic ACT-L1 seed 1000 starts after its 100k companion
+completion. Each uses the same 100-episode/500-query evaluator, canonical
+output path, completion marker, and bounded archive/retry behavior as the main
+evaluation supervisor. Later matrix evaluation therefore skips successful
+early results and still fills every missing generative seed.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
