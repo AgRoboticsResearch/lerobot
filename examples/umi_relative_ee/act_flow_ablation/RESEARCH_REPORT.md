@@ -302,9 +302,9 @@ controlled architecture-and-exposure comparison.
 
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
-| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete; 100k train complete |
+| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete; 100k + eval complete |
 | `act_r34_vae` | larger backbone, ImageNet-V1 initialization | 62M | 30k + eval complete |
-| `act_r50_vae` | larger backbone + torchvision-recommended ImageNet-V2 initialization | 65M | 30k + eval complete; 100k train complete |
+| `act_r50_vae` | larger backbone + torchvision-recommended ImageNet-V2 initialization | 65M | 30k + eval complete; 100k + eval complete |
 | `act_r50_v1_vae` | strict R18/R34-aligned ImageNet-V1 initialization control | 65M | 30k + 100k queued live before seed-1000 evaluation |
 | `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k + eval complete; not promoted |
 | `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; 100k queued |
@@ -670,6 +670,32 @@ the same optimizer is not supported. Attribution of the R50 gain specifically
 to backbone capacity remains provisional until the queued R50-V1 control is
 decoded across training seeds.
 
+### 9.1.1 Fresh 100k R18/R50-V2 capacity checkpoint
+
+The recovered fresh 100k checkpoints have now both passed a host-GPU decoded
+smoke test and the complete fixed 500-query evaluation. These rows use training
+seed 1000 and deterministic inference seed 1000; their intervals resample the
+same 100 validation episodes and therefore do not include training-seed
+uncertainty.
+
+| Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Median (ms) | Peak (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT R18 VAE, 100k | 16.39 | 24.74 | 2.873 | 4.892 | 0.1603 | 8.63 | 267 |
+| ACT R50 V2 VAE, 100k | **14.28** | **24.44** | **2.793** | **4.875** | **0.1366** | 10.79 | 341 |
+
+Paired episode differences make this a narrower result than the validation-loss
+gap suggests. R50 improves chunk-mean XYZ by **12.83%** (95% CI
+8.90--16.57%) and gripper endpoint by **14.83%** (7.14--21.98%). Its endpoint
+XYZ improvement is only 1.23% (-4.38--6.64%), endpoint rotation 0.33%
+(-5.53--5.93%), and chunk rotation 2.77% (-2.07--7.62%); none of those three
+intervals excludes no improvement. R50 also raises median inference latency by
+25% and worsens rotational jerk by 11.56% (7.44--15.68% worse), while XYZ jerk
+is tied. Thus the larger R50-V2 recipe has a repeatable chunk-translation and
+gripper benefit at 100k, but not a demonstrated endpoint-pose benefit at this
+seed. The strict R50-V1 and multi-training-seed controls remain essential before
+attributing the improvement to backbone capacity or recommending R50
+unconditionally.
+
 ### 9.2 Flow matching and Diffusion Policy isolation
 
 The closest objective isolation is ACT-flow uniform 1e-5 versus ACT-L1. Both
@@ -788,7 +814,12 @@ both measures, and the final checkpoint remains substantially below the R18
 100k control. The original `set -e` stage-two wrapper nevertheless terminated
 between the child's `End of training` message and its wrapper completion
 marker, so the remaining three promoted runs did not start. The final R50
-checkpoint was independently verified on disk and is retained as complete.
+checkpoint was independently verified on disk and is retained as complete. It
+was later reloaded for a successful host-GPU decoded query and a complete common
+500-query evaluation, after which the log received a clearly labelled
+recovered-complete marker rather than pretending the original wrapper returned
+success. The matching R18 100k checkpoint was evaluated the same way; their
+decoded comparison is reported in Section 9.1.1.
 
 The first official U-Net attempt then passed a real two-update batch-64 smoke
 test and trained normally through update 2,195 (approximately 4.9 updates/s).
