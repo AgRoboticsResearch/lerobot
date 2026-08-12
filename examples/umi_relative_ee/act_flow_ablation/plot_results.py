@@ -11,6 +11,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+plt.rcParams["svg.hashsalt"] = "umi-act-flow-ablation"
+
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "figures"
 
@@ -40,6 +42,12 @@ COLORS = {
     "diffusion_r18": "#F2CF5B",
     "umi_official_dp": "#B279A2",
     "umi_official_transformer_dp": "#7A5195",
+}
+EFFICIENCY_ANNOTATIONS = {
+    "act_r18_vae": ((-5, -13), "right"),
+    "act_r18_l1": ((5, 5), "left"),
+    "act_r50_vae": ((-5, -14), "right"),
+    "act_r50_large": ((5, 5), "left"),
 }
 
 
@@ -76,7 +84,7 @@ def budget_label(variant: str, steps: int) -> str:
 def save_figure(fig: plt.Figure, output_dir: Path, name: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     svg_path = output_dir / f"{name}.svg"
-    fig.savefig(svg_path, bbox_inches="tight")
+    fig.savefig(svg_path, bbox_inches="tight", metadata={"Date": None})
     # Matplotlib emits trailing spaces in SVG path data; normalize generated
     # artifacts so repository whitespace checks remain useful and deterministic.
     svg_path.write_text("\n".join(line.rstrip() for line in svg_path.read_text().splitlines()) + "\n")
@@ -236,7 +244,9 @@ def plot_efficiency(
 ) -> None:
     latest_summaries = highest_budget_by_variant(summary_rows)
     run_by_key = {
-        (row["variant"], int(row["steps"])): row for row in run_rows if row.get("parameters")
+        (row["variant"], int(row["steps"])): row
+        for row in run_rows
+        if row.get("learnable_parameters") or row.get("parameters")
     }
     points = [
         row
@@ -247,7 +257,8 @@ def plot_efficiency(
     for row in points:
         variant = row["variant"]
         steps = int(row["steps"])
-        parameters_m = float(run_by_key[(variant, steps)]["parameters"]) / 1e6
+        run = run_by_key[(variant, steps)]
+        parameters_m = float(run.get("learnable_parameters") or run["parameters"]) / 1e6
         axis.scatter(
             float(row["inference_median_seconds"]) * 1000,
             float(row["xyz_end_m"]) * 1000,
@@ -257,16 +268,18 @@ def plot_efficiency(
             edgecolor="white",
             linewidth=0.7,
         )
+        offset, horizontal_alignment = EFFICIENCY_ANNOTATIONS.get(variant, ((5, 4), "left"))
         axis.annotate(
             budget_label(variant, steps),
             (float(row["inference_median_seconds"]) * 1000, float(row["xyz_end_m"]) * 1000),
-            xytext=(5, 4),
+            xytext=offset,
             textcoords="offset points",
             fontsize=8,
+            ha=horizontal_alignment,
         )
     axis.set_xlabel("Median policy inference latency (ms)")
     axis.set_ylabel("Endpoint translation error (mm)")
-    axis.set_title("Accuracy–latency trade-off (marker area scales with parameters)")
+    axis.set_title("Accuracy–latency trade-off (marker area scales with online parameters)")
     axis.grid(alpha=0.25)
     fig.tight_layout()
     save_figure(fig, output_dir, "accuracy_latency_tradeoff")

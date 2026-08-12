@@ -295,14 +295,19 @@ shape-matching different episodes.
 Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and
-iterative samplers explicit.
+iterative samplers explicit. Parameter-efficiency figures use online learnable
+parameters; for EMA policies the separately reported total parameter state is
+roughly twice as large but does not represent a second model executed during
+inference.
 
 The final report will include reproducibly generated figures in addition to
 tables: validation learning curves, decoded physical-error bars with episode
 bootstrap intervals, paired percentage-improvement intervals, and
 accuracy-versus-parameter/latency trade-off plots. Figure inputs will be the
 same compact CSV/JSON evidence produced by `collect_results.py`; the plotting
-script and rendered figures will be versioned in this directory.
+script and rendered figures will be versioned in this directory. SVG generation
+uses a fixed element-ID salt and omits volatile timestamps, making repeated
+renders from identical inputs byte-for-byte reproducible.
 
 ## 6. Smoke experiments and resource observations
 

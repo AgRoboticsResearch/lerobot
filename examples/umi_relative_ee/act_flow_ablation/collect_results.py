@@ -17,7 +17,8 @@ import numpy as np
 
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
-PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
+LEARNABLE_PARAM_RE = re.compile(r"num_learnable_params=(?P<params>\d+)")
+TOTAL_PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
 UPDATE_TIME_RE = re.compile(r"updt_s:(?P<seconds>[0-9.]+)")
 VALIDATION_RE = re.compile(r"Validation at step (?P<step>\d+): (?P<metrics>[^\r\n]+)")
 WRAPPER_TIME_RE = re.compile(
@@ -72,9 +73,21 @@ def parse_run_name(name: str) -> dict[str, Any]:
 
 def parse_log(log_path: Path) -> dict[str, Any]:
     if not log_path.exists():
-        return {"status": "missing_log", "parameters": None, "wall_seconds": None, "validation": []}
+        return {
+            "status": "missing_log",
+            "parameters": None,
+            "learnable_parameters": None,
+            "total_parameters": None,
+            "wall_seconds": None,
+            "validation": [],
+        }
     text = log_path.read_text(errors="replace")
-    parameter_match = PARAM_RE.search(text)
+    learnable_parameter_match = LEARNABLE_PARAM_RE.search(text)
+    total_parameter_match = TOTAL_PARAM_RE.search(text)
+    learnable_parameters = (
+        int(learnable_parameter_match["params"]) if learnable_parameter_match else None
+    )
+    total_parameters = int(total_parameter_match["params"]) if total_parameter_match else None
     update_seconds = [float(match["seconds"]) for match in UPDATE_TIME_RE.finditer(text)]
     times: dict[str, datetime] = {}
     for match in WRAPPER_TIME_RE.finditer(text):
@@ -94,7 +107,12 @@ def parse_log(log_path: Path) -> dict[str, Any]:
         status = "training_finished_without_wrapper_marker"
     return {
         "status": status,
-        "parameters": int(parameter_match["params"]) if parameter_match else None,
+        # Keep `parameters` as a compatibility alias for the online model size.
+        # EMA policies register a second frozen copy, so `num_total_params` is
+        # checkpoint/training state rather than inference architecture size.
+        "parameters": learnable_parameters if learnable_parameters is not None else total_parameters,
+        "learnable_parameters": learnable_parameters,
+        "total_parameters": total_parameters,
         "wall_seconds": wall_seconds,
         "median_update_seconds": statistics.median(update_seconds) if update_seconds else None,
         "median_updates_per_second": 1 / statistics.median(update_seconds) if update_seconds else None,
