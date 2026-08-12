@@ -1162,6 +1162,22 @@ without OOM. The chain monitor now
 tracks this companion session, and the main queue will skip its ACT-L1 slot if
 the independently guarded run has completed rather than duplicate it.
 
+The same two-job allocation remained healthy through the next supervised retry:
+the host GPU reported 99% utilization, 15.82 GiB allocated, 8.29 GiB free, and
+only the two intended trainer PIDs in the CUDA process table. ACT-L1 completed
+and passed the full durability check for checkpoint `070000` (model, optimizer,
+RNG/config/processor state, and exact step) before resuming beyond 71k. Its 70k
+held-out L1 was 0.032481, above the 60k value 0.031042 and therefore evidence
+that final-step selection should not be conflated with best validation-step
+selection. Concurrently, the architecture-matched official transformer
+denoiser crossed 7k with finite training loss near 0.029. Its update/data times
+were approximately 0.36--0.38/0.02 s, confirming that the GPU computation—not
+video decoding—is the limiting stage under contention. PyAV remained the
+explicit backend; the transient child processes were its DataLoader workers,
+not CPU trainers. Both large LingBot frozen-weight partials continued to grow
+during this interval, so the asset supervisor was retained rather than
+restarted and losing resumable download progress.
+
 Two canonical early-evaluation waiters advance analysis without forking the
 protocol: official U-Net inference seed 1000 starts after its exact 30k durable
 completion, and deterministic ACT-L1 seed 1000 starts after its 100k companion
