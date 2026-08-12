@@ -537,10 +537,15 @@ added `act_r50_v1_vae` control holds the initialization family at V1, runs at
 30k and 100k for seed 1000, and joins the 100k seeds 2000/3000 confirmation.
 R50-V1 versus R18-V1 isolates capacity more strictly; R50-V2 versus R50-V1
 isolates initialization at fixed architecture. Static torchvision resolution
-confirms `ResNet50_Weights.IMAGENET1K_V1` is a valid distinct enum, but only the
-V2 `11ad3fa6` checkpoint is currently cached; the foreground host launcher is
-allowed to fetch V1 before training and completion must not be claimed until
-that load and the real run succeed.
+confirms `ResNet50_Weights.IMAGENET1K_V1` is a valid distinct enum. The official
+97.8 MiB V1 checkpoint was then prefetched without CUDA and verified on CPU
+before the control released: its SHA-256 is
+`0676ba61b6795bbe1773cffd859882e5e297624d384b6993f7c9e683e722fb8a`
+(matching the torchvision URL prefix), it constructs a 25,557,032-parameter
+finite ResNet-50 on CPU, and it now coexists with the cached V2 `11ad3fa6`
+checkpoint. The queued run therefore has no network dependency at launch.
+This load verifies the initialization artifact, not the scientific training
+result; completion is still withheld until the real run and evaluation finish.
 
 ResNet-34 reduces total validation loss by 5.7%, 1.0%, and 4.8% at the three
 budgets; its 30k L1 is 0.037265 versus ResNet-18's 0.039285 (5.1% lower). It
