@@ -194,13 +194,12 @@ def plot_endpoint_bars(
         means = np.asarray([float(by_variant[v][f"{metric}_mean"]) * scale for v in variants])
         low = []
         high = []
-        for variant, mean in zip(variants, means, strict=True):
+        for variant in variants:
             aggregate = by_variant[variant]
             num_training_seeds = int(aggregate["num_training_seeds"])
             if num_training_seeds > 1:
-                spread = float(aggregate[f"{metric}_training_seed_sd"]) * scale
-                low.append(mean - spread)
-                high.append(mean + spread)
+                low.append(float(aggregate[f"{metric}_hierarchical_ci_low"]) * scale)
+                high.append(float(aggregate[f"{metric}_hierarchical_ci_high"]) * scale)
             else:
                 run = run_lookup[(variant, int(aggregate["steps"]))][0]
                 low.append(float(run[f"{metric}_ci_low"]) * scale)
@@ -219,7 +218,7 @@ def plot_endpoint_bars(
         axis.set_xticks(x, labels, rotation=42, ha="right")
         axis.grid(axis="y", alpha=0.25)
     fig.suptitle(
-        "Decoded endpoint error (n=1: 95% episode bootstrap CI; n>1: mean ± training-seed SD)"
+        "Decoded endpoint error (95% episode or hierarchical training-seed bootstrap CI)"
     )
     fig.tight_layout()
     save_figure(fig, output_dir, "decoded_endpoint_errors")
@@ -273,9 +272,8 @@ def plot_paired_improvements(
             value = float(row["paired_improvement_percent_mean"])
             num_training_seeds = int(row["num_training_seeds"])
             if num_training_seeds > 1:
-                spread = float(row["paired_improvement_percent_training_seed_sd"])
-                low = value - spread
-                high = value + spread
+                low = float(row["paired_improvement_percent_hierarchical_ci_low"])
+                high = float(row["paired_improvement_percent_hierarchical_ci_high"])
             else:
                 run = next(
                     candidate
@@ -314,7 +312,7 @@ def plot_paired_improvements(
     axis.set_xlabel("Paired error reduction (%) — positive favors candidate")
     axis.grid(axis="x", alpha=0.25)
     axis.legend(frameon=False)
-    axis.set_title("Paired improvements (n=1: episode CI; n>1: mean ± training-seed SD)")
+    axis.set_title("Paired improvements with 95% episode/hierarchical bootstrap intervals")
     fig.tight_layout()
     save_figure(fig, output_dir, "paired_endpoint_improvements")
 
@@ -352,10 +350,12 @@ def plot_efficiency(
         endpoint_mm = float(row["xyz_end_m_mean"]) * 1000
         num_training_seeds = int(row["num_training_seeds"])
         if num_training_seeds > 1:
+            low = float(row["xyz_end_m_hierarchical_ci_low"]) * 1000
+            high = float(row["xyz_end_m_hierarchical_ci_high"]) * 1000
             axis.errorbar(
                 latency_ms,
                 endpoint_mm,
-                yerr=float(row["xyz_end_m_training_seed_sd"]) * 1000,
+                yerr=np.asarray([[endpoint_mm - low], [high - endpoint_mm]]),
                 fmt="none",
                 capsize=3,
                 color=COLORS[variant],
@@ -382,7 +382,7 @@ def plot_efficiency(
     axis.set_xlabel("Median policy inference latency (ms)")
     axis.set_ylabel("Endpoint translation error (mm)")
     axis.set_title(
-        "Accuracy–latency trade-off (area: online parameters; n>1 bars: training-seed SD)"
+        "Accuracy–latency trade-off (area: online parameters; n>1 bars: hierarchical CI)"
     )
     axis.grid(alpha=0.25)
     fig.tight_layout()

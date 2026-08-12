@@ -287,8 +287,12 @@ with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
 seeds are varied only after this screen selects configurations worth promoting.
 The collector keeps inference-seed averaging and training-seed variability as
 two distinct statistical levels. It emits per-training-run episode bootstrap
-intervals, then separate cross-training-seed mean/SD/min/max tables; repeated
-sampler draws are never treated as independently trained models. It requires
+intervals, then separate cross-training-seed mean/SD/min/max tables and a
+deterministic hierarchical 95% interval that resamples training seeds before
+episodes within each selected seed. Repeated sampler draws are averaged within
+episodes and never treated as independently trained models. The hierarchical
+interval is reported with the caveat that three training seeds still give a
+coarse empirical distribution. The collector requires
 exactly matching episode-ID sets across inference seeds and across each paired
 policy comparison, failing loudly instead of silently intersecting or
 shape-matching different episodes. It also checks that the seed encoded in each
@@ -312,9 +316,9 @@ uses a fixed element-ID salt and omits volatile timestamps, making repeated
 renders from identical inputs byte-for-byte reproducible. Once confirmation
 runs exist, curves average equal-step validation values across training seeds
 with an SD band; endpoint, paired-improvement, and efficiency figures use the
-training-seed mean and sample SD instead of selecting an arbitrary equal-budget
-run. Single-training-seed error bars remain episode-bootstrap intervals and are
-labelled separately from multi-seed variability.
+training-seed mean and hierarchical interval instead of selecting an arbitrary
+equal-budget run. Single-training-seed error bars reduce to episode-bootstrap
+intervals and are labelled separately from multi-seed uncertainty.
 
 ## 6. Smoke experiments and resource observations
 

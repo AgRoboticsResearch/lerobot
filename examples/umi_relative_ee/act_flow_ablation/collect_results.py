@@ -234,9 +234,67 @@ def bootstrap_paired_improvement_interval(
     return float(low), float(high)
 
 
+def hierarchical_bootstrap_mean_interval(
+    groups: list[np.ndarray], *, rng: np.random.Generator, num_resamples: int = 10_000
+) -> tuple[float, float]:
+    """Resample training runs first, then episodes within each selected run."""
+    if not groups:
+        raise ValueError("At least one training-seed group is required")
+    if len(groups) == 1:
+        return bootstrap_mean_interval(groups[0], rng=rng, num_resamples=num_resamples)
+    if len({len(group) for group in groups}) != 1:
+        raise ValueError("Training-seed groups have different episode counts")
+    values = np.stack(groups)
+    num_groups, num_episodes = values.shape
+    group_indices = rng.integers(0, num_groups, size=(num_resamples, num_groups))
+    episode_indices = rng.integers(
+        0, num_episodes, size=(num_resamples, num_groups, num_episodes)
+    )
+    resampled = values[group_indices[:, :, None], episode_indices]
+    low, high = np.percentile(resampled.mean(axis=(1, 2)), [2.5, 97.5])
+    return float(low), float(high)
+
+
+def hierarchical_bootstrap_paired_improvement_interval(
+    baseline_groups: list[np.ndarray],
+    candidate_groups: list[np.ndarray],
+    *,
+    rng: np.random.Generator,
+    num_resamples: int = 10_000,
+) -> tuple[float, float]:
+    """Hierarchically resample paired policies using identical seeds and episodes."""
+    if len(baseline_groups) != len(candidate_groups) or not baseline_groups:
+        raise ValueError("Paired policies must have the same nonzero number of training seeds")
+    if len(baseline_groups) == 1:
+        return bootstrap_paired_improvement_interval(
+            baseline_groups[0], candidate_groups[0], rng=rng, num_resamples=num_resamples
+        )
+    shapes = {group.shape for group in baseline_groups + candidate_groups}
+    if len(shapes) != 1:
+        raise ValueError("Paired training-seed groups have different episode shapes")
+    baselines = np.stack(baseline_groups)
+    candidates = np.stack(candidate_groups)
+    num_groups, num_episodes = baselines.shape
+    group_indices = rng.integers(0, num_groups, size=(num_resamples, num_groups))
+    episode_indices = rng.integers(
+        0, num_episodes, size=(num_resamples, num_groups, num_episodes)
+    )
+    resampled_baselines = baselines[group_indices[:, :, None], episode_indices]
+    resampled_candidates = candidates[group_indices[:, :, None], episode_indices]
+    baseline_means = resampled_baselines.mean(axis=(1, 2))
+    candidate_means = resampled_candidates.mean(axis=(1, 2))
+    improvements = (baseline_means - candidate_means) / baseline_means * 100
+    low, high = np.percentile(improvements, [2.5, 97.5])
+    return float(low), float(high)
+
+
 def summarize_variants(
     reports_by_run: dict[str, list[dict[str, Any]]], runs_by_name: dict[str, dict[str, Any]]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, tuple[tuple[str, ...], dict[str, np.ndarray]]],
+]:
     """Return seed-averaged summaries and paired differences from fresh ACT R18."""
     episode_data_by_run = {
         run_name: aggregate_episode_metrics(reports) for run_name, reports in reports_by_run.items()
@@ -256,9 +314,8 @@ def summarize_variants(
             ),
             "cuda_peak_memory_bytes": max(int(report["cuda_peak_memory_bytes"]) for report in reports),
         }
-        rng = np.random.default_rng(0)
         for metric, values in metrics.items():
-            low, high = bootstrap_mean_interval(values, rng=rng)
+            low, high = bootstrap_mean_interval(values, rng=np.random.default_rng(0))
             seed_means = [float(report["summary"]["episode_balanced"][metric]) for report in reports]
             row[metric] = float(values.mean())
             row[f"{metric}_ci_low"] = low
@@ -314,11 +371,13 @@ def summarize_variants(
                     "paired_improvement_percent_ci_high": improvement_high,
                 }
             )
-    return summary_rows, comparison_rows
+    return summary_rows, comparison_rows, episode_data_by_run
 
 
 def summarize_training_seed_variability(
-    variant_rows: list[dict[str, Any]], comparison_rows: list[dict[str, Any]]
+    variant_rows: list[dict[str, Any]],
+    comparison_rows: list[dict[str, Any]],
+    episode_data_by_run: dict[str, tuple[tuple[str, ...], dict[str, np.ndarray]]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Aggregate independent training runs without conflating them with inference seeds."""
     variants: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
@@ -336,10 +395,19 @@ def summarize_training_seed_variability(
         }
         for metric in COMPARISON_METRICS:
             values = [float(row[metric]) for row in rows]
+            episode_id_groups = [episode_data_by_run[row["run_name"]][0] for row in rows]
+            if any(ids != episode_id_groups[0] for ids in episode_id_groups[1:]):
+                raise ValueError(f"Episode ID mismatch across training seeds for {variant} at {steps}")
+            metric_groups = [episode_data_by_run[row["run_name"]][1][metric] for row in rows]
+            hierarchical_low, hierarchical_high = hierarchical_bootstrap_mean_interval(
+                metric_groups, rng=np.random.default_rng(0)
+            )
             result[f"{metric}_mean"] = statistics.mean(values)
             result[f"{metric}_training_seed_sd"] = statistics.stdev(values) if len(values) > 1 else None
             result[f"{metric}_min"] = min(values)
             result[f"{metric}_max"] = max(values)
+            result[f"{metric}_hierarchical_ci_low"] = hierarchical_low
+            result[f"{metric}_hierarchical_ci_high"] = hierarchical_high
         variant_seed_rows.append(result)
 
     comparisons: dict[tuple[str, str, int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -353,6 +421,28 @@ def summarize_training_seed_variability(
         seeds = sorted(int(row["training_seed"]) for row in rows)
         differences = [float(row["paired_difference"]) for row in rows]
         improvements = [float(row["paired_improvement_percent"]) for row in rows]
+        candidate_episode_ids = [episode_data_by_run[row["run_name"]][0] for row in rows]
+        baseline_episode_ids = [episode_data_by_run[row["baseline_run_name"]][0] for row in rows]
+        all_episode_ids = candidate_episode_ids + baseline_episode_ids
+        if any(ids != all_episode_ids[0] for ids in all_episode_ids[1:]):
+            raise ValueError(
+                f"Episode ID mismatch across paired training seeds for {variant} vs {baseline}"
+            )
+        candidate_groups = [episode_data_by_run[row["run_name"]][1][metric] for row in rows]
+        baseline_groups = [
+            episode_data_by_run[row["baseline_run_name"]][1][metric] for row in rows
+        ]
+        difference_low, difference_high = hierarchical_bootstrap_mean_interval(
+            [candidate - baseline_values for candidate, baseline_values in zip(
+                candidate_groups, baseline_groups, strict=True
+            )],
+            rng=np.random.default_rng(0),
+        )
+        improvement_low, improvement_high = (
+            hierarchical_bootstrap_paired_improvement_interval(
+                baseline_groups, candidate_groups, rng=np.random.default_rng(0)
+            )
+        )
         comparison_seed_rows.append(
             {
                 "variant": variant,
@@ -367,12 +457,16 @@ def summarize_training_seed_variability(
                 ),
                 "paired_difference_min": min(differences),
                 "paired_difference_max": max(differences),
+                "paired_difference_hierarchical_ci_low": difference_low,
+                "paired_difference_hierarchical_ci_high": difference_high,
                 "paired_improvement_percent_mean": statistics.mean(improvements),
                 "paired_improvement_percent_training_seed_sd": (
                     statistics.stdev(improvements) if len(improvements) > 1 else None
                 ),
                 "paired_improvement_percent_min": min(improvements),
                 "paired_improvement_percent_max": max(improvements),
+                "paired_improvement_percent_hierarchical_ci_low": improvement_low,
+                "paired_improvement_percent_hierarchical_ci_high": improvement_high,
             }
         )
     return variant_seed_rows, comparison_seed_rows
@@ -427,9 +521,11 @@ def main() -> None:
                 raise ValueError(f"Unexpected common-horizon query bounds in {report_path}: {bounds}")
             reports_by_run[run_dir.name].append(report)
 
-    variant_rows, comparison_rows = summarize_variants(reports_by_run, runs_by_name)
+    variant_rows, comparison_rows, episode_data_by_run = summarize_variants(
+        reports_by_run, runs_by_name
+    )
     variant_seed_rows, comparison_seed_rows = summarize_training_seed_variability(
-        variant_rows, comparison_rows
+        variant_rows, comparison_rows, episode_data_by_run
     )
 
     result_dir = args.artifact_root / "results"
