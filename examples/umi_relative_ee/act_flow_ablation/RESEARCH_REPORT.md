@@ -617,6 +617,14 @@ the conservative retry sets `num_workers=0` and disables persistent workers.
 This is a reliability intervention, not a model/hyperparameter change, and the
 interrupted attempt is timestamp-archived rather than overwritten.
 
+The single-process retry subsequently passed the exact earlier failure point:
+the same Python PID that started at 08:05:21 reached update 2,232 without a
+restart, exceeding the interrupted run's update 2,195. A contemporaneous kernel
+check contained no new segfault, OOM, NVIDIA Xid, or CUDA event. This is direct
+evidence that removing multiprocessing changed the observed failure behavior;
+it does not by itself prove that the entire 30k run will complete, so the
+supervisor and bounded retries remain active.
+
 To prevent a second child failure from silently stopping the study,
 `supervise_remaining.sh` now records every child exit status, preserves failed
 attempts under the external artifact root's `interrupted/` directory, retries
