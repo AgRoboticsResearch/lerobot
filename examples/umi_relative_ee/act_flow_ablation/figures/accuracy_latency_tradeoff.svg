@@ -9,7 +9,7 @@
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
-      <dc:title>Matplotlib v3.10.9, https://matplotlib.org/</dc:title>
+      <dc:title>Matplotlib v3.10.7, https://matplotlib.org/</dc:title>
      </cc:Agent>
     </dc:creator>
    </cc:Work>
@@ -1328,7 +1328,7 @@ z
    </g>
    <g id="text_20">
     <!-- ACT R18 (30k) -->
-    <g transform="translate(13.390034 346.141554) scale(0.08 -0.08)">
+    <g transform="translate(13.390034 325.141554) scale(0.08 -0.08)">
      <defs>
       <path id="DejaVuSans-52" d="M 2841 2188
 Q 3044 2119 3236 1894
@@ -1493,7 +1493,7 @@ z
    </g>
    <g id="text_23">
     <!-- ACT R50 V2 (30k) -->
-    <g transform="translate(61.857886 382.970852) scale(0.08 -0.08)">
+    <g transform="translate(61.857886 360.970852) scale(0.08 -0.08)">
      <defs>
       <path id="DejaVuSans-56" d="M 1831 0
 L 50 4666

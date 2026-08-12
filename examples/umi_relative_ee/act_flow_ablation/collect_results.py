@@ -325,12 +325,17 @@ def summarize_variants(
 
     comparison_pairs = set()
     for run_name, run in runs_by_name.items():
+        # Training directories appear before their decoded evaluations finish.
+        # Never promote an unevaluated live/incomplete run into a paired
+        # comparison merely because its baseline already has episode data.
+        if run_name not in episode_data_by_run:
+            continue
         baseline_name = f"act_r18_vae_seed{run['training_seed']}_{run['steps']}steps"
         if run_name != baseline_name and baseline_name in episode_data_by_run:
             comparison_pairs.add((run_name, baseline_name))
     for candidate_variant, baseline_variant in EXTRA_PAIRED_VARIANTS:
         for run_name, run in runs_by_name.items():
-            if run["variant"] != candidate_variant:
+            if run["variant"] != candidate_variant or run_name not in episode_data_by_run:
                 continue
             baseline_name = f"{baseline_variant}_seed{run['training_seed']}_{run['steps']}steps"
             if baseline_name in episode_data_by_run:

@@ -1030,6 +1030,12 @@ later host or validation failure, `run_one.sh` now defaults every run longer
 than 10k steps to 10k recovery checkpoints (while retaining an explicit
 environment override).
 
+The same recovered ACT-DP run completed its second validation at step 20,000
+with `loss=diffusion_loss=0.018327`, improving 9.70% from the 10k value. A
+second complete model/optimizer/RNG checkpoint was verified under `020000`.
+This is still an intermediate training-curve observation; the causal comparison
+uses the common decoded evaluation of the final promoted checkpoint.
+
 The operational lesson is stronger than merely “install PyAV”: never run a
 pruning environment synchronization against a virtual environment used by live
 training. Large candidate dependencies must be installed additively or in a
