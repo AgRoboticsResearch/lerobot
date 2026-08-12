@@ -11,6 +11,7 @@ from examples.umi_relative_ee.act_flow_ablation.collect_results import (
     hierarchical_bootstrap_paired_improvement_interval,
     parse_log,
     parse_run_name,
+    summarize_training_seed_variability,
     validate_evaluation_report,
 )
 
@@ -175,3 +176,31 @@ def test_hierarchical_paired_bootstrap_preserves_seed_and_episode_pairing():
 
     assert low == pytest.approx(10.0)
     assert high == pytest.approx(30.0)
+
+
+def test_training_seed_summary_rejects_duplicate_seed():
+    run_name = "act_r18_vae_seed1000_100000steps"
+    row = {
+        "run_name": run_name,
+        "variant": "act_r18_vae",
+        "training_seed": 1000,
+        "steps": 100000,
+    }
+
+    with pytest.raises(ValueError, match="Duplicate training seed"):
+        summarize_training_seed_variability([row, dict(row)], [], {})
+
+
+def test_paired_training_seed_summary_rejects_asymmetric_seed_pair():
+    comparison = {
+        "run_name": "act_r50_vae_seed1000_100000steps",
+        "baseline_run_name": "act_r18_vae_seed2000_100000steps",
+        "variant": "act_r50_vae",
+        "baseline_variant": "act_r18_vae",
+        "training_seed": 1000,
+        "steps": 100000,
+        "metric": "xyz_end_m",
+    }
+
+    with pytest.raises(ValueError, match="Candidate/baseline training-seed mismatch"):
+        summarize_training_seed_variability([], [comparison], {})

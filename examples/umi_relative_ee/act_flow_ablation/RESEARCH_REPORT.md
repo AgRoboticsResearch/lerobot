@@ -298,6 +298,8 @@ policy comparison, failing loudly instead of silently intersecting or
 shape-matching different episodes. It also checks that the seed encoded in each
 directory matches the JSON, that inference seeds are unique within a run, and
 that every fixed evaluation contains the expected 100 episodes and 500 queries.
+Across confirmations it rejects duplicate training seeds and requires every
+candidate/baseline paired comparison to have the same training-seed set.
 Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and
@@ -343,11 +345,12 @@ throughput. Dedicated timed runs are required before latency conclusions.
 ## 7. Validation and test evidence so far
 
 - Ruff and whitespace checks pass on all changed files.
-- Ten focused collector/statistics tests pass in 0.05 s. They cover online
+- Twelve focused collector/statistics tests pass in 0.04 s. They cover online
   versus EMA parameter accounting, exact inference-seed episode matching,
   fixed-query provenance, ratio-of-means paired improvement, single-seed
-  reduction, training-seed cluster resampling, and preservation of paired seed
-  and episode indices. The verified host command sets
+  reduction, training-seed cluster resampling, preservation of paired seed and
+  episode indices, duplicate training seeds, and asymmetric candidate/baseline
+  seed sets. The verified host command sets
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`; otherwise an unrelated installed ROS/ament
   pytest plugin imports the optional hardware test module and skips collection
   on missing `deepdiff` before the requested pure-NumPy test file is collected.

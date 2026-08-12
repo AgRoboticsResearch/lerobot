@@ -387,6 +387,8 @@ def summarize_training_seed_variability(
     variant_seed_rows = []
     for (variant, steps), rows in sorted(variants.items()):
         seeds = sorted(int(row["training_seed"]) for row in rows)
+        if len(seeds) != len(set(seeds)):
+            raise ValueError(f"Duplicate training seed for {variant} at {steps} steps: {seeds}")
         result: dict[str, Any] = {
             "variant": variant,
             "steps": steps,
@@ -419,6 +421,18 @@ def summarize_training_seed_variability(
     comparison_seed_rows = []
     for (variant, baseline, steps, metric), rows in sorted(comparisons.items()):
         seeds = sorted(int(row["training_seed"]) for row in rows)
+        if len(seeds) != len(set(seeds)):
+            raise ValueError(
+                f"Duplicate paired training seed for {variant} vs {baseline} at {steps}: {seeds}"
+            )
+        baseline_seeds = sorted(
+            int(parse_run_name(row["baseline_run_name"])["training_seed"]) for row in rows
+        )
+        if seeds != baseline_seeds:
+            raise ValueError(
+                f"Candidate/baseline training-seed mismatch for {variant} vs {baseline} "
+                f"at {steps}: candidate={seeds}, baseline={baseline_seeds}"
+            )
         differences = [float(row["paired_difference"]) for row in rows]
         improvements = [float(row["paired_improvement_percent"]) for row in rows]
         candidate_episode_ids = [episode_data_by_run[row["run_name"]][0] for row in rows]
