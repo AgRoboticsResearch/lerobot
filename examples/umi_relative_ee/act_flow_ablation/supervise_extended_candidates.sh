@@ -7,6 +7,7 @@ WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-umi_arch_confirmation_eval_20260812}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/training_completion.sh"
+. "$SCRIPT_DIR/lingbot_asset_validation.sh"
 REPO="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 SUPERVISOR_LOG="$ARTIFACT_ROOT/logs/extended_candidates_$(date '+%Y%m%d_%H%M%S').log"
@@ -15,6 +16,32 @@ mkdir -p "$ARTIFACT_ROOT/logs" "$ARTIFACT_ROOT/interrupted" "$ARTIFACT_ROOT/inte
 exec > >(tee -a "$SUPERVISOR_LOG") 2>&1
 
 timestamp() { date '+%F %T'; }
+
+smoke_lingbot() {
+  local smoke_root status trainable frozen
+  while tmux has-session -t umi_lingbot_prefetch_20260812 2>/dev/null; do
+    echo "[$(timestamp)] waiting for verified LingBot assets"
+    sleep 60
+  done
+  trainable="${UMI_LINGBOT_CHECKPOINT:-$ARTIFACT_ROOT/pretrained/lingbot_va_libero_long}"
+  frozen="${UMI_LINGBOT_FROZEN:-$ARTIFACT_ROOT/pretrained/lingbot_va_frozen_libero_long}"
+  if ! lingbot_assets_complete "$trainable" "$frozen"; then
+    echo "[$(timestamp)] LingBot assets failed structural validation; skipping GPU smoke and long run"
+    return 1
+  fi
+  smoke_root="$ARTIFACT_ROOT/smoke_supervised/$(date '+%Y%m%d_%H%M%S')_lingbot_va_axis_angle"
+  echo "[$(timestamp)] LingBot host-GPU preflight: two updates, batch=1, workers=0"
+  UMI_ABLATION_ROOT="$smoke_root" UMI_NUM_WORKERS=0 UMI_PERSISTENT_WORKERS=false \
+    UMI_LINGBOT_CHECKPOINT="$trainable" UMI_LINGBOT_FROZEN="$frozen" \
+    UMI_LINGBOT_BATCH_SIZE=1 UMI_SAVE_CHECKPOINT=false UMI_VAL_FREQ=1000 \
+    "$SCRIPT_DIR/run_one.sh" lingbot_va_axis_angle 2 1000
+  status=$?
+  if [[ "$status" -ne 0 ]]; then
+    echo "[$(timestamp)] LingBot host-GPU preflight failed status=$status; preserving smoke artifacts"
+    return 1
+  fi
+  echo "[$(timestamp)] LingBot host-GPU preflight passed"
+}
 
 if [[ -n "$WAIT_FOR_SESSION" ]]; then
   echo "[$(timestamp)] waiting for $WAIT_FOR_SESSION to release the host GPU"
@@ -89,21 +116,27 @@ evaluate_one_run() {
 }
 
 echo "[$(timestamp)] extended candidate supervisor started; log=$SUPERVISOR_LOG"
+# LingBot is a 5B pretrained domain-adaptation candidate, not an architecture-
+# matched causal control. One seed is sufficient to establish feasibility and
+# comparison; repeated seeds are promoted only if the first run is viable.
+LINGBOT_VIABLE=false
+if smoke_lingbot; then
+  train_one lingbot_va_axis_angle 30000 1000 || true
+  if is_complete lingbot_va_axis_angle 30000 1000; then LINGBOT_VIABLE=true; fi
+fi
+
 for variant in smolvla_rot6d smolvla_axis_angle; do
   train_one "$variant" 30000 1000 || true
   for seed in 1000 2000 3000; do train_one "$variant" 100000 "$seed" || true; done
 done
 
-# LingBot is a 5B pretrained domain-adaptation candidate, not an architecture-
-# matched causal control. One seed is sufficient to establish feasibility and
-# comparison; repeated seeds are promoted only if the first run is viable.
-train_one lingbot_va_axis_angle 30000 1000 || true
-
 for variant in smolvla_rot6d smolvla_axis_angle; do
   evaluate_one_run "$variant" 30000 1000
   for seed in 1000 2000 3000; do evaluate_one_run "$variant" 100000 "$seed"; done
 done
-evaluate_one_run lingbot_va_axis_angle 30000 1000
+if [[ "$LINGBOT_VIABLE" == true ]]; then
+  evaluate_one_run lingbot_va_axis_angle 30000 1000
+fi
 
 cd "$REPO"
 UV_CACHE_DIR=/tmp/uv-cache-umi-ablation uv run python "$SCRIPT_DIR/collect_results.py" \

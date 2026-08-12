@@ -1049,6 +1049,18 @@ that generic flow matching is intrinsically superior; a worse result could be
 caused by the one-camera/domain shift, optimization or memory constraints, or
 the objective. The ACT-L1/ACT-flow/ACT-DP trio remains the causal Q2 control.
 
+Because this is the largest and least certain candidate, its supervised stage
+now runs before the eight long SmolVLA notation jobs rather than after them.
+That changes latency to evidence, not the comparison matrix: both SmolVLA
+representations and all planned seeds remain queued. LingBot first waits for a
+shared structural predicate to verify the >9 GB trainable file, VAE and text
+encoder configs plus materialized weights, tokenizer, and absence of every
+`.incomplete` shard. It then runs a two-update, batch-1, worker-0 host-GPU
+preflight with checkpoint saving disabled. Only a successful flex-attention,
+LoRA, camera/action-layout, forward/backward/optimizer pass promotes the 30k
+run; failed smoke artifacts are retained and evaluation is skipped. Tests cover
+both a complete fake asset set and rejection after adding an incomplete shard.
+
 ### Shared-environment dependency incident
 
 At 12:12 on 2026-08-12, an attempt to add LingBot dependencies with a narrow

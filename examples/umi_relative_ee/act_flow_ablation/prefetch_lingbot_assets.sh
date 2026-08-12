@@ -11,6 +11,8 @@ FROZEN_DIR="${UMI_LINGBOT_FROZEN:-$ARTIFACT_ROOT/pretrained/lingbot_va_frozen_li
 RETRY_SECONDS="${UMI_LINGBOT_RETRY_SECONDS:-30}"
 HF_BIN="${UMI_HF_BIN:-/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified/.venv/bin/hf}"
 LOG="$ARTIFACT_ROOT/logs/lingbot_prefetch_$(date '+%Y%m%d_%H%M%S').log"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lingbot_asset_validation.sh"
 export HF_HOME
 export HF_TOKEN_PATH="${HF_TOKEN_PATH:-/home/zfei/.cache/huggingface/token}"
 
@@ -19,29 +21,12 @@ exec > >(tee -a "$LOG") 2>&1
 
 timestamp() { date '+%F %T'; }
 
-has_weight() {
-  local directory="$1"
-  find "$directory" -maxdepth 1 -type f \
-    \( -name '*.safetensors' -o -name '*.bin' \) -size +1M -print -quit 2>/dev/null | grep -q .
-}
-
 trainable_complete() {
-  [[ -s "$TRAINABLE_DIR/config.json" ]] &&
-    [[ -s "$TRAINABLE_DIR/model.safetensors" ]] &&
-    [[ "$(stat -c '%s' "$TRAINABLE_DIR/model.safetensors")" -gt 9000000000 ]] &&
-    [[ -s "$TRAINABLE_DIR/policy_preprocessor.json" ]] &&
-    [[ -s "$TRAINABLE_DIR/policy_postprocessor.json" ]] &&
-    ! find "$TRAINABLE_DIR/.cache/huggingface/download" -maxdepth 1 -type f \
-      -name '*.incomplete' -print -quit 2>/dev/null | grep -q .
+  lingbot_trainable_complete "$TRAINABLE_DIR"
 }
 
 frozen_complete() {
-  [[ -s "$FROZEN_DIR/vae/config.json" ]] && has_weight "$FROZEN_DIR/vae" &&
-    [[ -s "$FROZEN_DIR/text_encoder/config.json" ]] && has_weight "$FROZEN_DIR/text_encoder" &&
-    [[ -d "$FROZEN_DIR/tokenizer" ]] &&
-    find "$FROZEN_DIR/tokenizer" -maxdepth 1 -type f -size +0c -print -quit 2>/dev/null | grep -q . &&
-    ! find "$FROZEN_DIR/.cache/huggingface/download" -type f \
-      -name '*.incomplete' -print -quit 2>/dev/null | grep -q .
+  lingbot_frozen_complete "$FROZEN_DIR"
 }
 
 echo "[$(timestamp)] LingBot prefetch supervisor started; log=$LOG"

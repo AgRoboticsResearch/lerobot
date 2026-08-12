@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 SCRIPT = Path("examples/umi_relative_ee/act_flow_ablation/prefetch_lingbot_assets.sh").resolve()
+VALIDATION = Path("examples/umi_relative_ee/act_flow_ablation/lingbot_asset_validation.sh").resolve()
 
 
 def test_prefetch_validates_both_asset_groups(tmp_path: Path) -> None:
@@ -52,3 +53,30 @@ fi
     assert "verified trainable LingBot checkpoint" in result.stdout
     assert "verified frozen VAE, text encoder, and tokenizer assets" in result.stdout
 
+
+def test_shared_validation_rejects_incomplete_shard(tmp_path: Path) -> None:
+    trainable = tmp_path / "trainable"
+    frozen = tmp_path / "frozen"
+    for directory in (trainable, frozen / "vae", frozen / "text_encoder", frozen / "tokenizer"):
+        directory.mkdir(parents=True)
+    (trainable / "config.json").write_text("config")
+    (trainable / "policy_preprocessor.json").write_text("processor")
+    (trainable / "policy_postprocessor.json").write_text("processor")
+    (trainable / "model.safetensors").write_bytes(b"")
+    (trainable / "model.safetensors").touch()
+    os.truncate(trainable / "model.safetensors", 9_000_000_001)
+    (frozen / "vae" / "config.json").write_text("config")
+    (frozen / "vae" / "model.safetensors").write_bytes(b"")
+    os.truncate(frozen / "vae" / "model.safetensors", 1_048_577)
+    (frozen / "text_encoder" / "config.json").write_text("config")
+    (frozen / "text_encoder" / "model.safetensors").write_bytes(b"")
+    os.truncate(frozen / "text_encoder" / "model.safetensors", 1_048_577)
+    (frozen / "tokenizer" / "tokenizer.json").write_text("tokenizer")
+
+    command = f'. "{VALIDATION}"; lingbot_assets_complete "{trainable}" "{frozen}"'
+    assert subprocess.run(["bash", "-c", command], check=False).returncode == 0
+
+    incomplete = frozen / ".cache" / "huggingface" / "download" / "model.incomplete"
+    incomplete.parent.mkdir(parents=True)
+    incomplete.write_text("partial")
+    assert subprocess.run(["bash", "-c", command], check=False).returncode != 0
