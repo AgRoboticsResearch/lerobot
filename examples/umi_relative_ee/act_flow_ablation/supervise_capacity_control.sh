@@ -7,6 +7,7 @@ TRAINING_SEED="${1:-1000}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/training_completion.sh"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 SUPERVISOR_LOG="$ARTIFACT_ROOT/logs/capacity_control_supervisor_$(date '+%Y%m%d_%H%M%S').log"
 VARIANTS=(act_r50_v1_vae act_r18_diffusion_lr1e5)
@@ -31,11 +32,9 @@ run_name() {
 }
 
 is_complete() {
-  local variant="$1" steps="$2" name log checkpoint
+  local variant="$1" steps="$2" name
   name="$(run_name "$variant" "$steps")"
-  log="$ARTIFACT_ROOT/logs/$name.log"
-  checkpoint="$ARTIFACT_ROOT/train/$name/checkpoints/$steps/pretrained_model/model.safetensors"
-  [[ -f "$checkpoint" ]] && grep -Fq "] completed $name" "$log"
+  training_is_complete "$ARTIFACT_ROOT" "$name" "$steps"
 }
 
 archive_incomplete() {
@@ -76,7 +75,8 @@ run_with_retries() {
       UMI_NUM_WORKERS="$workers" "$SCRIPT_DIR/run_one.sh" "$variant" "$steps" "$TRAINING_SEED"
     fi
     status=$?
-    if [[ "$status" -eq 0 ]] && is_complete "$variant" "$steps"; then
+    recover_training_completion "$ARTIFACT_ROOT" "$(run_name "$variant" "$steps")" "$steps" || true
+    if is_complete "$variant" "$steps"; then
       echo "[$(timestamp)] verified complete: $(run_name "$variant" "$steps")"
       return 0
     fi

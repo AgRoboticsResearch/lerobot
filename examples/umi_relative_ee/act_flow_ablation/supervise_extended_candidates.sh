@@ -6,6 +6,7 @@ set -uo pipefail
 WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-umi_arch_confirmation_eval_20260812}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/training_completion.sh"
 REPO="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 SUPERVISOR_LOG="$ARTIFACT_ROOT/logs/extended_candidates_$(date '+%Y%m%d_%H%M%S').log"
@@ -23,11 +24,9 @@ fi
 run_name() { printf '%s_seed%s_%ssteps' "$1" "$3" "$2"; }
 
 is_complete() {
-  local name checkpoint log
+  local name
   name="$(run_name "$1" "$2" "$3")"
-  checkpoint="$ARTIFACT_ROOT/train/$name/checkpoints/$2/pretrained_model/model.safetensors"
-  log="$ARTIFACT_ROOT/logs/$name.log"
-  [[ -f "$checkpoint" ]] && grep -Fq "] completed $name" "$log"
+  training_is_complete "$ARTIFACT_ROOT" "$name" "$2"
 }
 
 archive_incomplete() {
@@ -57,7 +56,8 @@ train_one() {
     UMI_NUM_WORKERS="$workers" UMI_PERSISTENT_WORKERS=false UMI_SAVE_FREQ=10000 \
       "$SCRIPT_DIR/run_one.sh" "$variant" "$steps" "$seed"
     status=$?
-    if [[ "$status" -eq 0 ]] && is_complete "$variant" "$steps" "$seed"; then return 0; fi
+    recover_training_completion "$ARTIFACT_ROOT" "$(run_name "$variant" "$steps" "$seed")" "$steps" || true
+    if is_complete "$variant" "$steps" "$seed"; then return 0; fi
   done
   echo "[$(timestamp)] exhausted training retries: $(run_name "$variant" "$steps" "$seed")"
   return 1

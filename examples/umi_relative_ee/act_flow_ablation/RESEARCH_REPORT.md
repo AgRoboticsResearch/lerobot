@@ -1105,6 +1105,20 @@ separate environment, and imports used by future DataLoader workers must be
 tested before the next validation/checkpoint boundary. Failed logs were kept
 with incident-specific names; they are provenance, not scientific endpoints.
 
+A second reliability lesson came from the successful ACT-DP and R50 runs: a
+shell pipeline can return nonzero after the trainer has emitted `End of
+training` and written its complete final checkpoint, but before the launcher
+appends its own completion marker. Treating the wrapper marker as the only
+truth would archive and retrain valid work. All training supervisors now share
+a conservative durable-completion check requiring the exact requested
+`training_step`, nonempty model, optimizer, RNG, config, and processor state,
+plus the trainer's terminal message. When only the outer marker is missing,
+the supervisor appends an explicit `recovered-complete` provenance line and
+advances; partial checkpoints cannot pass. A sidecar applies the same rule to
+the already-running official U-Net process, whose shell functions predate the
+patch. Focused tests cover exact-step mismatch, missing optimizer state, and
+idempotent recovery marking.
+
 ## 11. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
