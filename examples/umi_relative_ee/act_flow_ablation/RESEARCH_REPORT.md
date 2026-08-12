@@ -242,6 +242,10 @@ episodes. Reports use episode-balanced means and deterministic
 as the resampling unit. ACT-flow and Diffusion Policy are additionally evaluated
 with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
 seeds are varied only after this screen selects configurations worth promoting.
+The collector keeps inference-seed averaging and training-seed variability as
+two distinct statistical levels. It emits per-training-run episode bootstrap
+intervals, then separate cross-training-seed mean/SD/min/max tables; repeated
+sampler draws are never treated as independently trained models.
 Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and

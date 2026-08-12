@@ -255,6 +255,67 @@ def summarize_variants(
     return summary_rows, comparison_rows
 
 
+def summarize_training_seed_variability(
+    variant_rows: list[dict[str, Any]], comparison_rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Aggregate independent training runs without conflating them with inference seeds."""
+    variants: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+    for row in variant_rows:
+        variants[(row["variant"], row["steps"])].append(row)
+
+    variant_seed_rows = []
+    for (variant, steps), rows in sorted(variants.items()):
+        seeds = sorted(int(row["training_seed"]) for row in rows)
+        result: dict[str, Any] = {
+            "variant": variant,
+            "steps": steps,
+            "num_training_seeds": len(seeds),
+            "training_seeds": json.dumps(seeds),
+        }
+        for metric in COMPARISON_METRICS:
+            values = [float(row[metric]) for row in rows]
+            result[f"{metric}_mean"] = statistics.mean(values)
+            result[f"{metric}_training_seed_sd"] = statistics.stdev(values) if len(values) > 1 else None
+            result[f"{metric}_min"] = min(values)
+            result[f"{metric}_max"] = max(values)
+        variant_seed_rows.append(result)
+
+    comparisons: dict[tuple[str, str, int, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in comparison_rows:
+        comparisons[
+            (row["variant"], row["baseline_variant"], row["steps"], row["metric"])
+        ].append(row)
+
+    comparison_seed_rows = []
+    for (variant, baseline, steps, metric), rows in sorted(comparisons.items()):
+        seeds = sorted(int(row["training_seed"]) for row in rows)
+        differences = [float(row["paired_difference"]) for row in rows]
+        improvements = [float(row["paired_improvement_percent"]) for row in rows]
+        comparison_seed_rows.append(
+            {
+                "variant": variant,
+                "baseline_variant": baseline,
+                "steps": steps,
+                "metric": metric,
+                "num_training_seeds": len(seeds),
+                "training_seeds": json.dumps(seeds),
+                "paired_difference_mean": statistics.mean(differences),
+                "paired_difference_training_seed_sd": (
+                    statistics.stdev(differences) if len(differences) > 1 else None
+                ),
+                "paired_difference_min": min(differences),
+                "paired_difference_max": max(differences),
+                "paired_improvement_percent_mean": statistics.mean(improvements),
+                "paired_improvement_percent_training_seed_sd": (
+                    statistics.stdev(improvements) if len(improvements) > 1 else None
+                ),
+                "paired_improvement_percent_min": min(improvements),
+                "paired_improvement_percent_max": max(improvements),
+            }
+        )
+    return variant_seed_rows, comparison_seed_rows
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -291,6 +352,9 @@ def main() -> None:
             reports_by_run[run_dir.name].append(report)
 
     variant_rows, comparison_rows = summarize_variants(reports_by_run, runs_by_name)
+    variant_seed_rows, comparison_seed_rows = summarize_training_seed_variability(
+        variant_rows, comparison_rows
+    )
 
     result_dir = args.artifact_root / "results"
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -299,6 +363,8 @@ def main() -> None:
     write_csv(result_dir / "stage1_evaluations.csv", evaluation_rows)
     write_csv(result_dir / "stage1_variant_summary.csv", variant_rows)
     write_csv(result_dir / "stage1_paired_comparisons.csv", comparison_rows)
+    write_csv(result_dir / "training_seed_variant_summary.csv", variant_seed_rows)
+    write_csv(result_dir / "training_seed_paired_comparisons.csv", comparison_seed_rows)
     write_csv(
         result_dir / "stage1_paired_vs_act_r18.csv",
         [row for row in comparison_rows if row["baseline_variant"] == "act_r18_vae"],
@@ -311,6 +377,8 @@ def main() -> None:
                 "evaluations": evaluation_rows,
                 "variant_summary": variant_rows,
                 "paired_comparisons": comparison_rows,
+                "training_seed_variant_summary": variant_seed_rows,
+                "training_seed_paired_comparisons": comparison_seed_rows,
             },
             indent=2,
         )
