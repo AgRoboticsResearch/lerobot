@@ -643,6 +643,16 @@ evaluation seeds independently. It then runs result collection and figure
 generation. Thus an evaluation failure cannot discard completed training or
 prevent later candidates from being measured.
 
+Independent training-seed confirmation is also encoded as a non-contending
+successor rather than mixed into the screen. After all seed-1000 evaluations,
+`supervise_confirmation_training.sh` trains the five promoted controlled
+variants at seeds 2000 and 3000 with the same 100k budget, preserving and
+retrying incomplete attempts. `supervise_confirmation_evaluations.sh` then
+applies one inference seed to deterministic ACT variants and three inference
+seeds to each generative variant. This yields three independent training seeds
+for the Q1 R18/R50 comparison and for the Q2 ACT-L1/ACT-flow/standard-DP
+comparison while keeping sampler variability nested inside training runs.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
@@ -660,6 +670,8 @@ fault-tolerant single-GPU queue used for the remaining long runs, and
 label the training budget explicitly; when both 30k and 100k results exist,
 endpoint/efficiency charts select the highest completed budget per variant and
 the learning-curve chart retains each independent budget as a separate line.
+The two `supervise_confirmation_*.sh` launchers encode the subsequent
+seed-2000/3000 training and evaluation chain.
 `plot_results.py` renders both SVG and high-resolution PNG figures from the
 collector outputs. Use a writable Matplotlib cache, for example:
 
