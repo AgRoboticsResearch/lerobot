@@ -728,7 +728,11 @@ retrying incomplete attempts. `supervise_confirmation_evaluations.sh` then
 applies one inference seed to deterministic ACT variants and three inference
 seeds to each generative variant. This yields three independent training seeds
 for the Q1 R18/R50 comparison and for the Q2 ACT-L1/ACT-flow/standard-DP
-comparison while keeping sampler variability nested inside training runs.
+comparison while keeping sampler variability nested inside training runs. A
+first attempt uses the established four-worker path; after any child failure,
+later attempts switch to single-process decoding (`num_workers=0`, no persistent
+workers), so a repeat does not exercise the same PyAV multiprocessing boundary
+that caused the official U-Net native crash.
 
 `monitor_experiment_chain.sh` independently records five-minute heartbeats for
 the four-session chain: live dependency sessions, relevant process count,

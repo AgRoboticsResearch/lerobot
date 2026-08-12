@@ -48,19 +48,26 @@ archive_incomplete() {
 }
 
 run_with_retries() {
-  local variant="$1" steps="$2" workers="$3" batch="${4:-}" attempt status
+  local variant="$1" steps="$2" workers="$3" batch="${4:-}" attempt attempt_workers status
   if is_complete "$variant" "$steps"; then
     echo "[$(timestamp)] already complete: $(run_name "$variant" "$steps")"
     return 0
   fi
   for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    attempt_workers="$workers"
+    if [[ "$attempt" -gt 1 && "$workers" -gt 0 ]]; then
+      attempt_workers=0
+    fi
     archive_incomplete "$variant" "$steps"
-    echo "[$(timestamp)] attempt $attempt/$MAX_ATTEMPTS: $(run_name "$variant" "$steps") workers=$workers batch=${batch:-default}"
+    echo "[$(timestamp)] attempt $attempt/$MAX_ATTEMPTS: $(run_name "$variant" "$steps") workers=$attempt_workers batch=${batch:-default}"
     if [[ -n "$batch" ]]; then
-      UMI_NUM_WORKERS="$workers" UMI_PERSISTENT_WORKERS=false UMI_OFFICIAL_BATCH_SIZE="$batch" \
+      UMI_NUM_WORKERS="$attempt_workers" UMI_PERSISTENT_WORKERS=false UMI_OFFICIAL_BATCH_SIZE="$batch" \
+        "$SCRIPT_DIR/run_one.sh" "$variant" "$steps" "$TRAINING_SEED"
+    elif [[ "$attempt_workers" -eq 0 ]]; then
+      UMI_NUM_WORKERS=0 UMI_PERSISTENT_WORKERS=false \
         "$SCRIPT_DIR/run_one.sh" "$variant" "$steps" "$TRAINING_SEED"
     else
-      UMI_NUM_WORKERS="$workers" \
+      UMI_NUM_WORKERS="$attempt_workers" \
         "$SCRIPT_DIR/run_one.sh" "$variant" "$steps" "$TRAINING_SEED"
     fi
     status=$?

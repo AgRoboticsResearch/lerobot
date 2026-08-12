@@ -60,15 +60,24 @@ archive_incomplete() {
 }
 
 run_with_retries() {
-  local variant="$1" seed="$2" attempt status
+  local variant="$1" seed="$2" attempt workers status
   if is_complete "$variant" "$seed"; then
     echo "[$(timestamp)] already complete: $(run_name "$variant" "$seed")"
     return 0
   fi
   for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    workers=4
+    if [[ "$attempt" -gt 1 ]]; then
+      workers=0
+    fi
     archive_incomplete "$variant" "$seed"
-    echo "[$(timestamp)] attempt $attempt/$MAX_ATTEMPTS: $(run_name "$variant" "$seed")"
-    UMI_NUM_WORKERS=4 "$SCRIPT_DIR/run_one.sh" "$variant" "$STEPS" "$seed"
+    echo "[$(timestamp)] attempt $attempt/$MAX_ATTEMPTS: $(run_name "$variant" "$seed") workers=$workers"
+    if [[ "$workers" -eq 0 ]]; then
+      UMI_NUM_WORKERS=0 UMI_PERSISTENT_WORKERS=false \
+        "$SCRIPT_DIR/run_one.sh" "$variant" "$STEPS" "$seed"
+    else
+      UMI_NUM_WORKERS="$workers" "$SCRIPT_DIR/run_one.sh" "$variant" "$STEPS" "$seed"
+    fi
     status=$?
     if [[ "$status" -eq 0 ]] && is_complete "$variant" "$seed"; then
       echo "[$(timestamp)] verified complete: $(run_name "$variant" "$seed")"
