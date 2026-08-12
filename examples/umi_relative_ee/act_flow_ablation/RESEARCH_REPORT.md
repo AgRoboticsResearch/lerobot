@@ -210,6 +210,14 @@ implemented behind new policy types and a new `umi-official-dp` dependency
 extra, so ACT, matched ACT-flow, and ordinary `diffusion` defaults and classes
 remain unchanged.
 
+Normalization was traced through both dataset implementations. Upstream range
+normalizes translation and gripper to `[-1,1]` while assigning identity
+scale/offset to rotation-6D for actions and low-dimensional observations. The
+shared LeRobot processor applies MIN_MAX to translation/gripper and forces
+identity statistics on action rot6d plus both rot6d blocks in the derived 20D
+state. This preserves the released geometry instead of independently stretching
+near-constant rotation-matrix coordinates.
+
 This is an architecture/recipe port, not a claim of bit-for-bit reproduction.
 The necessary dataset/control adaptations are material and will be carried into
 every interpretation:
