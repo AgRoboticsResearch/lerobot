@@ -1312,6 +1312,16 @@ recorded 0.018488 at the same budget, but this small scalar gap is not yet an
 architecture ranking: parameterization and loss aggregation differ, and the
 pre-registered common decoded trajectories at final 30k remain the endpoint.
 
+At 20k, transformer-denoiser validation loss rose to 0.023143, 14.65% above
+its 10k value even though recent training loss continued downward near 0.020.
+The full 20k recovery state again passed the durability predicate with the same
+1.217 GB model/optimizer pair plus exact step, RNG, scheduler, processors, and
+configs. This is evidence of a widening train/validation gap or related
+scheduler/EMA dynamics, not yet evidence that the 10k policy decodes better.
+The pre-registered 30k run therefore continues, and final common-query metrics
+remain primary; retaining 10k/20k recovery checkpoints permits a later
+checkpoint-sensitivity check if the final decoded result is unexpectedly poor.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
