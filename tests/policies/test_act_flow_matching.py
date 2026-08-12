@@ -158,6 +158,23 @@ def test_diffusion_predict_action_chunk_shape_and_seeded_noise():
     torch.testing.assert_close(first, second)
 
 
+def test_diffusion_checkpoint_round_trip_preserves_fixed_noise_output(tmp_path):
+    policy = ACTPolicy(make_flow_config(action_objective="diffusion")).eval()
+    batch = make_batch()
+    batch.pop(ACTION)
+    batch.pop("action_is_pad")
+    noise = torch.randn(2, 4, 2)
+    expected = policy.predict_action_chunk(batch, noise=noise, num_steps=2)
+
+    policy.save_pretrained(tmp_path)
+    loaded = ACTPolicy.from_pretrained(tmp_path).eval()
+    actual = loaded.predict_action_chunk(batch, noise=noise, num_steps=2)
+
+    assert loaded.config.action_objective == "diffusion"
+    assert loaded.config.diffusion_num_train_timesteps == 100
+    torch.testing.assert_close(actual, expected)
+
+
 def test_diffusion_rejects_wrong_noise_shape():
     policy = ACTPolicy(make_flow_config(action_objective="diffusion")).eval()
     batch = make_batch()

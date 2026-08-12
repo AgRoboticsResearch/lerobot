@@ -398,12 +398,13 @@ throughput. Dedicated timed runs are required before latency conclusions.
 - ACT-flow produces finite differentiable loss, gradients in its noisy-action
   projection, deterministic outputs under fixed input noise, and rejects bad
   noise shapes.
-- Eleven focused ACT generative-objective tests pass. In addition to the flow
+- Twelve focused ACT generative-objective tests pass. In addition to the flow
   checks, they prove ACT-flow and ACT-DP have identical learned parameter names
   and shapes **and identical initialization under the same seed**, and verify
   ACT-DP's finite differentiable epsilon loss,
-  squared-cosine scheduler, deterministic fixed-noise DDIM output, and strict
-  noise-shape rejection.
+  squared-cosine scheduler, deterministic fixed-noise DDIM output, strict
+  noise-shape rejection, and save/reload equality of fixed-noise output plus
+  diffusion configuration.
 - Diffusion's UMI config produces `[-1, 0, ..., 31]`, strips the leading action
   into the two-pose derived state, and reconnects the same relative-action step
   to postprocessing.
