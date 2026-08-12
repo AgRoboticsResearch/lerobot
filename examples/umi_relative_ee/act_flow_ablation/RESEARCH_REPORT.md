@@ -645,7 +645,7 @@ CUDA memory. Lower is better throughout.
 | ACT-flow beta, 1e-4 | 34.59 | 59.13 | 3.810 | 5.689 | 29.62 | 203 |
 | ACT-DP, 1e-5 | 24.50 | 38.70 | 5.025 | 8.319 | 137.04 | 203 |
 | Diffusion R18 | 15.71 | 27.27 | 3.391 | 5.838 | 23.23 | 345 |
-| Official UMI U-Net | 16.14 | 28.76 | 3.239 | 5.838 | 47.82 | 1,277 |
+| Official UMI U-Net | 16.14 | 28.76 | 3.239 | 5.838 | 47.28 | 1,277 |
 
 Paired episode bootstrap comparisons (10,000 resamples) establish:
 
