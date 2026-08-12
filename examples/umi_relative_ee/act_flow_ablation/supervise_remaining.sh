@@ -105,6 +105,10 @@ select_official_batch() {
 echo "[$(timestamp)] supervisor started; log=$SUPERVISOR_LOG"
 
 for variant in umi_official_dp umi_official_transformer_dp; do
+  if is_complete "$variant" "$OFFICIAL_STEPS"; then
+    echo "[$(timestamp)] already complete: $(run_name "$variant" "$OFFICIAL_STEPS")"
+    continue
+  fi
   select_official_batch "$variant"
   if [[ -z "$SELECTED_BATCH" ]]; then
     echo "[$(timestamp)] no safe batch for $variant; advancing queue"

@@ -4,8 +4,12 @@
 # message and the complete resumable state before recovering a wrapper anomaly.
 
 durable_training_checkpoint() {
-  local artifact_root="$1" run_name="$2" steps="$3" checkpoint step_file
+  local artifact_root="$1" run_name="$2" steps="$3" checkpoint padded_steps step_file
   checkpoint="$artifact_root/train/$run_name/checkpoints/$steps"
+  if [[ ! -d "$checkpoint" ]]; then
+    printf -v padded_steps '%06d' "$steps"
+    checkpoint="$artifact_root/train/$run_name/checkpoints/$padded_steps"
+  fi
   step_file="$checkpoint/training_state/training_step.json"
 
   [[ -s "$checkpoint/pretrained_model/model.safetensors" ]] &&
@@ -17,7 +21,7 @@ durable_training_checkpoint() {
     [[ -s "$checkpoint/training_state/optimizer_param_groups.json" ]] &&
     [[ -s "$checkpoint/training_state/rng_state.safetensors" ]] &&
     [[ -s "$step_file" ]] &&
-    grep -Eq '"step"[[:space:]]*:[[:space:]]*'"$steps"'([[:space:]]*[,}])' "$step_file"
+    grep -Eq '"step"[[:space:]]*:[[:space:]]*'"$steps"'([[:space:]]*[,}])' < <(tr -d '\r\n' < "$step_file")
 }
 
 training_is_complete() {
@@ -37,4 +41,3 @@ recover_training_completion() {
     echo "[$timestamp] completed $run_name" | tee -a "$log"
   fi
 }
-

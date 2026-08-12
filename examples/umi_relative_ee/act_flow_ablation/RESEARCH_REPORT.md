@@ -1158,6 +1158,22 @@ loaded by restarting only the two sleeping waiter sessions; neither active
 trainer was interrupted. It reduces avoidable OOM risk without serializing the
 entire experiment chain.
 
+The official U-Net terminal transition then exposed two independent recovery
+checker assumptions. LeRobot saved the final directory as `030000`, while the
+checker first looked only for `30000`; its `training_step.json` was also
+pretty-printed across lines, while the exact-step regular expression assumed
+the closing brace was on the same line. The false negative let the legacy
+wrapper archive a valid run and start a duplicate. Live supervision stopped
+that duplicate after roughly 90 updates and stopped a prematurely released
+R50-V1 successor before useful training. The canonical artifact was restored
+and accepted only after independently confirming the 1.28 GB model, 1.28 GB
+optimizer, RNG/scheduler and processor state, exact step 30000, validation
+loss 0.018583, and `End of training`. The checker now resolves either padded or
+unpadded directories and removes JSON newlines before exact-step matching; a
+real-format zero-padded/pretty-JSON regression test accompanies the fix. The
+official evaluation seeds that had safely begun were retained, while sleeping
+downstream wrappers were removed for reconstruction in the intended order.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
