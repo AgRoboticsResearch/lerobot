@@ -1236,6 +1236,14 @@ behind the remaining 100k training queue; the later matrix evaluator reuses
 these outputs. Its evaluator retains the same five-minute allocation-settle
 window and 4 GiB free-VRAM gate.
 
+That transformer-denoiser control completed its first validation and durable
+checkpoint at 10k. Held-out diffusion loss was 0.020186; the checkpoint contains
+a 1,217,458,704-byte model, 1,217,460,564-byte optimizer state, exact step,
+RNG/scheduler, processor states, and configs. For context, the official U-Net
+recorded 0.018488 at the same budget, but this small scalar gap is not yet an
+architecture ranking: parameterization and loss aggregation differ, and the
+pre-registered common decoded trajectories at final 30k remain the endpoint.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
