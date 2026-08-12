@@ -906,7 +906,10 @@ read-back verified all six live sessions and every dependency message:
 capacity control waits for main training, evaluation waits for capacity
 control, confirmation training waits for evaluation, and confirmation
 evaluation waits for confirmation training. The refreshed monitor also saw all
-five workload/dependency sessions on its first heartbeat. R50-V1 and ACT-DP are
+five workload/dependency sessions on its first heartbeat. Its lifecycle list
+now includes the later extended-candidate session, so telemetry does not stop
+when the core confirmation chain exits while SmolVLA or LingBot is still
+training. R50-V1 and ACT-DP are
 therefore genuinely in the live queue before evaluation, not merely represented
 in launcher source.
 

@@ -15,6 +15,7 @@ SESSIONS=(
   umi_arch_eval_supervisor_20260812
   umi_arch_confirmation_train_20260812
   umi_arch_confirmation_eval_20260812
+  umi_arch_extended_candidates_20260812
 )
 MONITOR_LOG="$ARTIFACT_ROOT/logs/chain_monitor_$(date '+%Y%m%d_%H%M%S').log"
 
