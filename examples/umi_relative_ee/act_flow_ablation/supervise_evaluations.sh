@@ -8,6 +8,7 @@ SAMPLES_PER_EPISODE="${2:-5}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/evaluation_completion.sh"
 REPO="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 SUPERVISOR_LOG="$ARTIFACT_ROOT/logs/eval_supervisor_$(date '+%Y%m%d_%H%M%S').log"
@@ -35,11 +36,12 @@ evaluation_dir() {
 }
 
 is_complete() {
-  local run_name="$1" inference_seed="$2" out log report_count
+  local run_name="$1" inference_seed="$2" out log steps
   out="$(evaluation_dir "$run_name" "$inference_seed")"
   log="$(evaluation_log "$run_name" "$inference_seed")"
-  report_count="$(find "$out" -maxdepth 1 -type f -name '*_open_loop_metrics.json' -size +0c 2>/dev/null | wc -l)"
-  [[ "$report_count" -eq 1 ]] && grep -Fq "] completed evaluation $run_name seed $inference_seed" "$log"
+  steps="${run_name##*_}"
+  steps="${steps%steps}"
+  canonical_evaluation_complete "$out" "$log" "$run_name" "$inference_seed" "$steps"
 }
 
 archive_incomplete() {

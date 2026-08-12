@@ -13,6 +13,7 @@ from examples.umi_relative_ee.act_flow_ablation.collect_results import (
     parse_run_name,
     summarize_training_seed_variability,
     validate_evaluation_report,
+    validate_report_checkpoint_step,
 )
 
 METRICS = (
@@ -34,6 +35,14 @@ def test_parse_run_name_preserves_variant_and_numeric_fields():
         "training_seed": 1000,
         "steps": 30000,
     }
+
+
+def test_canonical_report_checkpoint_must_match_run_budget():
+    validate_report_checkpoint_step(Path("run_100000_open_loop_metrics.json"), 100000)
+    with pytest.raises(ValueError, match="does not match run budget"):
+        validate_report_checkpoint_step(Path("run_030000_open_loop_metrics.json"), 100000)
+    with pytest.raises(ValueError, match="does not match run budget"):
+        validate_report_checkpoint_step(Path("open_loop_metrics.json"), 100000)
 
 
 def test_parse_log_collects_parameters_wall_time_and_validation(tmp_path: Path):

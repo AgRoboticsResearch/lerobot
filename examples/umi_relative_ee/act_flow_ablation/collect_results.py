@@ -17,6 +17,7 @@ import numpy as np
 
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
+REPORT_STEP_RE = re.compile(r"_(?P<step>\d{6})_open_loop_metrics\.json$")
 SEED_DIR_RE = re.compile(r"^seed(?P<seed>\d+)$")
 LEARNABLE_PARAM_RE = re.compile(r"num_learnable_params=(?P<params>\d+)")
 TOTAL_PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
@@ -78,6 +79,15 @@ def parse_run_name(name: str) -> dict[str, Any]:
         "training_seed": int(values["seed"]),
         "steps": int(values["steps"]),
     }
+
+
+def validate_report_checkpoint_step(report_path: Path, expected_steps: int) -> None:
+    match = REPORT_STEP_RE.search(report_path.name)
+    if match is None or int(match["step"]) != expected_steps:
+        raise ValueError(
+            f"Evaluation checkpoint step does not match run budget for {report_path}: "
+            f"expected {expected_steps}"
+        )
 
 
 def parse_log(log_path: Path) -> dict[str, Any]:
@@ -513,6 +523,7 @@ def main() -> None:
         for report_path in sorted(
             (args.artifact_root / args.eval_dir_name / run_dir.name).glob("seed*/*_open_loop_metrics.json")
         ):
+            validate_report_checkpoint_step(report_path, run["steps"])
             evaluation_rows.append(flatten_evaluation(report_path, run))
             report = json.loads(report_path.read_text())
             inference_seed = validate_evaluation_report(

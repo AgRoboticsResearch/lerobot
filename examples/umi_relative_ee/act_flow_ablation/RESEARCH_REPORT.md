@@ -307,7 +307,7 @@ controlled architecture-and-exposure comparison.
 | `act_r50_vae` | larger backbone + torchvision-recommended ImageNet-V2 initialization | 65M | 30k + eval complete; 100k + eval complete |
 | `act_r50_v1_vae` | strict R18/R34-aligned ImageNet-V1 initialization control | 65M | 30k + 100k queued live before seed-1000 evaluation |
 | `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k + eval complete; not promoted |
-| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; 100k queued |
+| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; 100k + corrected exact-step eval complete |
 | `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k + eval complete; 100k queued |
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
 | `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
@@ -676,7 +676,7 @@ the same optimizer is not supported. Attribution of the R50 gain specifically
 to backbone capacity remains provisional until the queued R50-V1 control is
 decoded across training seeds.
 
-### 9.1.1 Fresh 100k R18/R50-V2 capacity checkpoint
+### 9.1.1 Fresh 100k deterministic checkpoints
 
 The recovered fresh 100k checkpoints have now both passed a host-GPU decoded
 smoke test and the complete fixed 500-query evaluation. These rows use training
@@ -686,8 +686,9 @@ uncertainty.
 
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| ACT R18 VAE, 100k | 16.39 | 24.74 | 2.873 | 4.892 | 0.1603 | 8.63 | 267 |
-| ACT R50 V2 VAE, 100k | **14.28** | **24.44** | **2.793** | **4.875** | **0.1366** | 10.79 | 341 |
+| ACT R18 VAE, 100k | 16.39 | 24.74 | 2.873 | 4.892 | 0.1603 | **8.63** | 267 |
+| ACT R50 V2 VAE, 100k | **14.28** | 24.44 | 2.793 | 4.875 | **0.1366** | 10.79 | 341 |
+| ACT R18 L1, 100k | 14.34 | **23.69** | **2.769** | **4.850** | 0.1451 | 9.03 | **200** |
 
 Paired episode differences make this a narrower result than the validation-loss
 gap suggests. R50 improves chunk-mean XYZ by **12.83%** (95% CI
@@ -701,6 +702,18 @@ gripper benefit at 100k, but not a demonstrated endpoint-pose benefit at this
 seed. The strict R50-V1 and multi-training-seed controls remain essential before
 attributing the improvement to backbone capacity or recommending R50
 unconditionally.
+
+The corrected exact-step ACT-L1 result changes the practical deterministic
+recommendation. Relative to R18 VAE, direct L1 improves chunk XYZ by **12.52%**
+(paired episode CI 9.05--15.88%), gripper endpoint by **9.53%**
+(4.24--14.67%), rotational jerk by **5.12%** (0.84--9.13%), and XYZ jerk by
+**13.92%** (10.81--16.97%). Endpoint XYZ improves 4.25% but remains tied
+(-0.43--8.82%), and both rotation errors are tied. It is therefore the current
+low-cost default: essentially the best pose accuracy in this 100k deterministic
+set, the smallest online allocation, and smoother trajectories than either VAE
+control. R50-V2 retains only a small chunk-XYZ edge over L1 (14.28 versus
+14.34 mm) and a better gripper endpoint, insufficient by itself to justify its
+extra inference cost without the strict V1/multi-seed controls.
 
 ### 9.2 Flow matching and Diffusion Policy isolation
 
@@ -1216,6 +1229,23 @@ the primary 100k checkpoint is also the validation-selected checkpoint. The
 trajectory quality can vary across nearly tied validation losses, not for
 replacing the pre-registered final endpoint.
 
+Completion exposed an evaluation-provenance bug before the final table was
+frozen. An early evaluator had run at 15:03 while this nominal 100k run held
+only checkpoint `030000`; its report filename correctly contained `030000`, but
+the generic completion marker named only the run and inference seed. At final
+completion the old supervisor therefore mistook that 30k result for a completed
+100k evaluation. The report and output were preserved under
+`interrupted_evaluations/..._stale030000_*`, not deleted. Canonical completion
+now requires exactly one nonempty metrics filename containing the requested
+zero-padded checkpoint step, and the collector independently rejects a report
+whose suffix differs from the run budget. Focused tests cover wrong-step,
+missing-marker, and duplicate-report cases. The corrected evaluator command
+was then observed loading `checkpoints/100000/pretrained_model` on the host GPU.
+The corrected 500-query result then completed with the required `100000`
+suffix. Canonical collection (15 runs, 64 validation points, 26 evaluations)
+and all four PNG/SVG figure families were regenerated from it; the exact-step
+collector would now reject reintroduction of the archived stale report.
+
 To test that question without changing the primary endpoint, a separate
 checkpoint-selection evaluator is queued after the canonical final ACT
 evaluation. It explicitly resolves recovery step `060000` and writes only to
@@ -1224,6 +1254,16 @@ same 100 episodes, five fixed queries per episode, horizon bounds, PyAV backend,
 and deterministic seed as the final-checkpoint evaluation. Thus it can diagnose
 whether the validation minimum selects a better decoded policy while the main
 tables and figures remain an unbiased fixed-100k comparison.
+
+That sensitivity evaluation also completed. Step 60k versus 100k is tied in
+chunk XYZ (-0.82% final-checkpoint improvement, CI -2.82--1.26%), endpoint XYZ
+(-0.26%, -2.76--2.22%), and endpoint rotation (-1.52%, -4.70--1.38%). The 60k
+checkpoint has 3.21% lower chunk rotation error (0.43--6.30% supported), but
+100k improves gripper endpoint by 6.32% (1.98--10.50%), rotational jerk by
+18.94% (16.53--21.24%), and XYZ jerk by 26.30% (24.51--27.97%). The fixed final
+checkpoint is therefore the more balanced control policy despite nearly tied
+pose errors, and scalar validation loss alone would not reveal its smoothness
+gain.
 
 Two canonical early-evaluation waiters advance analysis without forking the
 protocol: official U-Net inference seed 1000 starts after its exact 30k durable

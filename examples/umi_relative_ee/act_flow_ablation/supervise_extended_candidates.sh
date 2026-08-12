@@ -7,6 +7,7 @@ WAIT_FOR_SESSION="${UMI_WAIT_FOR_TMUX:-umi_arch_confirmation_eval_20260812}"
 MAX_ATTEMPTS="${UMI_MAX_ATTEMPTS:-3}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/training_completion.sh"
+. "$SCRIPT_DIR/evaluation_completion.sh"
 . "$SCRIPT_DIR/lingbot_asset_validation.sh"
 REPO="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
@@ -96,8 +97,7 @@ evaluate_one_run() {
   for inference_seed in 1000 2000 3000; do
     out="$ARTIFACT_ROOT/eval_common_h32/$run_name/seed$inference_seed"
     log="$ARTIFACT_ROOT/logs/eval_common_h32_${run_name}_seed${inference_seed}.log"
-    reports="$(find "$out" -maxdepth 1 -type f -name '*_open_loop_metrics.json' -size +0c 2>/dev/null | wc -l)"
-    if [[ "$reports" -eq 1 ]] && grep -Fq "] completed evaluation $run_name seed $inference_seed" "$log"; then
+    if canonical_evaluation_complete "$out" "$log" "$run_name" "$inference_seed" "$steps"; then
       echo "[$(timestamp)] already evaluated: $run_name inference_seed=$inference_seed"
       continue
     fi

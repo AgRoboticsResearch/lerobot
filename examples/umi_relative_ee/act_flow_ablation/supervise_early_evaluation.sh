@@ -16,17 +16,17 @@ SAMPLES_PER_EPISODE="${UMI_EVAL_SAMPLES_PER_EPISODE:-5}"
 GPU_SETTLE_SECONDS="${UMI_EARLY_EVAL_GPU_SETTLE_SECONDS:-300}"
 MIN_FREE_GPU_MIB="${UMI_EARLY_EVAL_MIN_FREE_GPU_MIB:-4096}"
 . "$SCRIPT_DIR/training_completion.sh"
+. "$SCRIPT_DIR/evaluation_completion.sh"
 
 timestamp() { date '+%F %T'; }
 eval_log() { printf '%s/logs/eval_common_h32_%s_seed%s.log' "$ARTIFACT_ROOT" "$RUN_NAME" "$1"; }
 eval_dir() { printf '%s/eval_common_h32/%s/seed%s' "$ARTIFACT_ROOT" "$RUN_NAME" "$1"; }
 
 evaluation_complete() {
-  local seed="$1" out log reports
+  local seed="$1" out log
   out="$(eval_dir "$seed")"
   log="$(eval_log "$seed")"
-  reports="$(find "$out" -maxdepth 1 -type f -name '*_open_loop_metrics.json' -size +0c 2>/dev/null | wc -l)"
-  [[ "$reports" -eq 1 ]] && grep -Fq "] completed evaluation $RUN_NAME seed $seed" "$log"
+  canonical_evaluation_complete "$out" "$log" "$RUN_NAME" "$seed" "$STEPS"
 }
 
 echo "[$(timestamp)] early evaluator waiting for $WAIT_TMUX"
