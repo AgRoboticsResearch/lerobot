@@ -1125,6 +1125,18 @@ the already-running official U-Net process, whose shell functions predate the
 patch. Focused tests cover exact-step mismatch, missing optimizer state, and
 idempotent recovery marking.
 
+After the official U-Net's 20k checkpoint, a bounded concurrency experiment
+used otherwise idle memory for the missing seed-1000 ACT-L1 100k control. The
+previous dependency-era failed log was moved intact under `interrupted/`; no
+checkpoint or live owner existed. ACT-L1 then launched with two PyAV workers
+and its own durable-completion guard. In steady state the official model used
+about 12.0 GiB and ACT-L1 2.7 GiB, leaving 9.2 GiB free. Aggregate GPU
+utilization reached 100%; ACT-L1 added roughly 12 steps/s while the official
+model remained around 3.5--3.8 steps/s versus approximately 3.8 alone. Both
+models retained stable update/data timings without OOM. The chain monitor now
+tracks this companion session, and the main queue will skip its ACT-L1 slot if
+the independently guarded run has completed rather than duplicate it.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
