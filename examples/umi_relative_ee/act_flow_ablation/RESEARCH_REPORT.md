@@ -1326,6 +1326,19 @@ The pre-registered 30k run therefore continues, and final common-query metrics
 remain primary; retaining 10k/20k recovery checkpoints permits a later
 checkpoint-sensitivity check if the final decoded result is unexpectedly poor.
 
+The transformer-denoiser control subsequently completed all 30k updates and
+passed the exact-final-step durability gate. Its 30k validation loss was
+0.029431: 27.17% above 20k and 45.80% above the 10k minimum, while terminal
+training loss had fallen to approximately 0.017. The final checkpoint contains
+the 1,217,458,704-byte model, 1,217,460,564-byte optimizer state, exact step,
+RNG/scheduler state, processors, and configs, followed by the explicit `End of
+training` marker. This monotonic held-out degradation (0.020186 -> 0.023143 ->
+0.029431) is strong evidence that selecting this candidate by terminal training
+loss would be unsafe. It still does not by itself establish that transformer
+denoising is worse than the official U-Net: the pre-registered common-query
+decoded evaluation at exact step 30k remains the architecture comparison, and
+the retained 10k checkpoint is a distinct checkpoint-selection question.
+
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning
 the existing directory even though its 10.2 GB `model.safetensors` was still a
