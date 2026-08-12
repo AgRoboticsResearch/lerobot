@@ -645,6 +645,7 @@ CUDA memory. Lower is better throughout.
 | ACT-flow beta, 1e-4 | 34.59 | 59.13 | 3.810 | 5.689 | 29.62 | 203 |
 | ACT-DP, 1e-5 | 24.50 | 38.70 | 5.025 | 8.319 | 137.04 | 203 |
 | Diffusion R18 | 15.71 | 27.27 | 3.391 | 5.838 | 23.23 | 345 |
+| Official UMI U-Net | 16.14 | 28.76 | 3.239 | 5.838 | 47.82 | 1,277 |
 
 Paired episode bootstrap comparisons (10,000 resamples) establish:
 
@@ -662,6 +663,11 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
   and 312 MiB peak memory without a supported accuracy gain.
 - ACT-L1 versus ACT-VAE is tied in XYZ but improves endpoint rotation by 7.2%
   (2.1–12.0%). It is the fastest and smallest ACT control.
+- Official UMI U-Net versus ACT-L1 improves XYZ chunk mean by 9.9% (paired
+  episode CI 5.7–13.9%), but its XYZ endpoint is tied (-2.1% improvement, CI
+  -8.0–3.6%), endpoint rotation is 14.1% worse (7.5–21.2% worse), and both XYZ
+  and rotational jerk are substantially worse. These figures average its
+  three inference seeds; only one training seed exists so far.
 
 The R50-V2 result is therefore not merely a lower training loss: it is a
 sizable, statistically supported decoded-pose improvement for the combined
@@ -1094,15 +1100,18 @@ provenance marker; the model was not wastefully retrained. Full fixed-query
 evaluation was then launched as a low-memory companion to the continuing
 official UMI run.
 
-The recovered official UMI U-Net run likewise crossed two durable boundaries.
+The recovered official UMI U-Net run likewise crossed all three durable boundaries.
 Step-10,000 validation completed with `loss=0.018488`; step 20,000 improved to
-`loss=0.017670`, 4.42% lower. At each boundary a ~1.28 GB model plus ~1.28 GB
+`loss=0.017670`, 4.42% lower, before the final value rose to `0.018583` at
+30k. At each boundary a ~1.28 GB model plus ~1.28 GB
 optimizer state, exact training-step record, RNG, scheduler, processors, and
-configs were independently verified under `010000` and `020000`. The same
-process resumed immediately past 20k, sustaining roughly 3.5--3.9 steps/s with
-two PyAV workers. This closes the specific PyAV/fresh-worker recovery question
-for both concurrent policies; later official-UMI conclusions still wait for
-its 30k decoded evaluation.
+configs were independently verified under `010000`, `020000`, and `030000`.
+The common evaluation completed 500 queries for each of inference seeds 1000,
+2000, and 3000. Their averaged episode-balanced errors were 16.14 mm XYZ chunk,
+28.76 mm XYZ endpoint, 3.239° rotation chunk, and 5.838° rotation endpoint;
+mean synchronized inference latency was 48.05 ms. This closes the specific
+PyAV/fresh-worker recovery question and provides the released U-Net comparison,
+while the architecture-matched transformer denoiser remains in training.
 
 The operational lesson is stronger than merely “install PyAV”: never run a
 pruning environment synchronization against a virtual environment used by live
