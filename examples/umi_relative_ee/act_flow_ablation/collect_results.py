@@ -127,14 +127,19 @@ def flatten_evaluation(report_path: Path, run: dict[str, Any]) -> dict[str, Any]
     return row
 
 
-def aggregate_episode_metrics(reports: list[dict[str, Any]]) -> dict[str, np.ndarray]:
-    """Average inference seeds within each episode, preserving episode pairing."""
+def aggregate_episode_metrics(
+    reports: list[dict[str, Any]],
+) -> tuple[tuple[str, ...], dict[str, np.ndarray]]:
+    """Average inference seeds within each episode, preserving exact episode pairing."""
     if not reports:
         raise ValueError("At least one evaluation report is required")
-    episode_ids = sorted(set.intersection(*(set(report["summary"]["per_episode"]) for report in reports)))
+    episode_id_sets = [set(report["summary"]["per_episode"]) for report in reports]
+    if any(episode_ids != episode_id_sets[0] for episode_ids in episode_id_sets[1:]):
+        raise ValueError("Inference-seed evaluation reports have mismatched episode IDs")
+    episode_ids = tuple(sorted(episode_id_sets[0]))
     if not episode_ids:
         raise ValueError("Evaluation reports have no common episodes")
-    return {
+    return episode_ids, {
         metric: np.asarray(
             [
                 statistics.mean(
@@ -176,11 +181,11 @@ def summarize_variants(
     reports_by_run: dict[str, list[dict[str, Any]]], runs_by_name: dict[str, dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return seed-averaged summaries and paired differences from fresh ACT R18."""
-    episode_metrics_by_run = {
+    episode_data_by_run = {
         run_name: aggregate_episode_metrics(reports) for run_name, reports in reports_by_run.items()
     }
     summary_rows = []
-    for run_name, metrics in episode_metrics_by_run.items():
+    for run_name, (_, metrics) in episode_data_by_run.items():
         reports = reports_by_run[run_name]
         run = runs_by_name[run_name]
         row = {
@@ -207,26 +212,26 @@ def summarize_variants(
     comparison_pairs = set()
     for run_name, run in runs_by_name.items():
         baseline_name = f"act_r18_vae_seed{run['training_seed']}_{run['steps']}steps"
-        if run_name != baseline_name and baseline_name in episode_metrics_by_run:
+        if run_name != baseline_name and baseline_name in episode_data_by_run:
             comparison_pairs.add((run_name, baseline_name))
     for candidate_variant, baseline_variant in EXTRA_PAIRED_VARIANTS:
         for run_name, run in runs_by_name.items():
             if run["variant"] != candidate_variant:
                 continue
             baseline_name = f"{baseline_variant}_seed{run['training_seed']}_{run['steps']}steps"
-            if baseline_name in episode_metrics_by_run:
+            if baseline_name in episode_data_by_run:
                 comparison_pairs.add((run_name, baseline_name))
 
     comparison_rows = []
     for run_name, baseline_name in sorted(comparison_pairs):
-        candidate_metrics = episode_metrics_by_run[run_name]
+        candidate_episode_ids, candidate_metrics = episode_data_by_run[run_name]
         run = runs_by_name[run_name]
-        baseline_metrics = episode_metrics_by_run[baseline_name]
+        baseline_episode_ids, baseline_metrics = episode_data_by_run[baseline_name]
+        if candidate_episode_ids != baseline_episode_ids:
+            raise ValueError(f"Episode ID mismatch between {run_name} and {baseline_name}")
         for metric in COMPARISON_METRICS:
             baseline = baseline_metrics[metric]
             candidate = candidate_metrics[metric]
-            if baseline.shape != candidate.shape:
-                raise ValueError(f"Episode mismatch between {run_name} and {baseline_name}")
             differences = candidate - baseline
             rng = np.random.default_rng(0)
             diff_low, diff_high = bootstrap_mean_interval(differences, rng=rng)
@@ -342,7 +347,9 @@ def main() -> None:
         train_rows.append({**run, **{key: value for key, value in log.items() if key != "validation"}})
         validation_rows.extend({**run, **metrics} for metrics in log["validation"])
         for report_path in sorted(
-            (args.artifact_root / args.eval_dir_name / run_dir.name).glob("seed*/*.json")
+            (args.artifact_root / args.eval_dir_name / run_dir.name).glob(
+                "seed*/*_open_loop_metrics.json"
+            )
         ):
             evaluation_rows.append(flatten_evaluation(report_path, run))
             report = json.loads(report_path.read_text())

@@ -288,7 +288,10 @@ seeds are varied only after this screen selects configurations worth promoting.
 The collector keeps inference-seed averaging and training-seed variability as
 two distinct statistical levels. It emits per-training-run episode bootstrap
 intervals, then separate cross-training-seed mean/SD/min/max tables; repeated
-sampler draws are never treated as independently trained models.
+sampler draws are never treated as independently trained models. It requires
+exactly matching episode-ID sets across inference seeds and across each paired
+policy comparison, failing loudly instead of silently intersecting or
+shape-matching different episodes.
 Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and
