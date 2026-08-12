@@ -708,6 +708,13 @@ seeds to each generative variant. This yields three independent training seeds
 for the Q1 R18/R50 comparison and for the Q2 ACT-L1/ACT-flow/standard-DP
 comparison while keeping sampler variability nested inside training runs.
 
+`monitor_experiment_chain.sh` independently records five-minute heartbeats for
+the four-session chain: live dependency sessions, relevant process count,
+latest-log age, artifact-disk headroom, and GPU temperature/power/memory/use.
+It warns after 20 minutes without a training/evaluation log update or below
+50 GiB free, but deliberately never kills a process; recovery and forward
+progress remain owned by the bounded-retry supervisors above.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
