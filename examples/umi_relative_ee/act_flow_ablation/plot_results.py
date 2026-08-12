@@ -274,7 +274,10 @@ def plot_paired_improvements(
     pair_order = [
         pair for pair in desired_pairs if any((r["variant"], r["baseline_variant"]) == pair for r in selected)
     ]
-    pair_order.sort(key=lambda pair: ORDER.index(pair[0]))
+    # Multiple comparisons can share a candidate (for example DP R18 versus
+    # ACT-L1 and ACT-DP). Break ties by baseline order so CSV encounter order
+    # cannot change the rendered figure.
+    pair_order.sort(key=lambda pair: (ORDER.index(pair[0]), ORDER.index(pair[1])))
     if not pair_order:
         return
     lookup = {(row["variant"], row["baseline_variant"], row["metric"]): row for row in selected}

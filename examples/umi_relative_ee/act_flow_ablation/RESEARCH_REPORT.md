@@ -1091,12 +1091,15 @@ provenance marker; the model was not wastefully retrained. Full fixed-query
 evaluation was then launched as a low-memory companion to the continuing
 official UMI run.
 
-The recovered official UMI U-Net run likewise crossed its first durable
-boundary: step-10,000 validation completed with `loss=0.018488`, and a
-~1.28 GB model plus ~1.28 GB optimizer state (with RNG/processors/config) was
-verified under checkpoint `010000`. Training resumed past 10.8k. This closes
-the specific PyAV/fresh-worker recovery question for both concurrent policies;
-later official-UMI conclusions still wait for its 30k decoded evaluation.
+The recovered official UMI U-Net run likewise crossed two durable boundaries.
+Step-10,000 validation completed with `loss=0.018488`; step 20,000 improved to
+`loss=0.017670`, 4.42% lower. At each boundary a ~1.28 GB model plus ~1.28 GB
+optimizer state, exact training-step record, RNG, scheduler, processors, and
+configs were independently verified under `010000` and `020000`. The same
+process resumed immediately past 20k, sustaining roughly 3.5--3.9 steps/s with
+two PyAV workers. This closes the specific PyAV/fresh-worker recovery question
+for both concurrent policies; later official-UMI conclusions still wait for
+its 30k decoded evaluation.
 
 The operational lesson is stronger than merely “install PyAV”: never run a
 pruning environment synchronization against a virtual environment used by live
