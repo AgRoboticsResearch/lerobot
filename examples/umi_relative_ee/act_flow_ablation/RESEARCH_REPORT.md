@@ -1194,6 +1194,12 @@ unpadded directories and removes JSON newlines before exact-step matching; a
 real-format zero-padded/pretty-JSON regression test accompanies the fix. The
 official evaluation seeds that had safely begun were retained, while sleeping
 downstream wrappers were removed for reconstruction in the intended order.
+The architecture-matched official transformer denoiser now has its own exact
+30k completion sidecar and canonical three-inference-seed early evaluator.
+This avoids delaying the central U-Net-versus-transformer isolation result
+behind the remaining 100k training queue; the later matrix evaluator reuses
+these outputs. Its evaluator retains the same five-minute allocation-settle
+window and 4 GiB free-VRAM gate.
 
 LingBot asset prefetch has a related but distinct integrity guard. During a
 transient Hub SSL EOF, `hf download --local-dir` reported success by returning

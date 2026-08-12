@@ -6,6 +6,7 @@ set -uo pipefail
 RUN_NAME="${1:?usage: guard_training_completion.sh RUN_NAME STEPS [OWNER_TMUX]}"
 STEPS="${2:?usage: guard_training_completion.sh RUN_NAME STEPS [OWNER_TMUX]}"
 OWNER_TMUX="${3:-}"
+printf -v PADDED_STEPS '%06d' "$STEPS"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 . "$SCRIPT_DIR/training_completion.sh"
@@ -21,7 +22,8 @@ while true; do
   fi
   # Poll cheaply until the final checkpoint begins, then close the short race
   # between the trainer's terminal message and the legacy supervisor retry.
-  if [[ -d "$ARTIFACT_ROOT/train/$RUN_NAME/checkpoints/$STEPS" ]]; then
+  if [[ -d "$ARTIFACT_ROOT/train/$RUN_NAME/checkpoints/$STEPS" ||
+        -d "$ARTIFACT_ROOT/train/$RUN_NAME/checkpoints/$PADDED_STEPS" ]]; then
     sleep 0.01
   else
     sleep 2
