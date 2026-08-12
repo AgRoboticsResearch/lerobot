@@ -206,24 +206,27 @@ the clean objective isolation.
 
 ## 5. Experiment matrix
 
-All full experiments use the same 1459 train set, 100-episode validation set,
-PyAV decoder, no image augmentation, ImageNet image statistics, identity rot6d
-normalization, chunk 30, batch 8, seed 1000, and host RTX 4090. The first stage
-uses a common optimizer-step budget and fixed evaluation queries. The flow LR
-sweep is deliberate: equal LR isolates the objective, while a tuned LR avoids
-mistaking an ACT-specific optimizer for an intrinsic flow failure.
+All stage-one controlled experiments use the same 1459 train set, 100-episode
+validation set, PyAV decoder, no image augmentation, ImageNet image statistics,
+identity rot6d normalization, chunk 30, batch 8, seed 1000, and host RTX 4090.
+The official-UMI supplements deliberately retain their released policy-side
+crop/color augmentation and batch 64; those differences are part of the
+released recipe and are not presented as an architecture-only ablation. The
+first stage uses a common optimizer-step budget and fixed evaluation queries.
+The flow LR sweep is deliberate: equal LR isolates the objective, while a tuned
+LR avoids mistaking an ACT-specific optimizer for an intrinsic flow failure.
 
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
-| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete |
+| `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete; 100k train complete |
 | `act_r34_vae` | backbone-only scale | 62M | 30k + eval complete |
-| `act_r50_vae` | backbone-only scale | 65M | 30k + eval complete; promoted |
+| `act_r50_vae` | backbone-only scale | 65M | 30k + eval complete; 100k train complete |
 | `act_r50_large` | ResNet-50 + 768-wide, 6e/3d transformer | 145M | 30k + eval complete; not promoted |
-| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; promoted |
-| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k + eval complete; promoted |
+| `act_r18_l1` | no-VAE deterministic objective control | 34M | 30k + eval complete; 100k queued |
+| `act_r18_flow_u_lr1e5` | exact-LR, uniform-time flow control | 35M | 30k + eval complete; 100k queued |
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
 | `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
-| `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; promoted |
+| `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; 100k queued |
 | `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; supervised 30k retry active |
 | `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; queued behind U-Net retry |
 
@@ -565,8 +568,9 @@ The stage-two sequence was launched on the host RTX 4090 at 2026-08-11 20:41
 Asia/Taipei in tmux session `umi_arch_stage2_20260811`. Its first run,
 `act_r18_vae_seed1000_100000steps`, initialized successfully at about 26.7
 steps/s. Checkpoints/logs remain under
-`/media/zfei/Glowat512/projects/lerobot-arch-exp`; this is an active long-run
-confirmation and is not included in the completed 30k table above.
+`/media/zfei/Glowat512/projects/lerobot-arch-exp`. This was an active long-run
+confirmation at launch and is not mixed into the completed 30k table above;
+its later completion is recorded below.
 
 At the 2026-08-11 22:40 progress check, fresh ACT R18 had completed 100k in
 1h08m20s. Its validation total/L1 at 90k was the run-best
@@ -582,8 +586,10 @@ At the 2026-08-11 23:21 check, R50 reached 67k without NaNs, OOMs, or dataloader
 failures, sustaining about 12.6–13.0 steps/s. Its 40k, 50k, and 60k validation
 total/L1 values were 0.033985/0.033025, 0.032902/0.032421, and
 0.033020/0.032475. The small 50k→60k fluctuation does not erase the large gap
-to R18. The two official UMI candidates will not contend with this job; their
-launcher is scheduled only after the existing five-run stage-two sequence.
+to R18. The two official UMI candidates did not contend with this job. They
+were initially scheduled after the existing five-run stage-two sequence; the
+wrapper interruption described below changed the realized ordering while
+preserving single-GPU execution.
 
 At the 2026-08-12 00:06 check, R50 had in fact completed all 100k updates and
 saved a valid final checkpoint. Its validation total/L1 values at 70k, 80k,
