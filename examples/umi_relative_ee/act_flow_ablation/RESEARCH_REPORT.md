@@ -224,8 +224,8 @@ mistaking an ACT-specific optimizer for an intrinsic flow failure.
 | `act_r18_flow_u_lr1e4` | flow optimizer sensitivity | 35M | 30k + eval complete; rejected |
 | `act_r18_flow_beta_lr1e4` | OpenPI-like time bias | 35M | 30k + eval complete; rejected |
 | `diffusion_r18` | standard non-VLM diffusion control | 75M | 30k + eval complete; promoted |
-| `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; 30k queued after stage two |
-| `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; 30k queued after stage two |
+| `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; supervised 30k retry active |
+| `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; queued behind U-Net retry |
 
 Promotion rules will be based on confidence intervals over decoded physical
 metrics, not the lowest model-specific validation loss. At least the leading
@@ -585,6 +585,37 @@ total/L1 values were 0.033985/0.033025, 0.032902/0.032421, and
 to R18. The two official UMI candidates will not contend with this job; their
 launcher is scheduled only after the existing five-run stage-two sequence.
 
+At the 2026-08-12 00:06 check, R50 had in fact completed all 100k updates and
+saved a valid final checkpoint. Its validation total/L1 values at 70k, 80k,
+90k, and 100k were 0.031453/0.030956, 0.031671/0.031365,
+0.031066/0.030817, and 0.031239/0.031060. The 90k point is the minimum on
+both measures, and the final checkpoint remains substantially below the R18
+100k control. The original `set -e` stage-two wrapper nevertheless terminated
+between the child's `End of training` message and its wrapper completion
+marker, so the remaining three promoted runs did not start. The final R50
+checkpoint was independently verified on disk and is retained as complete.
+
+The first official U-Net attempt then passed a real two-update batch-64 smoke
+test and trained normally through update 2,195 (approximately 4.9 updates/s).
+At 2026-08-12 00:15:09 the host kernel recorded a segmentation fault for that
+Python process in `libc.so.6`. There was no preceding traceback, non-finite
+loss, CUDA error, NVIDIA Xid, or out-of-memory event; host memory still had
+about 50 GiB available. The machine does not provide `coredumpctl`, so a native
+stack trace could not be recovered. Because PyAV decoding and multiprocessing
+are the principal native CPU path that differs from pure model computation,
+the conservative retry sets `num_workers=0` and disables persistent workers.
+This is a reliability intervention, not a model/hyperparameter change, and the
+interrupted attempt is timestamp-archived rather than overwritten.
+
+To prevent a second child failure from silently stopping the study,
+`supervise_remaining.sh` now records every child exit status, preserves failed
+attempts under the external artifact root's `interrupted/` directory, retries
+each full job up to three times, smoke-tests official candidates at batch sizes
+64/32/16/8, and advances past an exhausted job. It queues the two official
+30k candidates first, followed by the still-missing ACT-L1, matched ACT-flow,
+and ResNet-18 Diffusion Policy 100k runs. Only one foreground child uses the
+host GPU at a time.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
@@ -596,7 +627,8 @@ times, complete validation curves, decoded metrics, and confidence intervals
 into compact external CSV/JSON files without creating a second narrative doc.
 `run_stage2.sh` and `evaluate_stage2.sh` encode the five promoted 100k controls.
 `run_official_umi_dp.sh` and `evaluate_official_umi_dp.sh` encode the two
-supplemental released-UMI recipe candidates.
+supplemental released-UMI recipe candidates. `supervise_remaining.sh` is the
+fault-tolerant single-GPU queue used for the remaining long runs.
 `plot_results.py` renders both SVG and high-resolution PNG figures from the
 collector outputs. Use a writable Matplotlib cache, for example:
 
@@ -611,6 +643,7 @@ bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_vae 30000 100
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh act_r18_flow_u_lr1e4 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_one.sh diffusion_r18 30000 1000
 bash examples/umi_relative_ee/act_flow_ablation/run_official_umi_dp.sh 30000 1000
+bash examples/umi_relative_ee/act_flow_ablation/supervise_remaining.sh 100000 30000 1000
 ```
 
 The launcher refuses to overwrite an existing run. Full command-line configs

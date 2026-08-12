@@ -89,8 +89,11 @@ def parse_log(log_path: Path) -> dict[str, Any]:
     wall_seconds = None
     if "starting" in times and "completed" in times:
         wall_seconds = (times["completed"] - times["starting"]).total_seconds()
+    status = "complete" if "completed" in times else "running_or_failed"
+    if status != "complete" and "End of training" in text:
+        status = "training_finished_without_wrapper_marker"
     return {
-        "status": "complete" if "completed" in times else "running_or_failed",
+        "status": status,
         "parameters": int(parameter_match["params"]) if parameter_match else None,
         "wall_seconds": wall_seconds,
         "median_update_seconds": statistics.median(update_seconds) if update_seconds else None,

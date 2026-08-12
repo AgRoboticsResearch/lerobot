@@ -15,6 +15,9 @@ VAL_REPO=sroi/sroiv2_strawberry_picking_lab_validation
 VAL_ROOT=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation
 VAL_FREQ="${UMI_VAL_FREQ:-10000}"
 BATCH_SIZE=8
+NUM_WORKERS="${UMI_NUM_WORKERS:-4}"
+PREFETCH_FACTOR="${UMI_PREFETCH_FACTOR:-4}"
+PERSISTENT_WORKERS="${UMI_PERSISTENT_WORKERS:-true}"
 HF_HUB_OFFLINE_VALUE=0
 SAVE_CHECKPOINT="${UMI_SAVE_CHECKPOINT:-true}"
 RUN_NAME="${VARIANT}_seed${SEED}_${STEPS}steps"
@@ -27,6 +30,12 @@ if [[ -e "$OUT" || -e "$LOG" ]]; then
 fi
 mkdir -p "$ARTIFACT_ROOT/train" "$ARTIFACT_ROOT/logs"
 cd "$REPO"
+
+record_exit() {
+  status=$?
+  echo "[$(date '+%F %T')] exited $RUN_NAME status=$status" | tee -a "$LOG"
+}
+trap record_exit EXIT
 
 COMMON=(
   examples/umi_relative_ee/train_umi_relative_ee.py
@@ -44,8 +53,9 @@ COMMON=(
   --policy.push_to_hub=false
   --seed="$SEED"
   --steps="$STEPS"
-  --num_workers=4
-  --prefetch_factor=4
+  --num_workers="$NUM_WORKERS"
+  --prefetch_factor="$PREFETCH_FACTOR"
+  --persistent_workers="$PERSISTENT_WORKERS"
   --log_freq=200
   --val_freq="$VAL_FREQ"
   --eval_freq=0
