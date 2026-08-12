@@ -1131,9 +1131,13 @@ previous dependency-era failed log was moved intact under `interrupted/`; no
 checkpoint or live owner existed. ACT-L1 then launched with two PyAV workers
 and its own durable-completion guard. In steady state the official model used
 about 12.0 GiB and ACT-L1 2.7 GiB, leaving 9.2 GiB free. Aggregate GPU
-utilization reached 100%; ACT-L1 added roughly 12 steps/s while the official
-model remained around 3.5--3.8 steps/s versus approximately 3.8 alone. Both
-models retained stable update/data timings without OOM. The chain monitor now
+utilization reached 100%; ACT-L1 added roughly 12 steps/s. The first short
+sample put the official model at 3.5--3.8 steps/s, but the longer steady-state
+sample settled near 3.0 steps/s versus approximately 3.8 alone, with median
+update time rising from ~0.192 to ~0.284 s. Thus concurrency costs about 21%
+of official-model throughput rather than being free, while advancing ACT-L1 by
+roughly four updates for every official update. Both models remained finite
+without OOM. The chain monitor now
 tracks this companion session, and the main queue will skip its ACT-L1 slot if
 the independently guarded run has completed rather than duplicate it.
 
