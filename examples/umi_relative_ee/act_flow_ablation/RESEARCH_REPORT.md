@@ -248,6 +248,17 @@ first stage uses a common optimizer-step budget and fixed evaluation queries.
 The flow LR sweep is deliberate: equal LR isolates the objective, while a tuned
 LR avoids mistaking an ACT-specific optimizer for an intrinsic flow failure.
 
+Equal optimizer steps do **not** mean equal sample exposure for the official
+recipes. At 30k steps, batch 64 draws 1.92M training samples, versus 240k for a
+batch-8 stage-one run (8x as many); it also exceeds a 100k-step batch-8 run's
+800k samples by 2.4x. Wall time and FLOPs differ further because the official
+models use a ViT-B encoder and substantially larger denoisers. The official
+candidates are therefore judged as end-to-end recipe candidates using decoded
+accuracy together with latency and parameter count. A win cannot be attributed
+to architecture alone; conversely, a loss despite the extra exposure is strong
+negative evidence for this adapted recipe. The ACT-L1/ACT-flow pair remains the
+controlled architecture-and-exposure comparison.
+
 | Variant | Purpose | Parameters | Status |
 | --- | --- | ---: | --- |
 | `act_r18_vae` | exact 1459 early-budget replication | 52M | 30k + eval complete; 100k train complete |
