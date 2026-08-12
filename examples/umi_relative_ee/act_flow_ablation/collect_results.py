@@ -17,6 +17,7 @@ import numpy as np
 
 DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
+SEED_DIR_RE = re.compile(r"^seed(?P<seed>\d+)$")
 LEARNABLE_PARAM_RE = re.compile(r"num_learnable_params=(?P<params>\d+)")
 TOTAL_PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
 UPDATE_TIME_RE = re.compile(r"updt_s:(?P<seconds>[0-9.]+)")
@@ -55,6 +56,8 @@ def parse_args() -> argparse.Namespace:
         default="eval_common_h32",
         help="Evaluation namespace to collect (default: fixed common-horizon reports).",
     )
+    parser.add_argument("--expected_num_episodes", type=int, default=100)
+    parser.add_argument("--expected_samples_per_episode", type=int, default=5)
     return parser.parse_args()
 
 
@@ -143,6 +146,42 @@ def flatten_evaluation(report_path: Path, run: dict[str, Any]) -> dict[str, Any]
             row[f"{name}_ci_low"] = interval["low"]
             row[f"{name}_ci_high"] = interval["high"]
     return row
+
+
+def validate_evaluation_report(
+    report_path: Path,
+    report: dict[str, Any],
+    *,
+    expected_num_episodes: int,
+    expected_samples_per_episode: int,
+) -> int:
+    """Validate fixed-query provenance and return the recorded inference seed."""
+    seed_match = SEED_DIR_RE.fullmatch(report_path.parent.name)
+    if seed_match is None:
+        raise ValueError(f"Unexpected evaluation seed directory: {report_path.parent}")
+    directory_seed = int(seed_match["seed"])
+    report_seed = int(report["seed"])
+    if report_seed != directory_seed:
+        raise ValueError(
+            f"Inference seed mismatch in {report_path}: directory={directory_seed}, report={report_seed}"
+        )
+
+    summary = report["summary"]
+    per_episode = summary["per_episode"]
+    reported_num_episodes = int(summary["num_episodes"])
+    if reported_num_episodes != expected_num_episodes or len(per_episode) != expected_num_episodes:
+        raise ValueError(
+            f"Unexpected episode count in {report_path}: "
+            f"summary={reported_num_episodes}, per_episode={len(per_episode)}, "
+            f"expected={expected_num_episodes}"
+        )
+    expected_num_samples = expected_num_episodes * expected_samples_per_episode
+    if int(summary["num_samples"]) != expected_num_samples:
+        raise ValueError(
+            f"Unexpected query count in {report_path}: "
+            f"got={summary['num_samples']}, expected={expected_num_samples}"
+        )
+    return report_seed
 
 
 def aggregate_episode_metrics(
@@ -355,6 +394,7 @@ def main() -> None:
     validation_rows = []
     evaluation_rows = []
     reports_by_run: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    inference_seeds_by_run: dict[str, set[int]] = defaultdict(set)
     runs_by_name = {}
     for run_dir in sorted((args.artifact_root / "train").glob("*")):
         if not run_dir.is_dir() or RUN_RE.fullmatch(run_dir.name) is None:
@@ -371,6 +411,17 @@ def main() -> None:
         ):
             evaluation_rows.append(flatten_evaluation(report_path, run))
             report = json.loads(report_path.read_text())
+            inference_seed = validate_evaluation_report(
+                report_path,
+                report,
+                expected_num_episodes=args.expected_num_episodes,
+                expected_samples_per_episode=args.expected_samples_per_episode,
+            )
+            if inference_seed in inference_seeds_by_run[run_dir.name]:
+                raise ValueError(
+                    f"Duplicate inference seed {inference_seed} for evaluation {run_dir.name}"
+                )
+            inference_seeds_by_run[run_dir.name].add(inference_seed)
             bounds = report.get("query_action_offset_bounds")
             if args.eval_dir_name == "eval_common_h32" and bounds != {"min": -1, "max": 31}:
                 raise ValueError(f"Unexpected common-horizon query bounds in {report_path}: {bounds}")

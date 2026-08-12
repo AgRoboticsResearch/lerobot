@@ -291,7 +291,9 @@ intervals, then separate cross-training-seed mean/SD/min/max tables; repeated
 sampler draws are never treated as independently trained models. It requires
 exactly matching episode-ID sets across inference seeds and across each paired
 policy comparison, failing loudly instead of silently intersecting or
-shape-matching different episodes.
+shape-matching different episodes. It also checks that the seed encoded in each
+directory matches the JSON, that inference seeds are unique within a run, and
+that every fixed evaluation contains the expected 100 episodes and 500 queries.
 Synchronized policy-only GPU latency is measured on the same queries, excluding
 the first cold call; mean, median, p95, and peak allocated inference memory are
 recorded alongside accuracy. This makes the cost of larger backbones and
