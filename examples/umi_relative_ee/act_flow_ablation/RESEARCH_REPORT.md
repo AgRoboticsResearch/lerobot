@@ -764,6 +764,41 @@ online peak allocation is only about 203 MiB.
 
 ![Accuracy and latency trade-off](figures/accuracy_latency_tradeoff.png)
 
+### 9.2.1 100k vanilla flow and Diffusion Policy follow-up
+
+The matched ACT-flow run then completed its fixed 100k budget. Its validation
+velocity MSE was non-monotonic (0.052486, 0.047565, 0.040275, 0.040449,
+0.039067, 0.046577, 0.045642, 0.039433, 0.042094, 0.044822 at 10k--100k).
+The 50k checkpoint was the scalar minimum, but the exact 100k decoded policy
+was better on the same queries: translation chunk/endpoint improved 9.58% and
+12.26% (95% paired episode-bootstrap CIs 6.62--12.44 and 7.90--16.34),
+rotation chunk improved 3.43% (0.49--6.21), rotational jerk 20.82%
+(19.58--22.06), and XYZ jerk 7.89% (6.52--9.21); endpoint rotation and
+gripper endpoint were tied. The final values were 15.655 mm / 25.995 mm XYZ,
+2.965 degrees / 5.105 degrees rotation, 0.666 degrees rotational jerk, and
+0.002963 m XYZ jerk. This is a second independent demonstration that held-out
+velocity MSE alone is not a physical checkpoint selector.
+
+The vanilla non-VLM ResNet18 Diffusion Policy completed its 100k budget as
+well. Its within-family noise-MSE curve reached 0.007998 at 70k, then rose to
+0.008607, 0.008592, and 0.008481 at 80k, 90k, and 100k. Nevertheless, exact
+100k decoded control was better than the best-validation 70k checkpoint on
+translation chunk/endpoint (5.84% and 2.31%, CIs 4.27--7.39 and 0.34--4.22),
+rotation chunk/endpoint (11.37% and 6.31%, CIs 9.17--13.63 and 4.00--8.60),
+rotational jerk (44.76%, 42.98--46.44), and XYZ jerk (44.09%, 42.25--45.85).
+Gripper endpoint was tied. The final 100k policy measured 14.069 mm / 24.598
+mm XYZ, 2.953 degrees / 5.251 degrees rotation, 0.187 degrees rotational
+jerk, 0.000743 m XYZ jerk, 31.47 ms mean inference, and 346 MiB peak CUDA
+allocation. Thus standard temporal-U-Net diffusion remains competitive with
+ACT and improves substantially with the longer fixed budget, while its scalar
+best checkpoint is not automatically its best decoded controller.
+
+Together with the exact 30k transformer-versus-U-Net comparison above, the
+100k follow-ups sharpen Q2: flow matching is not intrinsically the culprit,
+and iterative diffusion is not intrinsically inferior to direct ACT. The
+weakness is specific to some denoiser/conditioning/optimization combinations;
+trajectory decoding and smoothness must be measured alongside objective loss.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
