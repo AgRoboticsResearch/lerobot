@@ -343,6 +343,14 @@ throughput. Dedicated timed runs are required before latency conclusions.
 ## 7. Validation and test evidence so far
 
 - Ruff and whitespace checks pass on all changed files.
+- Ten focused collector/statistics tests pass in 0.05 s. They cover online
+  versus EMA parameter accounting, exact inference-seed episode matching,
+  fixed-query provenance, ratio-of-means paired improvement, single-seed
+  reduction, training-seed cluster resampling, and preservation of paired seed
+  and episode indices. The verified host command sets
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`; otherwise an unrelated installed ROS/ament
+  pytest plugin imports the optional hardware test module and skips collection
+  on missing `deepdiff` before the requested pure-NumPy test file is collected.
 - 48 targeted CPU tests pass, 9 hardware/optional tests skip. These cover the
   new ACT-flow training/inference path, shared flow integrator, legacy ACT VAE
   behavior, ACT/Diffusion processors, and canonical UMI processor behavior.
