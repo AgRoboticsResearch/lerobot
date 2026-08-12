@@ -616,6 +616,15 @@ each full job up to three times, smoke-tests official candidates at batch sizes
 and ResNet-18 Diffusion Policy 100k runs. Only one foreground child uses the
 host GPU at a time.
 
+A separate `supervise_evaluations.sh` watchdog waits for that training tmux
+session to disappear before touching the GPU. It evaluates completed 100k ACT
+R18/R50/ACT-L1 checkpoints once, evaluates stochastic ACT-flow and Diffusion
+Policy checkpoints with seeds 1000/2000/3000, applies the same three-seed
+protocol to both official 30k UMI candidates, and archives/retries interrupted
+evaluation seeds independently. It then runs result collection and figure
+generation. Thus an evaluation failure cannot discard completed training or
+prevent later candidates from being measured.
+
 ## 10. Reproduction
 
 The variant launcher is `run_one.sh` in this directory. `run_stage1.sh` executes
@@ -628,7 +637,11 @@ into compact external CSV/JSON files without creating a second narrative doc.
 `run_stage2.sh` and `evaluate_stage2.sh` encode the five promoted 100k controls.
 `run_official_umi_dp.sh` and `evaluate_official_umi_dp.sh` encode the two
 supplemental released-UMI recipe candidates. `supervise_remaining.sh` is the
-fault-tolerant single-GPU queue used for the remaining long runs.
+fault-tolerant single-GPU queue used for the remaining long runs, and
+`supervise_evaluations.sh` is its non-contending evaluation successor. Figures
+label the training budget explicitly; when both 30k and 100k results exist,
+endpoint/efficiency charts select the highest completed budget per variant and
+the learning-curve chart retains each independent budget as a separate line.
 `plot_results.py` renders both SVG and high-resolution PNG figures from the
 collector outputs. Use a writable Matplotlib cache, for example:
 

@@ -32,6 +32,12 @@ fi
 mkdir -p "$(dirname -- "$OUT")" "$ARTIFACT_ROOT/logs"
 cd "$REPO"
 
+record_exit() {
+  status=$?
+  echo "[$(date '+%F %T')] evaluation exited $RUN_NAME seed $EVAL_SEED status=$status" | tee -a "$LOG"
+}
+trap record_exit EXIT
+
 echo "[$(date '+%F %T')] evaluating $RUN_NAME with inference seed $EVAL_SEED" | tee "$LOG"
 PYTHONPATH=src uv run python examples/umi_relative_ee/eval_open_loop_dataset.py \
   --pretrained_path="${CHECKPOINTS[0]}" \

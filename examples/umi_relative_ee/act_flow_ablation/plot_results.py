@@ -60,17 +60,34 @@ def ordered_variants(rows: list[dict[str, str]]) -> list[str]:
     return [variant for variant in ORDER if variant in present]
 
 
+def highest_budget_by_variant(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    selected: dict[str, dict[str, str]] = {}
+    for row in rows:
+        variant = row["variant"]
+        if variant not in selected or int(row["steps"]) > int(selected[variant]["steps"]):
+            selected[variant] = row
+    return selected
+
+
+def budget_label(variant: str, steps: int) -> str:
+    return f"{LABELS[variant]} ({steps // 1000}k)"
+
+
 def save_figure(fig: plt.Figure, output_dir: Path, name: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_dir / f"{name}.svg", bbox_inches="tight")
+    svg_path = output_dir / f"{name}.svg"
+    fig.savefig(svg_path, bbox_inches="tight")
+    # Matplotlib emits trailing spaces in SVG path data; normalize generated
+    # artifacts so repository whitespace checks remain useful and deterministic.
+    svg_path.write_text("\n".join(line.rstrip() for line in svg_path.read_text().splitlines()) + "\n")
     fig.savefig(output_dir / f"{name}.png", dpi=220, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
-    groups: dict[str, list[dict[str, str]]] = defaultdict(list)
+    groups: dict[tuple[str, int], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        groups[row["variant"]].append(row)
+        groups[(row["variant"], int(row["steps"]))].append(row)
     panels = [
         ("ACT held-out L1", [v for v in ORDER if v.startswith("act_") and "flow" not in v], "l1_loss"),
         ("ACT-flow held-out velocity MSE", [v for v in ORDER if "flow" in v], "flow_loss"),
@@ -83,19 +100,22 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.2))
     for axis, (title, variants, metric) in zip(axes, panels, strict=True):
         for variant in variants:
-            points = [row for row in groups.get(variant, []) if row.get(metric)]
-            if not points:
-                continue
-            points.sort(key=lambda row: int(row["step"]))
-            axis.plot(
-                [int(row["step"]) / 1000 for row in points],
-                [float(row[metric]) for row in points],
-                marker="o",
-                linewidth=2,
-                markersize=4,
-                label=LABELS[variant],
-                color=COLORS[variant],
-            )
+            budgets = sorted(steps for candidate, steps in groups if candidate == variant)
+            for steps in budgets:
+                points = [row for row in groups[(variant, steps)] if row.get(metric)]
+                if not points:
+                    continue
+                points.sort(key=lambda row: int(row["step"]))
+                axis.plot(
+                    [int(row["step"]) / 1000 for row in points],
+                    [float(row[metric]) for row in points],
+                    marker="o",
+                    linewidth=2,
+                    markersize=4,
+                    linestyle="-" if steps == max(budgets) else "--",
+                    label=budget_label(variant, steps),
+                    color=COLORS[variant],
+                )
         axis.set_title(title)
         axis.set_xlabel("Optimizer steps (thousands)")
         axis.set_ylabel(metric.replace("_", " ").upper())
@@ -108,9 +128,9 @@ def plot_learning_curves(rows: list[dict[str, str]], output_dir: Path) -> None:
 
 
 def plot_endpoint_bars(rows: list[dict[str, str]], output_dir: Path) -> None:
-    by_variant = {row["variant"]: row for row in rows}
-    variants = ordered_variants(rows)
-    labels = [LABELS[variant] for variant in variants]
+    by_variant = highest_budget_by_variant(rows)
+    variants = ordered_variants(list(by_variant.values()))
+    labels = [budget_label(variant, int(by_variant[variant]["steps"])) for variant in variants]
     fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.2))
     specifications = [
         ("xyz_end_m", "Endpoint translation error (mm)", 1000.0),
@@ -148,11 +168,17 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
         ("umi_official_transformer_dp", "umi_official_dp"),
     }
     metrics = ("xyz_end_m", "rotation_end_deg")
-    selected = [
+    candidates = [
         row
         for row in rows
         if (row["variant"], row["baseline_variant"]) in desired_pairs and row["metric"] in metrics
     ]
+    selected_by_key: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in candidates:
+        key = (row["variant"], row["baseline_variant"], row["metric"])
+        if key not in selected_by_key or int(row["steps"]) > int(selected_by_key[key]["steps"]):
+            selected_by_key[key] = row
+    selected = list(selected_by_key.values())
     pair_order = [
         pair for pair in desired_pairs if any((r["variant"], r["baseline_variant"]) == pair for r in selected)
     ]
@@ -191,7 +217,11 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
     axis.axvline(0, color="black", linewidth=1)
     axis.set_yticks(
         y,
-        [f"{LABELS[candidate]} vs {LABELS[baseline]}" for candidate, baseline in pair_order],
+        [
+            f"{LABELS[candidate]} vs {LABELS[baseline]} "
+            f"({int(lookup[(candidate, baseline, metrics[0])]['steps']) // 1000}k)"
+            for candidate, baseline in pair_order
+        ],
     )
     axis.set_xlabel("Paired error reduction (%) — positive favors candidate")
     axis.grid(axis="x", alpha=0.25)
@@ -204,12 +234,20 @@ def plot_paired_improvements(rows: list[dict[str, str]], output_dir: Path) -> No
 def plot_efficiency(
     summary_rows: list[dict[str, str]], run_rows: list[dict[str, str]], output_dir: Path
 ) -> None:
-    run_by_variant = {row["variant"]: row for row in run_rows if row.get("parameters")}
-    points = [row for row in summary_rows if row["variant"] in run_by_variant]
+    latest_summaries = highest_budget_by_variant(summary_rows)
+    run_by_key = {
+        (row["variant"], int(row["steps"])): row for row in run_rows if row.get("parameters")
+    }
+    points = [
+        row
+        for row in latest_summaries.values()
+        if (row["variant"], int(row["steps"])) in run_by_key
+    ]
     fig, axis = plt.subplots(figsize=(9.5, 6.0))
     for row in points:
         variant = row["variant"]
-        parameters_m = float(run_by_variant[variant]["parameters"]) / 1e6
+        steps = int(row["steps"])
+        parameters_m = float(run_by_key[(variant, steps)]["parameters"]) / 1e6
         axis.scatter(
             float(row["inference_median_seconds"]) * 1000,
             float(row["xyz_end_m"]) * 1000,
@@ -220,7 +258,7 @@ def plot_efficiency(
             linewidth=0.7,
         )
         axis.annotate(
-            LABELS[variant],
+            budget_label(variant, steps),
             (float(row["inference_median_seconds"]) * 1000, float(row["xyz_end_m"]) * 1000),
             xytext=(5, 4),
             textcoords="offset points",
