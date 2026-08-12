@@ -1072,6 +1072,19 @@ workers change throughput, not the policy objective, while concurrent training
 changes wall-clock scheduling and must never be used to compare raw per-step
 speed between models.
 
+At 21:02 on 2026-08-12, the same measured-headroom rule was applied to the
+capacity-control queue: R50-V1 100k was using about 4.5 GiB CUDA and the card
+had over 19 GiB free, so an independent R18-VAE seed-2000 confirmation was
+started rather than leaving the device mostly idle. After startup the two
+trainers together allocated about 7.6 GiB, reached 100% device utilization at
+about 363 W, and retained more than 16 GiB free. R50-V1 was at 13.4k/100k and
+R18 seed-2000 at 1.8k/100k at the latest check; both had finite losses and no
+CUDA, PyAV, or native-worker errors. R50 slowed from roughly 13 to 7 steps/s
+under contention, while R18 remained near 12--13 steps/s. This is an
+intentional throughput/wall-clock trade-off, not a change to either scientific
+configuration. Completion predicates prevent the later confirmation supervisor
+from retraining this seed.
+
 ### SmolVLA rotation-notation control
 
 The SmolVLA comparison holds the pretrained checkpoint, action expert, flow
