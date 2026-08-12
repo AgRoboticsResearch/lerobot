@@ -1011,6 +1011,17 @@ symmetric bound; the combined SmolVLA/LingBot/UMI processor suite currently has
 32 passing CPU tests after also covering evaluator sampler-field selection and
 the non-UMI LingBot identity-denormalization path.
 
+A later host audit re-ran the 21 tests most directly tied to this extension:
+the reversible UMI processors, symmetric axis-angle statistics, SmolVLA
+notation configuration, LingBot 7D-to-30D bridge/configuration, and resumable
+asset-integrity gate all passed. The ordinary repository invocation initially
+reported zero collected tests because globally installed ROS Kilted pytest
+entry-point plugins imported an unrelated hardware module whose optional
+`deepdiff` dependency was absent. Re-running with third-party plugin autoload
+disabled collected the intended files and produced `21 passed`; the earlier
+zero-test exit is not counted as validation evidence. This invocation isolates
+the test harness only and does not modify the shared training environment.
+
 The guarded extension queue trains both SmolVLA notations at seed 1000 for 30k
 and at seeds 1000/2000/3000 for 100k, followed by three inference seeds per
 checkpoint. This is deliberately paired: same dataset queries, initialization,
@@ -1178,6 +1189,14 @@ not CPU trainers. Both large LingBot frozen-weight partials continued to grow
 during this interval, so the asset supervisor was retained rather than
 restarted and losing resumable download progress.
 
+ACT-L1 subsequently completed validation and a fully durable checkpoint at
+80k. Held-out L1 was 0.032604, essentially unchanged from 70k (0.032481) and
+5.03% above the current 60k minimum (0.031042). Training resumed after the
+checkpoint. Two consecutive later validations therefore support preserving and
+reporting the best-validation checkpoint alongside the final 100k checkpoint;
+they do not justify stopping the fixed-budget run early, because decoded common
+queries—not validation loss alone—are the comparison endpoint.
+
 Two canonical early-evaluation waiters advance analysis without forking the
 protocol: official U-Net inference seed 1000 starts after its exact 30k durable
 completion, and deterministic ACT-L1 seed 1000 starts after its 100k companion
@@ -1227,6 +1246,17 @@ downloads only the frozen `vae/`, `text_encoder/`, and `tokenizer/` subtrees
 from the source repository (not a redundant transformer), validates their
 configs and weight files, and retries transient network failures. A CLI success
 code is therefore no longer mistaken for model readiness.
+
+The supervised download subsequently finished and the shared structural gate
+returned success. The final frozen inventory contains all three UMT5 shards
+(4,935,812,536, 4,983,103,192, and 1,442,935,480 bytes; 11,361,820,672 bytes
+declared by the index), the 2,818,777,808-byte Wan VAE, tokenizer/configuration
+files, and no `.incomplete` blobs. Together with the separately verified
+10,177,841,732-byte trainable checkpoint, this closes asset acquisition. The
+downloader exited and was not restarted. The extension supervisor remains
+deliberately behind confirmation evaluation and will apply the same predicate
+again before its two-update host-GPU smoke, preventing asset completion from
+causing an unsafe third concurrent CUDA allocation.
 
 ## 11. Reproduction
 
