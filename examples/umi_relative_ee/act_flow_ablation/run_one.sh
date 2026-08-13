@@ -10,9 +10,9 @@ SEED="${3:-1000}"
 REPO=/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 TRAIN_REPO=sroi/sroiv2_strawberry_picking_lab_1459_occlusion
-TRAIN_ROOT=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1459_occlusion
+TRAIN_ROOT="${UMI_TRAIN_ROOT:-/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1459_occlusion}"
 VAL_REPO=sroi/sroiv2_strawberry_picking_lab_validation
-VAL_ROOT=/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation
+VAL_ROOT="${UMI_VAL_ROOT:-/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation}"
 VAL_FREQ="${UMI_VAL_FREQ:-10000}"
 BATCH_SIZE=8
 NUM_WORKERS="${UMI_NUM_WORKERS:-4}"
@@ -30,7 +30,7 @@ RUN_NAME="${VARIANT}_seed${SEED}_${STEPS}steps"
 OUT="$ARTIFACT_ROOT/train/$RUN_NAME"
 LOG="$ARTIFACT_ROOT/logs/$RUN_NAME.log"
 
-if [[ -e "$OUT" || -e "$LOG" ]]; then
+if [[ -e "$OUT" || -e "$LOG" ]] && [[ "${UMI_RESUME:-false}" != "true" ]]; then
   echo "Refusing to overwrite existing run: $OUT or $LOG" >&2
   exit 2
 fi
@@ -300,6 +300,40 @@ echo "[$(date '+%F %T')] starting $RUN_NAME on host GPU" | tee "$LOG"
 if [[ -n "$HF_HOME_VALUE" ]]; then
   export HF_HOME="$HF_HOME_VALUE"
   mkdir -p "$HF_HOME"
+fi
+if [[ "${UMI_RESUME:-false}" == "true" ]]; then
+  # Canonical LeRobot resume: reload the FULL config (including the polymorphic
+  # policy subclass + all hyperparameters) from the checkpoint's train_config.json,
+  # then --resume=true loads optimizer / scheduler / global-step from
+  # checkpoints/last/training_state and continues training to --steps. The --policy.*
+  # flags are NOT re-passed here -- the saved config is the single source of truth
+  # for the model, so a mismatch is impossible. Only pure-infra knobs (workers,
+  # save/val freq, output dir) are overridden on top. Passing --resume without
+  # --config_path raises "A config_path is expected when resuming a run."
+  RESUME_CFG="$OUT/checkpoints/last/pretrained_model/train_config.json"
+  if [[ ! -f "$RESUME_CFG" ]]; then
+    echo "[run_one] resume requested but $RESUME_CFG missing; aborting (checkpoint left intact)" >&2
+    exit 3
+  fi
+  echo "[run_one] resume=true for $RUN_NAME from $RESUME_CFG (preserving checkpoint)" >&2
+  HF_HUB_OFFLINE="$HF_HUB_OFFLINE_VALUE" PYTHONPATH=src uv run python \
+    examples/umi_relative_ee/train_umi_relative_ee.py \
+    --config_path="$RESUME_CFG" \
+    --resume=true \
+    --output_dir="$OUT" \
+    --job_name="$RUN_NAME" \
+    --num_workers="$NUM_WORKERS" \
+    --prefetch_factor="$PREFETCH_FACTOR" \
+    --persistent_workers="$PERSISTENT_WORKERS" \
+    --log_freq=200 \
+    --val_freq="$VAL_FREQ" \
+    --save_freq="$SAVE_FREQ" \
+    --save_checkpoint="$SAVE_CHECKPOINT" \
+    --policy.device=cuda \
+    --wandb.enable=false \
+    2>&1 | tee -a "$LOG"
+  echo "[$(date '+%F %T')] completed $RUN_NAME" | tee -a "$LOG"
+  exit 0
 fi
 HF_HUB_OFFLINE="$HF_HUB_OFFLINE_VALUE" PYTHONPATH=src uv run python \
   "${COMMON[@]}" "${POLICY[@]}" 2>&1 | tee -a "$LOG"

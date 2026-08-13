@@ -50,6 +50,35 @@ is_complete() {
   training_is_complete "$ARTIFACT_ROOT" "$name" "$STEPS"
 }
 
+is_running() {
+  # True if any process (main or its PyAV dataloader workers, which share the
+  # command line) is currently training this exact run. Lets the supervisor
+  # defer to an in-flight companion queue instead of archiving its in-progress
+  # directory and starting a conflicting run. Fixed-string match is safe because
+  # run names are unique (they encode the seed).
+  local name="$1"
+  pgrep -fa train_umi_relative_ee.py 2>/dev/null | grep -qF -- "job_name=$name"
+}
+
+wait_for_companion() {
+  # If a companion queue is already training this run, wait for it to finish so
+  # we inherit its result rather than overwriting it. A 12h valve prevents an
+  # indefinitely stuck companion from deadlocking the whole evaluation chain.
+  local name="$1" waited=0
+  if is_running "$name"; then
+    echo "[$(timestamp)] in-flight elsewhere; waiting for companion: $name"
+    while is_running "$name"; do
+      sleep 60
+      waited=$((waited + 60))
+      if (( waited >= 43200 )); then
+        echo "[$(timestamp)] companion wait exceeded 12h; taking over: $name"
+        return 0
+      fi
+    done
+    echo "[$(timestamp)] companion finished; re-checking: $name"
+  fi
+}
+
 archive_incomplete() {
   local variant="$1" seed="$2" name out log archive_stamp archive_dir
   name="$(run_name "$variant" "$seed")"
@@ -67,7 +96,9 @@ archive_incomplete() {
 }
 
 run_with_retries() {
-  local variant="$1" seed="$2" attempt workers status
+  local variant="$1" seed="$2" attempt workers status name
+  name="$(run_name "$variant" "$seed")"
+  wait_for_companion "$name"
   if is_complete "$variant" "$seed"; then
     echo "[$(timestamp)] already complete: $(run_name "$variant" "$seed")"
     return 0

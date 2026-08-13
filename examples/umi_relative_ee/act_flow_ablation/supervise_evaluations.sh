@@ -126,7 +126,7 @@ UV_CACHE_DIR=/tmp/uv-cache-umi-ablation uv run python \
   "$SCRIPT_DIR/collect_results.py" --artifact_root "$ARTIFACT_ROOT"
 collect_status=$?
 if [[ "$collect_status" -eq 0 ]]; then
-  MPLCONFIGDIR=/tmp/lerobot-matplotlib UV_CACHE_DIR=/tmp/uv-cache-umi-ablation uv run python \
+  MPLCONFIGDIR=/tmp/lerobot-matplotlib UV_CACHE_DIR=/tmp/uv-cache-umi-ablation uv run --with matplotlib python \
     "$SCRIPT_DIR/plot_results.py" --artifact_root "$ARTIFACT_ROOT"
   plot_status=$?
 else
