@@ -93,6 +93,8 @@ def main():
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset_root", default="/mnt/data1/sroi/lerobot/sroiv2_strawberry_validation_rotvec")
     p.add_argument("--samples_per_episode", type=int, default=5)
+    p.add_argument("--max_queries", type=int, default=None,
+                   help="cap total queries (smoke tests); None = all episodes")
     p.add_argument("--output", required=True)
     p.add_argument("--seed", type=int, default=1000)
     args = p.parse_args()
@@ -119,6 +121,8 @@ def main():
             fi = int(round(lo + (hi - lo) * (j + 0.5) / args.samples_per_episode))
             # map (ep, fi) -> global dataset index via episode_data_index
             query.append((ep, fi))
+    if args.max_queries is not None:
+        query = query[: args.max_queries]
     ep_data_index_from = [0]
     for ep in range(meta.total_episodes):
         ep_data_index_from.append(ep_data_index_from[-1] + meta.episodes[ep]["length"])
@@ -141,7 +145,11 @@ def main():
         state = np.asarray(item["observation.state"], dtype=np.float32)  # rotvec 7D
         if is_rot6d:
             state = rotvec_to_rot6d_state(state)
-        obs = {"observation.images.camera": img, "observation.state": state}
+        # openpi's serving contract: obs arrives PRE-REPACKED with the short keys
+        # (create_trained_policy does not apply the data config's RepackTransform;
+        # official serve_policy.py passes none either -- LiberoInputs/SroiInputs
+        # read data["image"]/data["state"] directly).
+        obs = {"image": img, "state": state}
         gt = torch.as_tensor(np.asarray(item["action"]), dtype=torch.float32)  # (T,7) rotvec
         t0 = time.perf_counter()
         out = policy.infer(obs)
