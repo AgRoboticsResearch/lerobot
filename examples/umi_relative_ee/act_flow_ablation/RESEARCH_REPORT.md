@@ -1,10 +1,10 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** in progress  
+**Status:** complete on the seed-1000 controlled matrix (§9.1–9.2) plus the π0.5 650K/700K flow-VLM reference (§9.2.2) and the SmolVLA rotation-notation ablation (§9.2.3). One extension is pending: the official-openpi rot6d-vs-rotvec replication (§9.2.4) — both arms training; results will be recorded there when available. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 reference.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
-**Full-run artifacts:** `/media/zfei/Glowat512/projects/lerobot-arch-exp`  
+**Full-run artifacts:** `/mnt/data1/projects/lerobot-arch-exp` (moved off the failed external disk, §8 incident 12)  
 **Smoke artifacts:** `/mnt/data1/sroi/lerobot_policy_ablation_20260811/smoke`
 
 This is the single research record for the investigation. It intentionally
@@ -521,6 +521,82 @@ This resource contention does not alter previous checkpoints or configs.
    failed because the local cache lacked packages needed for other supported
    Python/platform resolution splits, so the successful lock used the registry.
 
+10. The environment synced for stage two (incident 9) omits the `matplotlib-dep`
+    extra, so a later `plot_results.py` invocation failed with
+    `ModuleNotFoundError: No module named 'matplotlib'` even though figures had
+    rendered earlier under a broader environment (`collect_status=0,
+    plot_status=1`). Rather than re-sync — which risks the pruning incidents
+    above while live training is running — plotting now runs through
+    `uv run --with matplotlib`, an ephemeral overlay that leaves the shared
+    training venv and the live training processes untouched. The evaluation
+    supervisor's plot line was patched to use this path so confirmation
+    auto-plotting does not silently skip figure regeneration, and the seed-1000
+    figures were regenerated this way after the fix.
+
+11. On 2026-08-13 at 13:36:26 the artifact disk `/dev/sdb1`
+    (`/media/zfei/Glowat512`, ext4, all full-run checkpoints and decoded
+    metrics) began returning `Input/output error` on writes and then on reads.
+    This single event killed all four concurrent confirmation training jobs at
+    the same timestamp (they all I/O on that mount) and took down every
+    companion/supervisor tmux session whose logs live there; the host did not
+    reboot (2-week uptime) and the tmux server itself survived. The failure is a
+    hardware/disk-level fault, not a software or OOM event. As a result 9 of 14
+    multi-seed confirmation runs were trained but only the seed-1000 matrix is
+    fully evaluated; 5 confirmation runs (act_r50_vae s3000 at 70k,
+    act_r50_v1_vae s2000 at 50k, act_r50_v1_vae s3000 unstarted,
+    act_r18_flow_u_lr1e5 s3000 at 30k, diffusion_r18 s3000 at 30k) did not
+    finish. The scientific seed-1000 results are **not** at risk: they were
+    integrated into this report (Sections 9.1--9.2) and the figures/CSVs on the
+    separate repository disk before the fault progressed. No multi-seed
+    *evaluation* results existed yet (only training), so the only at-risk items
+    are the large retrainable training checkpoints and the per-eval metric JSONs
+    on the failing mount. Resume support (`--resume=true` via `UMI_RESUME=true`
+    in `run_one.sh`; resume-aware `run_companion.sh`) was added so the surviving
+    partial checkpoints can be continued once the disk is restored rather than
+    retrained from scratch. **This incident is unresolved and blocks the
+    queue** — advancing training/evaluation requires the disk fault to be
+    repaired (fsck / remount / replacement) by the operator; it is not
+    recoverable from software alone.
+
+12. On 2026-08-14 at ~23:50 the same artifact disk (`/dev/sdc1` after its
+    first recovery) failed a **second time** with block-layer `Input/output
+    error` on both writes and reads, killing all four concurrently-resumed
+    multi-seed confirmation jobs and stranding their checkpoints (reads failed,
+    so no salvage copy was possible — the same mode as incident 11's nadir).
+    Repeated failure shows the external disk is unreliable. Per operator
+    directive the artifact root was **permanently moved** to the healthy internal
+    `/mnt/data1/projects/lerobot-arch-exp` (`/dev/sda1`, ext4 rw, 280 GB free),
+    and — for compute efficiency and to stop depending on the flaky disk — the
+    multi-seed (seed 2000/3000) confirmation was **dropped** rather than
+    retrained a third time. The ablation therefore finalizes on the seed-1000
+    controlled matrix plus the independently-trained π0.5 reference (§9.2.2).
+    Lesson: an external/USB disk is the wrong place for long-running checkpoint
+    writes; the internal `/mnt/data1` root is now canonical, and all
+    supervisors/companions read `UMI_ABLATION_ROOT` so a future retrain lands
+    there directly.
+
+13. On 2026-08-14, standing up the official-openpi replication (§9.2.4) hit a
+    chain of host-network and data-compatibility faults, each recovered in
+    software: (a) the pinned openpi LeRobot is format **v2.1** while the
+    strawberry datasets are **v3.0** (chunked multi-episode parquet/mp4 + parquet
+    metadata), so `LeRobotDatasetMetadata` fell back to a Hub lookup and 404'd —
+    fixed by a one-time v3.0→v2.1 reshard (per-episode parquet + ffmpeg-split
+    per-episode mp4 + jsonl metadata); (b) the host's Tailscale intercepted DNS
+    for `storage.googleapis.com` (synthetic `198.18.0.80`, unreachable), blocking
+    the 11.6 GiB `pi05_base` orbax checkpoint download — bypassed non-invasively
+    by pinning real Google front-end IPs with `curl --resolve`; (c) resuming the
+    partially-downloaded checkpoint across different downloader generations
+    produced **size-correct but corrupt** shards (orbax later failed with
+    `ZSTD_decompressStream` corruption) — caught, pinpointed with crc32c checks
+    against GCS's JSON-API hashes, and re-downloaded cleanly with per-file
+    verification; (d) LoRA training at the default `batch_size=32` OOMed the
+    24 GB RTX 4090 — reduced to 16 with the step count right-sized (§9.2.4).
+    Lessons: size checks are not integrity checks (verify a real checksum —
+    GCS's XML listing ETags are only MD5 for small objects; the JSON API's
+    crc32c covers everything); never resume a file across different writers;
+    `pkill -f <script>` neither matches its spawned `curl` children nor avoids
+    matching your own supervising shell — kill children explicitly and by PID.
+
 ## 9. Results
 
 The exact ResNet-18 ACT replication gives
@@ -731,12 +807,25 @@ R50-V2 gain cannot yet be credited to width alone: both R50 recipes beat R18,
 while V1 versus V2 is effectively tied at 30k and still mixes initialization,
 VAE details, and finite-budget optimization.
 
-The R50-V1 100k continuation is now running from a fresh seed-1000 start. At
-the latest host check it had passed 5k/100k at about 13 updates/s, with 95%
-GPU utilization, 4.6 GiB allocated CUDA memory, finite losses, and no native
-loader or CUDA errors. Its exact 100k decoded evaluation is intentionally
-deferred until the checkpoint is durable; this avoids selecting a transient
-validation minimum and preserves the fixed-budget comparison.
+The R50-V1 100k continuation has since completed training and its exact 100k
+decoded evaluation. It is the strongest deterministic ACT pose accuracy at the
+full seed-1000 budget: 13.72 mm XYZ chunk, **22.33 mm XYZ endpoint**, 2.623°
+rotation chunk, **4.584° rotation endpoint**, 0.1435 gripper endpoint, 0.056°
+rotational jerk, and 0.441 mm XYZ jerk. Relative to the R18-VAE 100k control it
+improves endpoint XYZ by **9.8%** (paired episode CI 5.1--14.3%) and endpoint
+rotation by **6.3%** (1.5--11.1%), and chunk XYZ by 16.3%. Crucially it also
+edges the R50-V2 recipe at the same budget (22.33 vs 24.44 mm endpoint XYZ,
+4.584 vs 4.875° endpoint rotation; chunk XYZ 13.72 vs 14.28 mm). At 30k V1 and
+V2 had been tied (Section 9.1.2); at 100k the V1 initialization is at least as
+good as V2 on every pose metric. Because V1 holds the ImageNet-initialization
+family fixed against the R18/R34 controls, this means the ResNet-50 capacity
+gain is **not** an artifact of the torchvision-recommended V2 weights — the
+capacity attribution survives the strict initialization control at full budget.
+(Latency is omitted here because this checkpoint was evaluated under heavy
+multi-job GPU contention; the contention-independent decoded accuracy above is
+the valid comparison.) The V1-vs-V2 paired interval is not emitted by the
+summary's R18-anchored pairing, so the small V1 edge over V2 is reported
+descriptively pending the multi-seed hierarchical interval.
 
 The corrected exact-step ACT-L1 result changes the practical deterministic
 recommendation. Relative to R18 VAE, direct L1 improves chunk XYZ by **12.52%**
@@ -789,6 +878,25 @@ matters at least as much as the broad generative objective. These intervals
 capture episodes and inference seeds but not training-seed variability, so the
 queued 100k and seed-2000/3000 confirmations remain necessary.
 
+The architecture-matched ACT-DP control has since completed its fixed 100k
+budget (seed 1000, three inference seeds) and confirms that the 30k deficit does
+not close with longer training. At 100k it decodes to 18.43 mm XYZ chunk, 28.08
+mm XYZ endpoint, 3.092° rotation chunk, 5.207° rotation endpoint, 0.442°
+rotational jerk, and 2.187 mm XYZ jerk — better than its own 30k policy
+(38.70 mm endpoint XYZ) but still the weakest objective. Relative to ACT-L1 at
+the same budget it is **18.5% worse in endpoint XYZ** (paired episode CI −24.4
+to −12.8%), **28.5% worse in chunk XYZ** (−33.7 to −23.5), and 7.4% worse in
+endpoint rotation (−12.9 to −2.0); all three intervals exclude zero. Relative to
+matched ACT-flow 100k it is 7.7% worse in endpoint XYZ (−12.1 to −3.5) and tied
+in endpoint rotation (−6.5 to +2.2, interval crossing zero). Thus at the full
+seed-1000 budget, replacing rectified-flow velocity regression with epsilon/DDIM
+diffusion inside the identical learned ACT denoiser does not rescue the
+generative path; if anything ACT-DP remains slightly worse than even matched
+flow on translation. This sharpens the Section 9.3 conclusion: the weakness is
+specific to the time-conditioned ACT-transformer denoiser/conditioning path, not
+to the flow objective itself (standard temporal-U-Net DP and the released UMI
+transformer denoiser remain competitive).
+
 There is nevertheless an important control-quality cost. ACT-L1 rotation/XYZ
 jerk is 0.091 deg / 0.00073 m, matched flow is 1.093 deg / 0.00466 m, and DP is
 0.481 deg / 0.00186 m; the ground-truth values are 0.158 deg / 0.00067 m.
@@ -834,6 +942,118 @@ and iterative diffusion is not intrinsically inferior to direct ACT. The
 weakness is specific to some denoiser/conditioning/optimization combinations;
 trajectory decoding and smoothness must be measured alongside objective loss.
 
+### 9.2.2 Well-trained π0.5 flow-VLM reference (650K / 700K)
+
+To test whether the matched ACT-flow deficit reflects flow matching itself or
+only the small ACT-transformer denoiser, a well-trained flow-VLM — the π0.5 LoRA
+run `pi05_openpi_split_lora_masked_1459_bs4_1m` — was evaluated on the same fixed
+500-query common protocol at two checkpoints (650K and 700K of a 1M schedule),
+each with three inference seeds (1000/2000/3000). Inference-seed variability is
+negligible (±0.17 mm endpoint XYZ, ±0.01° rotation), so the means are tight.
+
+| Checkpoint | XYZ end (mm) | Rot end (deg) | Rot jerk (deg) | Gripper end |
+| --- | ---: | ---: | ---: | ---: |
+| π0.5 LoRA 700K | **21.77 ± 0.17** | **4.25 ± 0.01** | **0.07** | 0.14 |
+| π0.5 LoRA 650K | 21.97 ± 0.21 | 4.32 ± 0.01 | 0.08 | 0.14 |
+
+Both π0.5 checkpoints beat every ACT and diffusion-policy variant in the matrix
+on endpoint pose accuracy (next best: ACT R50-V1 100k at 22.33 mm / 4.58°), and
+both are smoother than the ground-truth trajectory (rotational jerk 0.07–0.08°
+versus GT 0.158°). The 650K→700K gain is small (0.2 mm, 0.07°), indicating the
+flow-VLM has largely plateaued by 650K. This sharpens the Q2 conclusion: flow
+matching is emphatically not the bottleneck — a well-trained flow-VLM is the
+strongest and smoothest controller here, so the deficit of the matched ACT-flow
+run (Section 9.2, ~26 mm) is attributable to the ACT-transformer
+denoiser/conditioning/optimization recipe and its 100k budget, not to velocity
+flow matching itself. Training budget is a first-order variable: the π0.5
+reference used 6.5–7× the ACT variants' 100k steps, so the head-to-head endpoint
+comparison must be read with that budget asymmetry in mind, and any future
+matched-budget flow comparison should train the ACT-flow path substantially
+longer before concluding flow is weak. (π0.5 700K prediction videos are under
+`outputs/debug/viz_pi05_700k/`; raw metrics under
+`eval_common_h32/pi05_openpi_split_lora_1459_{650k,700k}/`.)
+
+### 9.2.3 Rotation-notation ablation: rot6d vs axis-angle (SmolVLA)
+
+A separate question from the ACT/flow matrix is whether the **rotation
+parameterization** of the relative-EE action matters. The UMI convention stores
+rotation as a continuous 6D rep (two rows of the rotation matrix, "rot6d"), but
+axis-angle (3D rotvec) is the native storage and is cheaper. SmolVLA was trained
+to 100k steps at seed 1000 in two conditions that differ **only** in
+`umi_rotation_representation` — `rot6d` (10D action: xyz + rot6d + gripper) versus
+`axis_angle` (7D: xyz + rotvec + gripper) — holding the pretrained checkpoint,
+action expert, flow objective, batch size, and 20D rot6d state bridge fixed. Both
+were open-loop evaluated on the fixed 100-episode / 500-query validation protocol.
+
+| Notation | XYZ end (mm) | Rot end (deg) | Rot jerk (deg) | XYZ jerk (mm) |
+| --- | ---: | ---: | ---: | ---: |
+| rot6d | 26.87 [25.28, 28.49] | 4.60 [4.36, 4.85] | 0.91 [0.89, 0.93] | 4.09 [4.00, 4.19] |
+| axis-angle | 27.00 [25.44, 28.58] | 4.76 [4.49, 5.04] | **0.83 [0.81, 0.85]** | 4.12 [4.02, 4.21] |
+| ground truth | — | — | 0.158 | 0.66 |
+
+Endpoint accuracy is **statistically tied**: the 95% bootstrap intervals overlap
+heavily on both XYZ (±1.6 mm around ~27 mm) and rotation (±0.25° around ~4.7°), so
+rot6d is not measurably more accurate than axis-angle for SmolVLA here. The one
+significant difference is **rotational jitter**: axis-angle is smoother
+(0.83° vs 0.91°, disjoint intervals), although both remain ~5× the ground-truth
+jerk (0.158°), so neither notation resolves SmolVLA's well-known jitter. The
+result is mildly counter-intuitive — rot6d's continuity is often expected to
+*reduce* jitter — and is most plausibly explained by the relative-EE actions being
+near-identity (small rotations), where axis-angle's singularity at 180° never
+manifests and the extra rot6d→rotvec decode step injects a small amount of noise.
+Practical takeaway: **rotation parameterization is not a meaningful accuracy or
+deployment lever for this task**; axis-angle is preferred for its smaller action
+dimension and marginally smoother output. (An independent replication on the
+official openpi π0.5 LoRA path — rot6d vs rotvec, JAX — is in progress to test
+whether the conclusion transfers to a flow-VLM; see §9.2.4. Raw
+SmolVLA metrics under
+`outputs/research_report/smolvla_notation_eval_20260814/`.)
+
+### 9.2.4 Independent replication on official openpi π0.5 (rot6d vs rotvec) — awaiting results
+
+The SmolVLA tie above leaves open whether the conclusion transfers to a larger
+flow-VLM trained with the **official openpi stack** (JAX/Flax, Physical
+Intelligence's own π0.5 LoRA recipe) rather than our LeRobot ports. A controlled
+replication is therefore running as an independent experiment: strawberry-1459
+fine-tuned on **official openpi** with LoRA (`gemma_2b_lora` rank 16 on the
+PaliGemma backbone + `gemma_300m_lora` rank 32 on the action expert, initialized
+from the official `pi05_base` orbax checkpoint), in two arms differing **only** in
+rotation notation:
+
+- **rotvec arm** — 7D action (xyz + rotvec + gripper), matching the native storage;
+- **rot6d arm** — 10D action (xyz + first-two-rows rot6d + gripper), matching the
+  UMI convention used everywhere else in this report (same row convention as the
+  LeRobot port, verified by an exact rot6d↔rotvec round-trip test).
+
+Both arms share: identical data (episodes, frames, video), per-frame
+`observation.state` derived from the action, no delta transform (the on-disk data
+is already start-anchored relative), quantile normalization computed on the same
+30k-frame sample, action horizon 10, batch size 16, 20 000 steps (~320k samples ≈
+2.3 epochs, seed fixed by the JAX default), prompt "pick the strawberry",
+checkpoints at 10k/20k. Feeding the data required converting the v3.0 LeRobot
+layout to the v2.1 per-episode layout that openpi's pinned LeRobot reads
+(per-episode parquet + mp4, jsonl metadata — script
+`reshard_openpi_datasets_v21.py`); batch size is 16 because 32 exhausts the 24 GB
+RTX 4090, and openpi's vision tower processes the zero-filled wrist-camera slots
+(its standard single-camera pattern, as in LiberoInputs), which is accepted as the
+honest openpi-method cost (2.4 s/step).
+
+Evaluation will use the same decoded-metric protocol as §9.2.3 (fixed
+100-episode / 500-query validation set, episode-balanced means with 95% bootstrap
+intervals) via a purpose-built `eval_openpi_open_loop.py` whose rotation/jerk
+math was verified to match `eval_open_loop_dataset.py` exactly; rot6d-arm outputs
+are decoded to rotvec before scoring so both arms are compared in the same
+units.
+
+**Status (2026-08-14): both arms are training sequentially on the host GPU
+(rotvec first, then rot6d, ~13 h each); evaluation is chained to launch
+automatically. Results will be recorded here when available.** The preregistered
+read-out: if the openpi arms also tie on endpoint accuracy, the §9.2.3 conclusion
+(rotation parameterization is not a meaningful lever for this near-identity
+relative-EE task) gains a second, stack-independent data point; if they diverge,
+the divergence itself — with notation as the only intended difference — would
+warrant a follow-up isolating the normalization/decoding path.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
@@ -854,8 +1074,8 @@ Denoiser architecture, conditioning, optimizer/sampler design, VLM fine-tuning,
 and trajectory smoothness are separate axes; the existing π0.5 result further
 indicates that the VLM path can work. ACT-L1, uniform flow 1e-5,
 architecture-matched ACT-DP, and standard DP are promoted with R18, R50-V1,
-and R50-V2 to determine whether these conclusions persist at 100k and across
-training seeds.
+and R50-V2 to determine whether these conclusions persist at the full 100k
+budget (single training seed; variability quantified by per-episode bootstrap).
 
 Stage two therefore trains fresh 100k runs (not scheduler-incompatible resumes)
 for ACT R18 VAE, ACT R50 V2 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and
@@ -864,15 +1084,49 @@ controls are inserted as separate 30k/100k successors before evaluation. Fresh
 runs are required because Diffusion Policy's cosine scheduler was
 constructed for 30k steps and had already reached its floor; extending that
 optimizer state to 100k would not be equivalent to a 100k schedule. After the
-100k screen, the surviving comparison will be repeated with training seeds
-2000 and 3000 so that training-seed variability, which episode bootstrap cannot
-measure, is included in the final recommendation.
+100k screen, the surviving comparison was to be repeated at training seeds 2000
+and 3000 to capture training-seed variability that the per-episode bootstrap
+cannot measure. That multi-seed confirmation was started but ultimately **dropped
+for compute efficiency** after two artifact-disk failures (§8, incident 12)
+stranded the seed-2000/3000 checkpoints; the final recommendation therefore
+rests on the single seed-1000 matrix with per-episode bootstrap intervals,
+strengthened by the independently-trained π0.5 650K/700K flow-VLM reference
+(§9.2.2), which is stable to ±0.17 mm endpoint XYZ across three inference seeds.
+A future seed-2000/3000 iteration would tighten the intervals but is unlikely to
+reverse the rank order given the size of the seed-1000 gaps and the consistency
+of the π0.5 reference.
+
+**Final recommendation (seed-1000 basis).** Endpoint-pose accuracy at matched
+100k budgets ranks: ACT-L1 ≈ ACT R50-V1 (best of the ACT/diffusion family,
+~22 mm endpoint; R50-V1's gain over R18 survives the strict V1-initialization
+control, so ResNet-50 capacity — not the torchvision V2 weights — is the cause)
+> ACT R50-V2 > standard temporal-U-Net Diffusion Policy > matched ACT-flow >
+ACT-DP (worst). The matched ACT-flow and ACT-DP deficits are attributable to
+the ACT-transformer denoiser/conditioning recipe, **not** to flow/diffusion per
+se: standard DP is competitive with ACT, and a well-trained π0.5 flow-VLM
+(§9.2.2, 21.8 mm endpoint, smoother than ground truth) is the strongest
+controller of all — confirming flow matching is sound when paired with a
+capable denoiser and sufficient training budget (π0.5 used 6.5–7× the ACT
+budget, so training budget is a first-order variable the matched 100k
+comparison does not control). Practical defaults: **ACT-L1** as the lightweight
+deterministic controller (lowest inference cost, smoothest ACT trajectory);
+**ACT R50-V1** when the extra ~25% latency is acceptable for a small pose
+gain; and the **flow-VLM path (π0.5 / openpi)** when VLM inference cost is
+justified by its clear accuracy and smoothness lead. Rotation parameterization,
+by contrast, is **not** a lever worth spending on: the SmolVLA rot6d-vs-axis-angle
+ablation (§9.2.3) found endpoint accuracy statistically tied, with axis-angle
+marginally smoother — axis-angle (7D) is the practical default, pending the
+official-openpi replication (§9.2.4). Note finally that ACT
+trajectory smoothness (rotational jerk 0.056°–0.091°) is comparable to or below
+the ground-truth jerk (0.158°), so the iterative generative samplers' roughness
+is not a reason to avoid ACT's deterministic path here.
 
 The stage-two sequence was launched on the host RTX 4090 at 2026-08-11 20:41
 Asia/Taipei in tmux session `umi_arch_stage2_20260811`. Its first run,
 `act_r18_vae_seed1000_100000steps`, initialized successfully at about 26.7
-steps/s. Checkpoints/logs remain under
-`/media/zfei/Glowat512/projects/lerobot-arch-exp`. This was an active long-run
+steps/s. Checkpoints/logs were originally under
+`/media/zfei/Glowat512/projects/lerobot-arch-exp` and, after that disk failed
+twice, live under `/mnt/data1/projects/lerobot-arch-exp` (§8, incident 12). This was an active long-run
 confirmation at launch and is not mixed into the completed 30k table above;
 its later completion is recorded below.
 
@@ -1084,6 +1338,58 @@ under contention, while R18 remained near 12--13 steps/s. This is an
 intentional throughput/wall-clock trade-off, not a change to either scientific
 configuration. Completion predicates prevent the later confirmation supervisor
 from retraining this seed.
+
+At 22:23 on 2026-08-12, the measured-headroom rule was extended to front-run the
+seed-2000 half of the confirmation matrix while the confirmation supervisor
+remains gated hours behind capacity control and evaluation. With R50-V1 100k
+(the protected primary) at ~46k/100k using ~4.6 GiB, the existing R18-VAE
+seed-2000 companion at ~60k/100k using ~2.7 GiB, and ~14 GiB free, two
+additional companion queues were launched through a new `run_companion.sh`
+wrapper that mirrors `supervise_remaining.sh`'s recovery contract (bounded
+4→2→0 worker retry, interrupted-attempt preservation, and
+`recover_training_completion`). Queue A trains `act_r18_l1` then
+`act_r18_flow_u_lr1e5`; queue B trains `act_r18_diffusion_lr1e5` then
+`diffusion_r18` (the temporal U-Net retains its two-worker setting). Each writes
+to the canonical `train/<variant>_seed2000_100000steps` path, so the
+confirmation supervisor's completion predicate will skip whatever finishes
+first. Combined allocation stabilized near 13.0/24.6 GiB at 100% utilization
+with ~11 GiB free; the four jobs sustained finite losses with no CUDA or
+native-worker errors. Under four-way contention the R18-class companions ran at
+~6--7 step/s (versus ~12--13 solo) and the protected R50-V1 primary slowed from
+~7 to ~3.9 step/s. This is an acceptable total-throughput trade-off because the
+~41 GPU-hour confirmation phase is the dominant cost and is now overlapping the
+~8 GPU-hour seed-1000 finish; the contention also eases naturally once the
+R18-VAE seed-2000 companion completes (~60k/100k at launch). The R50
+Q1 companions (`act_r50_vae`, `act_r50_v1_vae`) were deliberately deferred until
+the R50-V1 primary frees the card, to avoid double-R50 contention on the
+protected seed-1000 milestone. This front-running reorders wall-clock
+scheduling only; it changes no scientific configuration, and the
+~35-hour confirmation phase now overlaps the seed-1000 completion phase rather
+than following it serially.
+
+The front-running was then generalized to cover the entire confirmation matrix
+through five self-backfilling companion queues (`run_companion.sh` with a new
+`wait_for_slot` gate). The gate bounds total concurrent training jobs — counted
+as distinct `job_name=` values, since PyAV dataloader workers inherit the
+parent command line — to four (the GPU saturation point) and requires ≥4 GiB
+free VRAM before starting another, so several waiting queues cannot
+oversubscribe the card or OOM the protected primary. As soon as any in-flight
+job finishes, the next waiting queue starts within 30 s, closing idle gaps
+without manual launch timing. The five lanes partition all 14 confirmation runs
+disjointly: existing R18-VAE s2000; queue A `act_r18_l1`/`act_r18_flow_u_lr1e5`
+s2000; queue B `act_r18_diffusion_lr1e5`/`diffusion_r18` s2000; queue C the four
+R50 runs (`act_r50_vae`, `act_r50_v1_vae` × seeds 2000/3000); queue D the five
+R18 seed-3000 runs. Each writes the canonical path, so the confirmation
+supervisor's completion predicate skips whatever a companion finishes first. To
+prevent the eventual confirmation supervisor from archiving an in-progress
+companion directory and starting a conflicting run, `supervise_confirmation_training.sh`
+gained an `is_running` guard: before archiving or training any run it waits (up
+to a 12 h valve) for any live process already training that exact run, then
+re-checks completion — so the supervisor inherits a companion's result rather
+than overwriting it. The parked confirmation-training session was restarted to
+load this guarded script; its dependency wiring (waits for evaluation, is waited
+on by confirmation-evaluation) is unchanged. This changes only wall-clock
+scheduling and queue coordination; no scientific configuration is altered.
 
 ### SmolVLA rotation-notation control
 
