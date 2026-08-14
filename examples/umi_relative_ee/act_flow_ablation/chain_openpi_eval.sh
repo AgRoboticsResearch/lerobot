@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
-# Wait for both openpi SROI trainings to finish, then run the open-loop eval
-# (eval_openpi_open_loop.py, same protocol as the SmolVLA notation eval) on the
-# 10k and 20k checkpoints of both variants. Results -> /mnt/data1 artifacts.
+# Supervise the openpi SROI runs end-to-end:
+#  1. when rotvec training finishes, free its 10k checkpoint (disk guard: 4 full
+#     checkpoints + async-save temp spikes would otherwise hit the ~37G limit)
+#  2. when BOTH trainings finish, run the open-loop eval (eval_openpi_open_loop.py,
+#     same protocol as the SmolVLA notation eval) on each arm's FINAL (20k)
+#     checkpoint. Results -> /mnt/data1 artifacts.
 set -uo pipefail
 ts(){ date '+%F %T'; }
 RUNLOG=/mnt/data1/projects/lerobot-arch-exp/logs/openpi_sroi_run.log
 LOG=/mnt/data1/projects/lerobot-arch-exp/logs/openpi_eval_chain.log
 exec > >(tee -a "$LOG") 2>&1
 
-echo "[$(ts)] eval-chain: waiting for both trainings..."
+CKPT_ROOT=/home/zfei/codes/openpi/checkpoints
+echo "[$(ts)] chain: waiting for rotvec training to finish..."
+freed=0
 while true; do
-  if grep -q "ALL openpi SROI runs finished" "$RUNLOG"; then break; fi
-  if grep -q "train FAILED" "$RUNLOG" && tail -5 "$RUNLOG" | grep -q "FAILED"; then
-    : # orchestrator exits on failure; detect via process check below
+  if grep -q "=== done pi05_lora_sroi_rotvec ===" "$RUNLOG"; then
+    if [ "$freed" = "0" ]; then
+      echo "[$(ts)] chain: rotvec done -- freeing rotvec/010000 (disk guard)"
+      rm -rf "$CKPT_ROOT/pi05_lora_sroi_rotvec/run1/010000" && freed=1
+    fi
   fi
-  pgrep -f "sroi_run_all[.]sh" >/dev/null || pgrep -f "scripts/train[.]py" >/dev/null || break
+  grep -q "ALL openpi SROI runs finished" "$RUNLOG" && break
+  pgrep -f "sroi_run_all[.]sh" >/dev/null || pgrep -f "scripts/train[.]py" >/dev/null || { sleep 10; break; }
   sleep 60
 done
 sleep 30
 if ! grep -q "ALL openpi SROI runs finished" "$RUNLOG"; then
-  echo "[$(ts)] eval-chain: training did NOT complete cleanly -- aborting"; exit 1
+  echo "[$(ts)] chain: training did NOT complete cleanly -- aborting"; exit 1
 fi
-echo "[$(ts)] eval-chain: trainings done. running evals..."
+echo "[$(ts)] chain: trainings done. running evals..."
 
 cd /home/zfei/codes/openpi
 export HF_LEROBOT_HOME=/mnt/data1/sroi/lerobot
@@ -33,14 +41,13 @@ OUT=/mnt/data1/projects/lerobot-arch-exp/outputs/research_report/openpi_sroi_eva
 mkdir -p "$OUT"
 
 for cfg in pi05_lora_sroi_rotvec pi05_lora_sroi_rot6d; do
-  for step in 010000 020000; do
-    ckpt=/home/zfei/codes/openpi/checkpoints/$cfg/run1/$step
-    json="$OUT/${cfg}_${step}_open_loop_metrics.json"
-    if [ -f "$json" ]; then echo "[$(ts)] SKIP existing $(basename "$json")"; continue; fi
-    if [ ! -d "$ckpt/params" ]; then echo "[$(ts)] WARN no ckpt $ckpt"; continue; fi
-    echo "[$(ts)] EVAL $cfg@$step"
-    "$PY" "$EVAL" --config-name "$cfg" --checkpoint "$ckpt" --output "$json" \
-      || echo "[$(ts)] EVAL FAILED for $cfg@$step (continuing)"
-  done
+  step=020000
+  ckpt=$CKPT_ROOT/$cfg/run1/$step
+  json="$OUT/${cfg}_${step}_open_loop_metrics.json"
+  if [ -f "$json" ]; then echo "[$(ts)] SKIP existing $(basename "$json")"; continue; fi
+  if [ ! -d "$ckpt/params" ]; then echo "[$(ts)] WARN no ckpt $ckpt"; continue; fi
+  echo "[$(ts)] EVAL $cfg@$step"
+  "$PY" "$EVAL" --config-name "$cfg" --checkpoint "$ckpt" --output "$json" \
+    || echo "[$(ts)] EVAL FAILED for $cfg@$step (continuing)"
 done
-echo "[$(ts)] eval-chain: ALL DONE -> $OUT"
+echo "[$(ts)] chain: ALL DONE -> $OUT"
