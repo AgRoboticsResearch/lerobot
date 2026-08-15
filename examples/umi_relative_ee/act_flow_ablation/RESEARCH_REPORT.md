@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete on the seed-1000 controlled matrix (§9.1–9.2) plus the π0.5 650K/700K flow-VLM reference (§9.2.2) and the SmolVLA rotation-notation ablation (§9.2.3). One extension is pending: the official-openpi rot6d-vs-rotvec replication (§9.2.4) — both arms training; results will be recorded there when available. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 reference.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4, the strongest result of the series: 9.4–10.1 mm endpoint at 20k steps). The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -991,6 +991,9 @@ were open-loop evaluated on the fixed 100-episode / 500-query validation protoco
 | axis-angle | 27.00 [25.44, 28.58] | 4.76 [4.49, 5.04] | **0.83 [0.81, 0.85]** | 4.12 [4.02, 4.21] |
 | ground truth | — | — | 0.158 | 0.66 |
 
+![Rotation notation across both stacks — endpoint accuracy ties, jitter effects
+flip sign](figures/notation_cross_stack.png)
+
 Endpoint accuracy is **statistically tied**: the 95% bootstrap intervals overlap
 heavily on both XYZ (±1.6 mm around ~27 mm) and rotation (±0.25° around ~4.7°), so
 rot6d is not measurably more accurate than axis-angle for SmolVLA here. The one
@@ -1045,14 +1048,52 @@ math was verified to match `eval_open_loop_dataset.py` exactly; rot6d-arm output
 are decoded to rotvec before scoring so both arms are compared in the same
 units.
 
-**Status (2026-08-14): both arms are training sequentially on the host GPU
-(rotvec first, then rot6d, ~13 h each); evaluation is chained to launch
-automatically. Results will be recorded here when available.** The preregistered
-read-out: if the openpi arms also tie on endpoint accuracy, the §9.2.3 conclusion
-(rotation parameterization is not a meaningful lever for this near-identity
-relative-EE task) gains a second, stack-independent data point; if they diverge,
-the divergence itself — with notation as the only intended difference — would
-warrant a follow-up isolating the normalization/decoding path.
+**Status (2026-08-16): complete.** Both arms trained to 20 000 steps (bs 16,
+~13.4 h each) and were evaluated on the fixed 100-episode / 500-query protocol.
+
+| Notation | XYZ end (mm) | Rot end (deg) | Rot jerk (deg) | XYZ jerk (mm) | Latency (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| rotvec (7D) | 10.05 [9.44, 10.70] | 1.66 [1.57, 1.75] | 0.20 [0.20, 0.21] | **0.92 [0.89, 0.94]** | 0.11 |
+| rot6d (10D) | 9.41 [8.89, 9.94] | 1.69 [1.61, 1.78] | **0.16 [0.16, 0.17]** | 0.97 [0.95, 1.00] | 0.11 |
+| ground truth | — | — | 0.153 | 0.65 | — |
+
+![Notation comparison across both stacks](figures/notation_cross_stack.png)
+
+![Official openpi at 20k steps vs every longer-budget run](figures/openpi_budget_context.png)
+
+**Notation read-out (preregistered).** Endpoint accuracy is again
+**statistically tied** — the position intervals overlap heavily (rot6d's point
+estimate is 6% lower but well inside rotvec's interval) and rotation is
+essentially identical — replicating §9.2.3 and making "rotation parameterization
+is not a meaningful accuracy lever for this near-identity relative-EE task" a
+two-stack finding (PyTorch/SmolVLA and JAX/openpi-π0.5). The jitter effects are
+small, significant, and **stack-specific in direction**: here rot6d is smoother
+in rotation (0.16° vs 0.20°, disjoint intervals — and essentially at the
+ground-truth 0.153°) while rotvec is smoother in translation (0.92 vs 0.97 mm);
+SmolVLA showed the opposite rotation direction (axis-angle smoother). With
+opposite signs across two stacks, neither notation's jitter advantage is a
+robust property — it is an interaction with the surrounding training stack, not
+an intrinsic effect of the representation.
+
+**The larger, unanticipated finding is absolute performance.** Both openpi arms
+reach **9.4–10.1 mm endpoint / 1.66–1.70° rotation** — roughly 2.2× more
+accurate than the strongest result in the ACT/flow matrix (ACT R50-V1, 22.3 mm /
+4.58°), 2.3× more accurate than the lerobot-port π0.5 LoRA reference at 700K
+steps (§9.2.2: 21.77 mm / 4.25°), and ~2.7× more accurate than SmolVLA — at
+**1/35th the optimization steps** of the port run (20k vs 700k) and **1/6th of
+its inference latency** (0.11 s vs 0.33 s mean). Both arms are also smoother
+than or equal to ground truth on rotation (rot6d 0.16° vs GT 0.153°). Candidate
+contributors, not individually isolated here: the official JAX LoRA recipe
+(r16 backbone / r32 expert), quantile (q01/q99) action normalization versus the
+port's mean/std, the full 2.3B-parameter π0.5 flow head trained jointly rather
+than ported, bf16 XLA compilation, and the 32-dim padded action space with
+masked decode. Whatever the mix, the practical conclusion is stark: **the
+official openpi fine-tuning path extracts dramatically more from π0.5 on this
+task than our LeRobot port did with 35× the budget** — the port/recipe gap, not
+model capacity or the flow objective, was the binding constraint on the VLM
+path. (Raw metrics under
+`outputs/research_report/openpi_sroi_eval/`; checkpoints
+`~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`.)
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -1112,11 +1153,18 @@ comparison does not control). Practical defaults: **ACT-L1** as the lightweight
 deterministic controller (lowest inference cost, smoothest ACT trajectory);
 **ACT R50-V1** when the extra ~25% latency is acceptable for a small pose
 gain; and the **flow-VLM path (π0.5 / openpi)** when VLM inference cost is
-justified by its clear accuracy and smoothness lead. Rotation parameterization,
+justified by its clear accuracy and smoothness lead — and that lead is now much
+larger than the port suggested: the official-openpi replication (§9.2.4) reached
+**9.4–10.1 mm / 1.66–1.70° at 20k steps** (2.3× more accurate than the 700K
+lerobot-port run, 6× lower latency), so the VLM path's true ceiling on this task
+was masked by the port, not by π0.5 itself. Rotation parameterization,
 by contrast, is **not** a lever worth spending on: the SmolVLA rot6d-vs-axis-angle
-ablation (§9.2.3) found endpoint accuracy statistically tied, with axis-angle
-marginally smoother — axis-angle (7D) is the practical default, pending the
-official-openpi replication (§9.2.4). Note finally that ACT
+ablation (§9.2.3) found endpoint accuracy statistically tied, and the
+official-openpi replication (§9.2.4) reproduced that tie on a second stack —
+with the small jitter differences flipping sign between stacks, confirming they
+are stack interactions rather than representation properties. rotvec/axis-angle
+(7D) remains the practical default for its smaller action dimension. Note
+finally that ACT
 trajectory smoothness (rotational jerk 0.056°–0.091°) is comparable to or below
 the ground-truth jerk (0.158°), so the iterative generative samplers' roughness
 is not a reason to avoid ACT's deterministic path here.
