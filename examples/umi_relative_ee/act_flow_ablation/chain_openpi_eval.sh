@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Supervise the openpi SROI runs end-to-end:
-#  1. when rotvec training finishes, free its 10k checkpoint (disk guard: 4 full
-#     checkpoints + async-save temp spikes would otherwise hit the ~37G limit)
-#  2. when BOTH trainings finish, run the open-loop eval (eval_openpi_open_loop.py,
-#     same protocol as the SmolVLA notation eval) on each arm's FINAL (20k)
+# Supervise the openpi SROI runs end-to-end (v3, corrected checkpoint names):
+#  - openpi names the FINAL 20k checkpoint "19999" (0-indexed last step) and the
+#    keep_period checkpoint "10000"; the earlier v2 guessed 010000/020000.
+#  1. when each arm's training finishes, free its 10000 checkpoint (disk guard)
+#  2. when BOTH finish, run the open-loop eval on each arm's FINAL (19999)
 #     checkpoint. Results -> /mnt/data1 artifacts.
 set -uo pipefail
 ts(){ date '+%F %T'; }
@@ -12,14 +12,17 @@ LOG=/mnt/data1/projects/lerobot-arch-exp/logs/openpi_eval_chain.log
 exec > >(tee -a "$LOG") 2>&1
 
 CKPT_ROOT=/home/zfei/codes/openpi/checkpoints
-echo "[$(ts)] chain: waiting for rotvec training to finish..."
-freed=0
+echo "[$(ts)] chain v3: supervising..."
+freed_rotvec=0
+freed_rot6d=0
 while true; do
-  if grep -q "=== done pi05_lora_sroi_rotvec ===" "$RUNLOG"; then
-    if [ "$freed" = "0" ]; then
-      echo "[$(ts)] chain: rotvec done -- freeing rotvec/010000 (disk guard)"
-      rm -rf "$CKPT_ROOT/pi05_lora_sroi_rotvec/run1/010000" && freed=1
-    fi
+  if [ "$freed_rotvec" = "0" ] && grep -q "=== done pi05_lora_sroi_rotvec ===" "$RUNLOG"; then
+    echo "[$(ts)] chain: rotvec done -- freeing rotvec/10000 (disk guard)"
+    rm -rf "$CKPT_ROOT/pi05_lora_sroi_rotvec/run1/10000" && freed_rotvec=1
+  fi
+  if [ "$freed_rot6d" = "0" ] && grep -q "=== done pi05_lora_sroi_rot6d ===" "$RUNLOG"; then
+    echo "[$(ts)] chain: rot6d done -- freeing rot6d/10000 (disk guard)"
+    rm -rf "$CKPT_ROOT/pi05_lora_sroi_rot6d/run1/10000" && freed_rot6d=1
   fi
   grep -q "ALL openpi SROI runs finished" "$RUNLOG" && break
   pgrep -f "sroi_run_all[.]sh" >/dev/null || pgrep -f "scripts/train[.]py" >/dev/null || { sleep 10; break; }
@@ -41,9 +44,9 @@ OUT=/mnt/data1/projects/lerobot-arch-exp/outputs/research_report/openpi_sroi_eva
 mkdir -p "$OUT"
 
 for cfg in pi05_lora_sroi_rotvec pi05_lora_sroi_rot6d; do
-  step=020000
+  step=19999
   ckpt=$CKPT_ROOT/$cfg/run1/$step
-  json="$OUT/${cfg}_${step}_open_loop_metrics.json"
+  json="$OUT/${cfg}_final_open_loop_metrics.json"
   if [ -f "$json" ]; then echo "[$(ts)] SKIP existing $(basename "$json")"; continue; fi
   if [ ! -d "$ckpt/params" ]; then echo "[$(ts)] WARN no ckpt $ckpt"; continue; fi
   echo "[$(ts)] EVAL $cfg@$step"
