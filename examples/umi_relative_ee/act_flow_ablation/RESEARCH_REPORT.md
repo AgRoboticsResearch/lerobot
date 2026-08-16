@@ -1107,7 +1107,11 @@ port/recipe gap, not model capacity or the flow objective, was the binding
 constraint on the VLM path. A horizon-30 openpi control would remove the
 remaining metric confound and is the natural follow-up. (Raw metrics under
 `outputs/research_report/openpi_sroi_eval/`; checkpoints
-`~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`.)
+`~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`;
+prediction videos for validation episodes 0–2 of both arms under
+`outputs/debug/viz_openpi/{rot6d,rotvec}/` — per-episode endpoint means
+9.9–12.9 mm, visually tracking GT to the strawberry with small late-chunk
+divergence.)
 
 ### 9.3 Answers and promotion decision after stage one
 

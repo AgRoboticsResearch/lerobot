@@ -82,6 +82,49 @@ automatically** (if `adapter_config.json` is present it loads the base named the
 and applies the adapter), so the same command works for full-fine-tuned ACT /
 SmolVLA and for π0.5 LoRA.
 
+## Official openpi (JAX) checkpoints — `visualize_predictions_openpi.py`
+
+Checkpoints trained with the **official openpi repo** (orbax `params/` dirs, e.g.
+the `pi05_lora_sroi_{rotvec,rot6d}` arms of the rot6d-vs-rotvec experiment) are
+JAX/Flax and cannot load through the PyTorch path above. Use
+[`visualize_predictions_openpi.py`](../visualize_predictions_openpi.py) — a
+self-contained counterpart with the same visual language (pred green→red, GT
+cyan, 3D inset) that runs in the **openpi venv** and reads the dataset through
+openpi's pinned LeRobot (v2.1 per-episode layout).
+
+```bash
+cd ~/codes/openpi
+HF_LEROBOT_HOME=/mnt/data1/sroi/lerobot HF_HUB_OFFLINE=1 \
+.venv/bin/python <LEROBOT_CHECKOUT>/examples/umi_relative_ee/visualize_predictions_openpi.py \
+  --config_name pi05_lora_sroi_rot6d \
+  --checkpoint checkpoints/pi05_lora_sroi_rot6d/run1/19999 \
+  --episode_indices 0 1 2 --stride 3 \
+  --camera_info_path /mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation/meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_color.json \
+  --output_dir /mnt/data1/projects/lerobot-arch-exp/outputs/debug/viz_openpi/rot6d
+```
+
+Notes:
+- **Env**: the openpi checkout's `.venv/bin/python` (has JAX, pinned lerobot,
+  matplotlib/imageio/cv2). `HF_LEROBOT_HOME` must point at the v2.1 dataset root;
+  `HF_HUB_OFFLINE=1` avoids Hub lookups. `XLA_PYTHON_CLIENT_MEM_FRACTION=0.6`
+  keeps GPU headroom if a training job is running.
+- **Dataset**: the v2.1 validation set `sroiv2_strawberry_validation_rotvec`
+  (built by `act_flow_ablation/prep_openpi_validation_v21.py`). Its `meta/`
+  carries no `camera_info/`, so pass `--camera_info_path` from the original
+  validation dataset (D405 is fixed-calibration — any episode's file works).
+- **Serving contract**: obs is passed to `policy.infer` with the **short keys**
+  `image`/`state` (openpi's `create_trained_policy` does not apply the data
+  config's RepackTransform — same discovery as the openpi open-loop eval).
+- **Representation**: these arms predict in the **start-anchored** frame (state =
+  current start-anchored pose; no per-chunk re-anchoring), so predicted and GT
+  chunk entries are episode-frame poses and the SROI projection applies directly.
+  rot6d-arm outputs are decoded to rotvec (and its state converted rotvec→rot6d)
+  inside the script — no extra flags.
+- **Checkpoints**: the final 20k checkpoint dirs are named `19999` (0-indexed
+  last step). Per-episode endpoint stats land next to each MP4 as
+  `pred_episode_<N>_metrics.json`.
+- Output layout mirrors the unified script: `<output_dir>/<repo_id>/pred_episode_<N>.mp4`.
+
 ## Model-specific notes
 - **π0.5 (LoRA)**: load via `PeftConfig` → `from_pretrained(base, config=policy_config)`
   → `PeftModel.from_pretrained(adapter)`. The `config=policy_config` is essential —
