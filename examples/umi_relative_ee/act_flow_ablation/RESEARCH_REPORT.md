@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -951,6 +951,32 @@ run `pi05_openpi_split_lora_masked_1459_bs4_1m` — was evaluated on the same fi
 each with three inference seeds (1000/2000/3000). Inference-seed variability is
 negligible (±0.17 mm endpoint XYZ, ±0.01° rotation), so the means are tight.
 
+**Configuration record (verified against the checkpoint's saved
+`train_config.json`).** The port is the LeRobot/PyTorch `pi05` policy initialized
+from the official `lerobot/pi05_base` weights (4.18B total parameters, "direct
+port of the OpenPI implementation"). Its flow loss runs in **masked-subspace
+mode** (`flow_matching_padding_mode=masked_subspace`: the velocity MSE is masked
+to the active 10D action dims rather than taken full-width over the padded model
+dim) — per the SmolVLA 1M padding A/B
+(`examples/umi_relative_ee/OPENPI_FULL_WIDTH_FLOW_MATCHING.md`), the masked and
+`openpi_full_width` modes are statistically equivalent, so this choice is not a
+confound. Fine-tuning is **split-rank LoRA**: PaliGemma backbone r/α 16 +
+`gemma_expert` action expert r/α 32 — the same rank split as official openpi's
+`gemma_2b_lora` + `gemma_300m_lora` — with `action_in_proj`/`action_out_proj`/
+`time_mlp` fully trainable and the vision tower frozen
+(`freeze_vision_encoder=true`, `train_expert_only=false`): 38.6M trainable
+(0.9%). Chunk/executed horizon 30/30; 10D UMI rot6d relative-EE actions with the
+processor-derived 20D state; **quantile normalization for state and actions**
+(the same family openpi uses, so normalization is matched across stacks, unlike
+the ACT matrix's MIN_MAX). Optimization: LR 5e-5 cosine-decaying to 5e-6 over the
+full 1M steps (1k warmup), batch 4, seed 1000, bf16 + gradient checkpointing, on
+the same 1459_occlusion train set. At the evaluated 700K point the model had seen
+2.8M samples ≈ 19.9 epochs. **2026-08-16:** training was resumed from the 700K
+checkpoint to complete the full 1M schedule (300k steps at ~1.3 steps/s on the
+RTX 5080, ETA ≈ 64 h; step/optimizer/scheduler state and the same W&B run
+`ud42a4qb` restored via `resume_pi05_split_lora_kiwi_1459_1m.sh`); the 1M
+checkpoint will be evaluated under the identical protocol when it lands.
+
 | Checkpoint | XYZ end (mm) | Rot end (deg) | Rot jerk (deg) | Gripper end |
 | --- | ---: | ---: | ---: | ---: |
 | π0.5 LoRA 700K | **21.77 ± 0.17** | **4.25 ± 0.01** | **0.07** | 0.14 |
@@ -1087,7 +1113,7 @@ seeds, SD 0.025 mm):
 | Horizon-10 endpoint | XYZ end (mm) | Rot end (deg) | Rot chunk-mean (deg) | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: |
 | SmolVLA rot6d 100k (bs8, 800k samples) | **8.97 [8.52, 9.45]** | 1.69 [1.60, 1.78] | 0.92 | 0.55 |
-| π0.5 port 700K (bs4, 2.8M samples) | **8.98 [8.40, 9.57]** | **1.61 [1.54, 1.71]** | **0.85** | **0.072** |
+| π0.5 port 700K (bs4, 2.8M samples; masked-subspace flow, split-LoRA r16/r32) | **8.98 [8.40, 9.57]** | **1.61 [1.54, 1.71]** | **0.85** | **0.072** |
 | openpi rot6d 20k (bs16, 320k samples) | 9.41 [8.89, 9.94] | 1.70 [1.61, 1.78] | 1.00 | 0.161 |
 | openpi rotvec 20k (bs16, 320k samples) | 10.06 [9.44, 10.70] | 1.66 [1.57, 1.75] | 1.00 | 0.202 |
 
@@ -1123,7 +1149,11 @@ conclusions are:
    construction (current-frame relative pose vs the port's processor-derived
    state), and the training stack itself (JAX bf16 vs PyTorch). The padded-dim
    loss treatment is **ruled out** by the `flow_matching_padding_mode` A/B (1M
-   steps, statistically equivalent). The port's PEFT adapter coverage was
+   steps, statistically equivalent): it is a real difference — the port trains
+   with masked-subspace loss (active 10D only; §9.2.2 config record) while
+   official openpi effectively trains full-width over its padded action dim —
+   but the A/B showed the two modes tie, so it cannot explain the ~9×
+   sample-efficiency gap. The port's PEFT adapter coverage was
    *broader* than the official recipe's (vision tower included), so adapter
    capacity does not explain the efficiency gap either. (Raw metrics under
    `outputs/research_report/openpi_sroi_eval/`, `eval_common_h32/pi05_port_700k_h10/`,
