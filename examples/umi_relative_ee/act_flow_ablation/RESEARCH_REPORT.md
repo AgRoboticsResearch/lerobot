@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4, the strongest result of the series: 9.4–10.1 mm endpoint at 20k steps). The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1059,7 +1059,7 @@ units.
 
 ![Notation comparison across both stacks](figures/notation_cross_stack.png)
 
-![Official openpi at 20k steps vs every longer-budget run](figures/openpi_budget_context.png)
+![Horizon-matched (10-step) endpoint vs samples seen — all stacks tied; openpi ~9× more sample-efficient](figures/openpi_budget_context.png)
 
 **Notation read-out (preregistered).** Endpoint accuracy is again
 **statistically tied** — the position intervals overlap heavily (rot6d's point
@@ -1075,43 +1075,62 @@ opposite signs across two stacks, neither notation's jitter advantage is a
 robust property — it is an interaction with the surrounding training stack, not
 an intrinsic effect of the representation.
 
-**The larger, unanticipated finding is absolute performance.** Both openpi arms
-reach **9.4–10.1 mm endpoint / 1.66–1.70° rotation** — roughly 2.2× more
-accurate than the strongest result in the ACT/flow matrix (ACT R50-V1, 22.3 mm /
-4.58°), 2.3× more accurate than the lerobot-port π0.5 LoRA reference at 700K
-steps (§9.2.2: 21.77 mm / 4.25°), and ~2.7× more accurate than SmolVLA — at
-**1/35th the optimization steps** of the port run (20k vs 700k, though at 4×
-batch size: 320k vs 2.8M samples) and **1/6th of its inference latency**
-(0.11 s vs 0.33 s mean). Both arms are also smoother than or equal to ground
-truth on rotation (rot6d 0.16° vs GT 0.153°). *Comparability caveat:* the
-openpi arms predict 10-step chunks while the port predicts 30-step chunks, so
-the endpoint metric is evaluated at t+10 versus t+30. The gap is not primarily
-a horizon artifact, however: the port's **per-step chunk-mean** error over its
-own 30-step chunk (which includes the easier early steps) is 12.95 mm versus
-5.38 mm for the openpi rot6d arm — 2.4× worse per step — and rotation
-chunk-mean is 2.36° versus 1.00°. Verified recipe differences that remain:
-peak LR (2.5e-5 cosine vs the port's 5e-5), batch (16 vs 4), state
-construction (current-frame relative pose mirrored from the action vs the
-port's processor-derived state), and the training stack itself (JAX bf16 vs
-the PyTorch port). The padded-dim loss treatment is **ruled out**: the
-`flow_matching_padding_mode` A/B (full-width vs masked_subspace, run to 1M
-steps on SmolVLA and implemented identically on `PI05Config`) found the two
-coherent formulations statistically equivalent
-(`smolvla_padding_ab_final_results.md`). Notably the port's PEFT adapter coverage was *broader* than
-the official recipe's (it also adapted the vision tower, which openpi leaves
-frozen) and the port saw 8.75× more samples, so neither adapter capacity nor
-data exposure explains the gap. Whatever the mix, the practical conclusion is
-stark: **the official openpi fine-tuning path extracts dramatically more from
-π0.5 on this task than our LeRobot port did with ~9× the sample budget** — the
-port/recipe gap, not model capacity or the flow objective, was the binding
-constraint on the VLM path. A horizon-30 openpi control would remove the
-remaining metric confound and is the natural follow-up. (Raw metrics under
-`outputs/research_report/openpi_sroi_eval/`; checkpoints
-`~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`;
-prediction videos for validation episodes 0–2 of both arms under
-`outputs/debug/viz_openpi/{rot6d,rotvec}/` — per-episode endpoint means
-9.9–12.9 mm, visually tracking GT to the strawberry with small late-chunk
-divergence.)
+**Absolute-performance comparison — corrected after a horizon confound.** The
+openpi arms' raw endpoints (9.4–10.1 mm at horizon 10) initially appeared 2.2–2.7×
+better than ACT, the lerobot-port π0.5, and SmolVLA (all horizon 30). **That
+comparison was confounded**: endpoint error is evaluated at t+10 versus t+30, and
+error grows with look-ahead. Prompted by the prediction videos (whose qualitative
+quality looked comparable to the port's), the port 700K checkpoint was re-scored
+with chunks truncated to the first 10 steps (`--eval_horizon 10`, three inference
+seeds, SD 0.025 mm):
+
+| Horizon-10 endpoint | XYZ end (mm) | Rot end (deg) | Rot chunk-mean (deg) | Rot jerk (deg) |
+| --- | ---: | ---: | ---: | ---: |
+| SmolVLA rot6d 100k (bs8, 800k samples) | **8.97 [8.52, 9.45]** | 1.69 [1.60, 1.78] | 0.92 | 0.55 |
+| π0.5 port 700K (bs4, 2.8M samples) | **8.98 [8.40, 9.57]** | **1.61 [1.54, 1.71]** | **0.85** | **0.072** |
+| openpi rot6d 20k (bs16, 320k samples) | 9.41 [8.89, 9.94] | 1.70 [1.61, 1.78] | 1.00 | 0.161 |
+| openpi rotvec 20k (bs16, 320k samples) | 10.06 [9.44, 10.70] | 1.66 [1.57, 1.75] | 1.00 | 0.202 |
+
+(ACT R50-V1 could not be re-scored at horizon 10: its weights were stranded by
+the second artifact-disk failure — §8, incident 12 — and only its metric JSONs
+survived. All its §9.1 numbers remain horizon-30.)
+
+At matched horizon the port and both openpi arms are **statistically tied on
+endpoint accuracy** (intervals overlap) — and so is SmolVLA. An earlier draft of
+this section argued via per-step chunk-means that the gap was "not primarily a
+horizon artifact"; that argument was wrong — averaging over a longer horizon
+necessarily includes the growing-error tail, and at matched horizon the port's
+chunk-mean (4.42 mm) is in fact *better* than openpi's (5.38 mm). The corrected
+conclusions are:
+
+1. **There is no cross-stack endpoint-accuracy gap at all.** SmolVLA (450M), the
+   π0.5 port (3B, 2.8M samples), and official openpi π0.5 (3B, 320k samples) all
+   land at 9–10 mm / 1.6–1.7° when scored at the same horizon. The earlier
+   "2.3× at 1/35 steps" openpi headline — and by extension every cross-horizon
+   endpoint comparison in this report's earlier tables — was the horizon
+   artifact, and is retracted.
+2. **What actually separates the stacks is smoothness and efficiency.** Rotation
+   jitter: port 0.072° < GT 0.153° ≈ openpi rot6d 0.161° ≪ SmolVLA 0.55°. And
+   the official recipe reaches the shared accuracy point with **~9× fewer
+   samples** than the port (320k ≈ 2.3 epochs vs 2.8M ≈ 20 epochs) and ~2.5×
+   fewer than SmolVLA — a real sample-efficiency win for compute-constrained
+   fine-tuning, neutral for final accuracy.
+3. Cross-horizon endpoint numbers must not be compared directly anywhere in this
+   report; within-family comparisons (§9.1–9.2.3) share a horizon by
+   construction and remain valid.
+4. Verified recipe differences that remain untested as *accuracy or efficiency*
+   levers: peak LR (2.5e-5 cosine vs the port's 5e-5), batch (16 vs 4), state
+   construction (current-frame relative pose vs the port's processor-derived
+   state), and the training stack itself (JAX bf16 vs PyTorch). The padded-dim
+   loss treatment is **ruled out** by the `flow_matching_padding_mode` A/B (1M
+   steps, statistically equivalent). The port's PEFT adapter coverage was
+   *broader* than the official recipe's (vision tower included), so adapter
+   capacity does not explain the efficiency gap either. (Raw metrics under
+   `outputs/research_report/openpi_sroi_eval/`, `eval_common_h32/pi05_port_700k_h10/`,
+   and `eval_common_h32/smolvla_rot6d_h10/`; checkpoints
+   `~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`;
+   prediction videos for validation episodes 0–2 of both arms under
+   `outputs/debug/viz_openpi/{rot6d,rotvec}/`.)
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -1171,11 +1190,14 @@ comparison does not control). Practical defaults: **ACT-L1** as the lightweight
 deterministic controller (lowest inference cost, smoothest ACT trajectory);
 **ACT R50-V1** when the extra ~25% latency is acceptable for a small pose
 gain; and the **flow-VLM path (π0.5 / openpi)** when VLM inference cost is
-justified by its clear accuracy and smoothness lead — and that lead is now much
-larger than the port suggested: the official-openpi replication (§9.2.4) reached
-**9.4–10.1 mm / 1.66–1.70° at 20k steps** (2.3× more accurate than the 700K
-lerobot-port run, 6× lower latency), so the VLM path's true ceiling on this task
-was masked by the port, not by π0.5 itself. Rotation parameterization,
+justified by its clear accuracy and smoothness lead — with two corrections from
+the horizon-matched re-scoring (§9.2.4): at equal 10-step scoring the π0.5 port,
+official openpi, and even SmolVLA are **statistically tied at 9–10 mm endpoint**
+(the earlier cross-model endpoint spreads were a horizon artifact), so the VLM
+path's advantage on this task is **smoothness and sample efficiency, not final
+endpoint accuracy** — the port is the smoothest controller measured (0.072°
+rot-jerk vs GT 0.153°) and official openpi reaches the shared operating point
+with ~9× fewer samples. Rotation parameterization,
 by contrast, is **not** a lever worth spending on: the SmolVLA rot6d-vs-axis-angle
 ablation (§9.2.3) found endpoint accuracy statistically tied, and the
 official-openpi replication (§9.2.4) reproduced that tie on a second stack —

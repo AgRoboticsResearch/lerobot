@@ -87,6 +87,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Defaults to outputs/research_report/eval_<datetime> so standalone runs don't clobber.",
     )
+    parser.add_argument(
+        "--eval_horizon",
+        type=int,
+        default=None,
+        help="Truncate predicted and GT chunks to the first N steps before scoring "
+        "(e.g. 10 to compare a 30-step policy against a 10-step-horizon model "
+        "on equal footing). None = score the full chunk.",
+    )
     return parser.parse_args()
 
 
@@ -453,6 +461,11 @@ def main() -> None:
         steps = min(len(predicted), len(ground_truth))
         predicted = predicted[:steps]
         ground_truth = ground_truth[:steps].cpu()
+        if args.eval_horizon is not None:
+            # Equal-footing comparison against a shorter-horizon model: score only
+            # the first N steps of the (decoded) chunk.
+            predicted = predicted[: args.eval_horizon]
+            ground_truth = ground_truth[: args.eval_horizon]
         rotation_error = rotation_error_deg(predicted, ground_truth)
         xyz_error = torch.linalg.vector_norm(predicted[:, :3] - ground_truth[:, :3], dim=-1)
         gripper_error = (predicted[:, 6] - ground_truth[:, 6]).abs()

@@ -6,17 +6,19 @@ Figure A (notation_cross_stack): rot6d vs axis-angle/rotvec across BOTH stacks
 (SmolVLA PyTorch, openpi π0.5 JAX) -- shows the endpoint-accuracy tie and the
 stack-specific sign flip of the small jitter effects.
 
-Figure B (openpi_budget_context): endpoint XYZ error vs training steps (log x)
-for the main trained families -- the official-openpi 20k-step points versus the
-ACT matrix, the SmolVLA notation runs, and the lerobot-port π0.5 reference --
-the "official recipe >> port at 1/35th budget" headline.
+Figure B (openpi_budget_context): HORIZON-MATCHED (10-step) endpoint XYZ error
+vs training samples seen for SmolVLA / the lerobot-port π0.5 (both re-scored
+with --eval_horizon 10) and the official-openpi arms. Corrected 2026-08-16:
+the original cross-horizon version of this figure (endpoint@t+10 vs endpoint@t+30)
+showed a spurious "2.3x openpi lead"; at matched horizon all stacks tie and the
+real openpi advantage is sample efficiency (~9x fewer samples).
 
-Reads JSONs produced by eval_open_loop_dataset.py / eval_openpi_open_loop.py
-plus the stage1 CSV for ACT R50-V1. Outputs into act_flow_ablation/figures/.
+Reads JSONs produced by eval_open_loop_dataset.py / eval_openpi_open_loop.py;
+the h10 re-scores live under outputs/research_report/h10_matched_eval/.
+Outputs into act_flow_ablation/figures/.
 """
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
@@ -24,6 +26,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
 ROOT = Path("/mnt/data1/projects/lerobot-arch-exp")
 OUT = Path(__file__).resolve().parent / "figures"
@@ -55,23 +58,11 @@ def mci(eb: dict, ci: dict, key: str, sf: float) -> tuple[float, float, float]:
 # ---------------------------------------------------------------- data ---- #
 SMOL = ROOT / "outputs/research_report/smolvla_notation_eval_20260814"
 OPENPI = ROOT / "outputs/research_report/openpi_sroi_eval"
-PI05 = ROOT / "eval_common_h32"
 
 smol_r6 = load_eb(SMOL / "smolvla_rot6d_seed1000_100000steps_100000_open_loop_metrics.json")
 smol_aa = load_eb(SMOL / "smolvla_axis_angle_seed1000_100000steps_100000_open_loop_metrics.json")
 op_rv = load_eb(OPENPI / "pi05_lora_sroi_rotvec_final_open_loop_metrics.json")
 op_r6 = load_eb(OPENPI / "pi05_lora_sroi_rot6d_final_open_loop_metrics.json")
-pi05_700 = load_eb(PI05 / "pi05_openpi_split_lora_1459_700k/seed1000/"
-                   "pi05_openpi_split_lora_masked_1459_bs4_1m_0700000_open_loop_metrics.json")
-
-# ACT R50-V1 100k from the stage-1 summary CSV
-act = None
-with open(ROOT / "lerobot-arch-exp/results/stage1_variant_summary.csv") as f:
-    for row in csv.DictReader(f):
-        if row["variant"] == "act_r50_v1_vae" and row["steps"] == "100000":
-            act = row
-            break
-assert act is not None, "ACT R50-V1 100k row not found"
 
 # ------------------------------------------------- figure A: notation ---- #
 C_R6 = "#1F5A94"     # blue
@@ -130,34 +121,56 @@ fig.savefig(OUT / "notation_cross_stack.png", dpi=200, bbox_inches="tight")
 fig.savefig(OUT / "notation_cross_stack.svg", bbox_inches="tight")
 plt.close(fig)
 
-# ------------------------------------- figure B: openpi budget context ---- #
+# ------------------------- figure B: horizon-matched cross-stack view ---- #
+# Corrected (2026-08-16): the original budget-context figure compared endpoint
+# errors across DIFFERENT chunk horizons (10 vs 30 steps) -- a confound that
+# produced a spurious "2.3x openpi lead". This version scores everything at the
+# same 10-step horizon (port/SmolVLA re-scored via --eval_horizon 10) and plots
+# endpoint vs samples seen: the corrected story is parity of accuracy + the
+# openpi recipe's sample efficiency.
+PORT_H10 = ROOT / "outputs/research_report/h10_matched_eval"
+PORT_SEEDS = PORT_H10 / "port_seeds"  # seed{1000,2000,3000}.json
+
+
+def load_seed_mean(pattern: str) -> tuple[dict, dict]:
+    files = sorted((PORT_SEEDS if "seed" in pattern else PORT_H10).glob(pattern))
+    ebs = [json.load(open(f))["summary"]["episode_balanced"] for f in files]
+    keys = ebs[0].keys()
+    mean = {k: float(np.mean([e[k] for e in ebs])) for k in keys}
+    ci = {}
+    for k in keys:
+        los = [json.load(open(f))["summary"]["episode_balanced_95ci"][k]["low"] for f in files]
+        his = [json.load(open(f))["summary"]["episode_balanced_95ci"][k]["high"] for f in files]
+        ci[k] = {"low": float(np.mean(los)), "high": float(np.mean(his))}
+    return mean, ci
+
+
+port_h10 = load_seed_mean("seed*.json")
+smol_h10 = load_seed_mean("smolvla_h10.json")
+
 series = [
-    # label, steps, (eb, ci), color, marker
-    ("ACT R50-V1 (100k, L1)", 100_000,
-     ({"xyz_end_m": float(act["xyz_end_m"])},
-      {"xyz_end_m": {"low": float(act["xyz_end_m_ci_low"]), "high": float(act["xyz_end_m_ci_high"])}}),
-     "#59A14F", "s"),
-    ("SmolVLA rot6d (100k)", 100_000, smol_r6, "#54A24B", "^"),
-    ("pi0.5 LoRA port (700K)", 700_000, pi05_700, "#7A5195", "D"),
-    ("openpi pi0.5 rotvec (20k)", 20_000, op_rv, "#E45756", "o"),
-    ("openpi pi0.5 rot6d (20k)", 20_000, op_r6, "#B33B3A", "o"),
+    # label, samples seen, (eb, ci), color, marker
+    ("SmolVLA rot6d 100k @800k samples", 800_000, smol_h10, "#54A24B", "^"),
+    ("pi0.5 port 700K @2.8M samples", 2_800_000, port_h10, "#7A5195", "D"),
+    ("openpi rot6d 20k @320k samples", 320_000, op_r6, "#B33B3A", "o"),
+    ("openpi rotvec 20k @320k samples", 320_000, op_rv, "#E45756", "o"),
 ]
-fig, ax = plt.subplots(figsize=(7.6, 4.6))
-for label, steps, (eb, ci), color, marker in series:
+fig, ax = plt.subplots(figsize=(7.8, 4.8))
+for label, samples, (eb, ci), color, marker in series:
     m, lo, hi = mci(eb, ci, "xyz_end_m", 1000.0)
-    ax.errorbar(steps, m, yerr=[[m - lo], [hi - m]], fmt=marker, ms=8, mfc=color,
+    ax.errorbar(samples, m, yerr=[[m - lo], [hi - m]], fmt=marker, ms=9, mfc=color,
                 mec="white", mew=1.2, ecolor=color, elinewidth=1.4, capsize=3,
                 label=label, zorder=3)
-    ax.annotate(label, (steps, m), textcoords="offset points", xytext=(8, 6),
+    ax.annotate(label, (samples, m), textcoords="offset points", xytext=(10, 7),
                 fontsize=8.5, color=INK)
 ax.set_xscale("log")
-ax.set_xlabel("Training steps (log scale)")
-ax.set_ylabel("Endpoint XYZ error (mm), 95% CI")
+ax.set_xlabel("Training samples seen (log scale)")
+ax.set_ylabel("Endpoint XYZ error at t+10 (mm), 95% CI")
 ax.grid(color=GRID, lw=0.7, zorder=0)
-ax.set_xlim(1.2e4, 2.2e6)
-ax.set_ylim(bottom=0)
-ax.set_title("Official openpi at 20k steps beats every longer-budget run\n"
-             "(same fixed 100-episode / 500-query validation protocol)", fontsize=11)
+ax.set_xlim(1.8e5, 5e6)
+ax.set_ylim(0, 13)
+ax.set_title("Horizon-matched (10-step) endpoint: all stacks statistically tied;\n"
+             "official openpi reaches it with ~9x fewer samples", fontsize=11)
 fig.tight_layout()
 fig.savefig(OUT / "openpi_budget_context.png", dpi=200, bbox_inches="tight")
 fig.savefig(OUT / "openpi_budget_context.svg", bbox_inches="tight")
