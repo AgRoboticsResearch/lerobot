@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1161,6 +1161,70 @@ conclusions are:
    `~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`;
    prediction videos for validation episodes 0–2 of both arms under
    `outputs/debug/viz_openpi/{rot6d,rotvec}/`.)
+
+### 9.2.5 Horizon-30 openpi arm + JAX-vs-PyTorch stack A/B — in flight
+
+The horizon-matched correction (§9.2.4) left two attribution questions open: does
+official openpi keep its behavior at the port's native 30-step horizon, and is the
+remaining port-vs-openpi recipe difference (LR, batch, schedule shape) or the
+training stack itself (JAX vs PyTorch)? Two arms were launched on the host RTX
+4090 on 2026-08-16 to answer both:
+
+- **Arm A — `pi05_lora_sroi_rot6d_h30` (official openpi, JAX):** identical to the
+  §9.2.4 rot6d arm in every respect (same resharded v2.1 dataset and norm-stats
+  file — per-dim quantiles are horizon-independent — same split LoRA r16/r32,
+  bs16, 20k steps, default 2.5e-5 cosine-over-30k recipe, EMA off) except
+  `action_horizon=30`. This is simultaneously (a) a like-for-like full-chunk
+  comparison against every horizon-30 model in this report, and (b) the
+  JAX half of the stack A/B.
+- **Arm B — lerobot-port π0.5 LoRA with the openpi recipe (PyTorch):** the port
+  trained with Arm A's hyperparameters, changing only the stack. Matched
+  explicitly: rot6d 10D actions, chunk/execute 30/30, split-rank LoRA
+  (PaliGemma r/α 16 + `gemma_expert` r/α 32, identical module regexes and
+  full-training projections), `pi05_base` init with frozen vision tower, bs16,
+  20k steps (= 320k samples), save 5k/keep 10k+20k, AdamW lr 2.5e-5 peak /
+  betas (0.9, 0.95) / eps 1e-8 / **wd 1e-10** (overridden from the port's 0.01
+  default) / grad-clip 1.0, warmup 1k + cosine over **30k steps to 2.5e-6
+  stopping mid-cosine at 20k exactly like openpi**, full-width flow loss
+  (`flow_matching_padding_mode=openpi_full_width`), Beta(1.5, 1) flow-time
+  sampling, 224 px, quantile normalization.
+
+Matching the schedule required one small code change: the port's
+`CosineDecayWithWarmupSchedulerConfig` auto-scales warmup/decay into the
+training length when `--steps < decay_steps` (it would have squeezed the 30k
+cosine into 20k and ended at the LR floor, unlike openpi which stops
+mid-cosine). A new `scheduler_auto_scale=false` knob (with a regression test
+proving the no-scale path stays mid-cosine while the default reaches the floor)
+restores verbatim openpi behavior; the smoke run confirmed warmup proceeding at
+the full 1000-step scale in the real trainer.
+
+Three stack-native differences remain and are recorded rather than removed
+(they are part of what "the stack" means here): the port's processor-derived
+20D two-pose state vs openpi's current-frame 10D state; norm stats over the
+full 140k train frames vs openpi's 30k-frame sample (both q01/q99 quantiles on
+the same distribution); and JAX-bf16 vs PyTorch-bf16 numerics — the last being
+the object of the A/B. The port trains on the native v3.0 dataset layout,
+openpi on the v2.1 reshard of the same frames.
+
+**Smoke evidence (both arms, 12 steps, 2026-08-16):** openpi h30 fits bs16 in
+~17.5 GiB after rematerialization (XLA reports it cannot go below this; the h10
+arms were smaller) with a clean orbax save; the PyTorch port runs bs16/h30 with
+gradient checkpointing without OOM. Steady-state throughput: JAX ~2.4 s/it,
+PyTorch ~2.15 s/it → ETAs ≈ 13.5 h and ≈ 12 h, run sequentially by
+`run_h30_stack_ablation_chain.sh` (openpi first, port behind it; both logs
+under `/mnt/data1/projects/lerobot-arch-exp/logs/`). Checkpoints land in
+`~/codes/openpi/checkpoints/pi05_lora_sroi_rot6d_h30/run1/19999/` (10k
+intermediate deleted for disk) and
+`/mnt/data1/projects/lerobot-arch-exp/outputs/train/pi05_port_openpi_args_rot6d_h30_bs16_20k/`.
+
+**Analysis plan (preregistered).** Both final checkpoints will be evaluated on
+the fixed 100-episode / 500-query protocol (`eval_openpi_open_loop.py` for the
+JAX arm, `eval_open_loop_dataset.py` for the port, full 30-step chunks — no
+horizon matching needed within this pair). A-vs-§9.2.4-rot6d isolates the
+horizon effect inside official openpi at fixed budget; B-vs-A isolates
+JAX-vs-PyTorch at matched recipe; B-vs-the-kiwi-1M-port isolates the recipe
+(LR/batch/schedule/padding-mode) inside the PyTorch stack at matched horizon
+— the 1M continuation (§9.2.2) also gives B a same-stack long-budget reference.
 
 ### 9.3 Answers and promotion decision after stage one
 

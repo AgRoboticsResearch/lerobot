@@ -119,6 +119,9 @@ class PI05Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
+    # Set False to keep the configured schedule verbatim when --steps < decay_steps
+    # (matches official openpi, which trains e.g. 20k steps on a 30k-step cosine).
+    scheduler_auto_scale: bool = True
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
@@ -190,6 +193,7 @@ class PI05Config(PreTrainedConfig):
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
             num_decay_steps=self.scheduler_decay_steps,
+            auto_scale=self.scheduler_auto_scale,
         )
 
     @property

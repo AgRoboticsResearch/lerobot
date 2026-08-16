@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import math
+
 import pytest
 import torch
 from packaging.version import Version
@@ -94,6 +96,40 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         expected_state_dict["_is_initial"] = False
 
     assert scheduler.state_dict() == expected_state_dict
+
+
+def test_cosine_decay_no_auto_scale_keeps_configured_schedule(optimizer):
+    """auto_scale=False must keep warmup/decay verbatim when training stops
+    before num_decay_steps — matching official openpi, which trains e.g. 20k
+    steps on a 30k-step cosine and therefore ends mid-decay."""
+    config = CosineDecayWithWarmupSchedulerConfig(
+        num_warmup_steps=10, num_decay_steps=90, peak_lr=0.01, decay_lr=0.001, auto_scale=False
+    )
+    scheduler = config.build(optimizer, num_training_steps=30)
+    assert isinstance(scheduler, LambdaLR)
+
+    # Step to the end of the (shorter) training run; the schedule must behave
+    # exactly like the 100-step run stepped to the same point, i.e. it must
+    # still be mid-cosine, not at the decay floor. LambdaLR multiplies the
+    # optimizer's base lr (1e-3 from the fixture) by the schedule factor.
+    for _ in range(31):
+        optimizer.step()
+        scheduler.step()
+    base_lr = optimizer.param_groups[0]["initial_lr"]
+    expected_factor = 0.9 * 0.5 * (1 + math.cos(math.pi * 31 / 90)) + 0.1
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(base_lr * expected_factor)
+    assert expected_factor > 0.5  # sanity: genuinely mid-cosine, far from the floor
+
+    # The default (auto_scale=True) squeezes the decay into the 30 training
+    # steps and therefore reaches the decay floor instead.
+    config_scaled = CosineDecayWithWarmupSchedulerConfig(
+        num_warmup_steps=10, num_decay_steps=90, peak_lr=0.01, decay_lr=0.001
+    )
+    scheduler_scaled = config_scaled.build(optimizer, num_training_steps=30)
+    for _ in range(31):
+        optimizer.step()
+        scheduler_scaled.step()
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(base_lr * 0.1)
 
 
 def test_save_scheduler_state(scheduler, tmp_path):

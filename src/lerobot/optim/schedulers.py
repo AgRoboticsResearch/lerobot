@@ -90,19 +90,23 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
     Automatically scales warmup and decay steps if num_training_steps < num_decay_steps.
     This ensures the learning rate schedule completes properly even with shorter training runs.
+    Set ``auto_scale=False`` to disable this and keep the configured schedule verbatim —
+    required when matching official openpi runs that train fewer steps than their cosine
+    ``decay_steps`` (e.g. 20k trained steps on a 30k-step schedule stop mid-cosine).
     """
 
     num_warmup_steps: int
     num_decay_steps: int
     peak_lr: float
     decay_lr: float
+    auto_scale: bool = True
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
         # Auto-scale scheduler parameters if training steps are shorter than configured decay steps
         actual_warmup_steps = self.num_warmup_steps
         actual_decay_steps = self.num_decay_steps
 
-        if num_training_steps < self.num_decay_steps:
+        if self.auto_scale and num_training_steps < self.num_decay_steps:
             # Calculate scaling factor to fit the schedule into the available training steps
             scale_factor = num_training_steps / self.num_decay_steps
             actual_warmup_steps = int(self.num_warmup_steps * scale_factor)
