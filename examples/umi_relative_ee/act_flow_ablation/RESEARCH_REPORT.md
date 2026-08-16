@@ -1090,11 +1090,14 @@ a horizon artifact, however: the port's **per-step chunk-mean** error over its
 own 30-step chunk (which includes the easier early steps) is 12.95 mm versus
 5.38 mm for the openpi rot6d arm — 2.4× worse per step — and rotation
 chunk-mean is 2.36° versus 1.00°. Verified recipe differences that remain:
-peak LR (2.5e-5 cosine vs the port's 5e-5), batch (16 vs 4), the padded-dim
-loss treatment (openpi full-width 32-dim vs the port's masked_subspace), state
+peak LR (2.5e-5 cosine vs the port's 5e-5), batch (16 vs 4), state
 construction (current-frame relative pose mirrored from the action vs the
 port's processor-derived state), and the training stack itself (JAX bf16 vs
-the PyTorch port). Notably the port's PEFT adapter coverage was *broader* than
+the PyTorch port). The padded-dim loss treatment is **ruled out**: the
+`flow_matching_padding_mode` A/B (full-width vs masked_subspace, run to 1M
+steps on SmolVLA and implemented identically on `PI05Config`) found the two
+coherent formulations statistically equivalent
+(`smolvla_padding_ab_final_results.md`). Notably the port's PEFT adapter coverage was *broader* than
 the official recipe's (it also adapted the vision tower, which openpi leaves
 frozen) and the port saw 8.75× more samples, so neither adapter capacity nor
 data exposure explains the gap. Whatever the mix, the practical conclusion is
