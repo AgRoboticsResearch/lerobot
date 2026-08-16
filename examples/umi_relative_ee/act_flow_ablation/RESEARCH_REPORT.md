@@ -1080,18 +1080,29 @@ reach **9.4–10.1 mm endpoint / 1.66–1.70° rotation** — roughly 2.2× more
 accurate than the strongest result in the ACT/flow matrix (ACT R50-V1, 22.3 mm /
 4.58°), 2.3× more accurate than the lerobot-port π0.5 LoRA reference at 700K
 steps (§9.2.2: 21.77 mm / 4.25°), and ~2.7× more accurate than SmolVLA — at
-**1/35th the optimization steps** of the port run (20k vs 700k) and **1/6th of
-its inference latency** (0.11 s vs 0.33 s mean). Both arms are also smoother
-than or equal to ground truth on rotation (rot6d 0.16° vs GT 0.153°). Candidate
-contributors, not individually isolated here: the official JAX LoRA recipe
-(r16 backbone / r32 expert), quantile (q01/q99) action normalization versus the
-port's mean/std, the full 2.3B-parameter π0.5 flow head trained jointly rather
-than ported, bf16 XLA compilation, and the 32-dim padded action space with
-masked decode. Whatever the mix, the practical conclusion is stark: **the
-official openpi fine-tuning path extracts dramatically more from π0.5 on this
-task than our LeRobot port did with 35× the budget** — the port/recipe gap, not
-model capacity or the flow objective, was the binding constraint on the VLM
-path. (Raw metrics under
+**1/35th the optimization steps** of the port run (20k vs 700k, though at 4×
+batch size: 320k vs 2.8M samples) and **1/6th of its inference latency**
+(0.11 s vs 0.33 s mean). Both arms are also smoother than or equal to ground
+truth on rotation (rot6d 0.16° vs GT 0.153°). *Comparability caveat:* the
+openpi arms predict 10-step chunks while the port predicts 30-step chunks, so
+the endpoint metric is evaluated at t+10 versus t+30. The gap is not primarily
+a horizon artifact, however: the port's **per-step chunk-mean** error over its
+own 30-step chunk (which includes the easier early steps) is 12.95 mm versus
+5.38 mm for the openpi rot6d arm — 2.4× worse per step — and rotation
+chunk-mean is 2.36° versus 1.00°. Verified recipe differences that remain:
+peak LR (2.5e-5 cosine vs the port's 5e-5), batch (16 vs 4), the padded-dim
+loss treatment (openpi full-width 32-dim vs the port's masked_subspace), state
+construction (current-frame relative pose mirrored from the action vs the
+port's processor-derived state), and the training stack itself (JAX bf16 vs
+the PyTorch port). Notably the port's PEFT adapter coverage was *broader* than
+the official recipe's (it also adapted the vision tower, which openpi leaves
+frozen) and the port saw 8.75× more samples, so neither adapter capacity nor
+data exposure explains the gap. Whatever the mix, the practical conclusion is
+stark: **the official openpi fine-tuning path extracts dramatically more from
+π0.5 on this task than our LeRobot port did with ~9× the sample budget** — the
+port/recipe gap, not model capacity or the flow objective, was the binding
+constraint on the VLM path. A horizon-30 openpi control would remove the
+remaining metric confound and is the natural follow-up. (Raw metrics under
 `outputs/research_report/openpi_sroi_eval/`; checkpoints
 `~/codes/openpi/checkpoints/pi05_lora_sroi_{rotvec,rot6d}/run1/19999/`.)
 
