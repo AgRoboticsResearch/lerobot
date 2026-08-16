@@ -325,7 +325,19 @@ Stage-one evaluation uses five evenly spaced query frames in the common valid
 action-offset intersection `[-1, 31]` in every one of the 100 validation
 episodes. Reports use episode-balanced means and deterministic
 95% nonparametric bootstrap intervals (10,000 resamples, seed 0), with episodes
-as the resampling unit. ACT-flow and Diffusion Policy are additionally evaluated
+as the resampling unit. The decoded metric set per query covers per-step
+rotation geodesic angle, xyz-norm, and gripper errors (chunk mean/RMSE/MSE plus
+endpoint), within-chunk jerk, and — added 2026-08-16, before the §9.2.5 and
+π0.5-1M evaluations — component-wise **L1** and **per-dimension MSE** for xyz
+(m) and the axis-angle vector (deg): the action-space sense the training
+objectives optimize, implemented as `per_component_l1_mse` in
+`eval_open_loop_dataset.py` and mirrored in `eval_openpi_open_loop.py` (whose
+summary registry previously computed but omitted the chunk-MSE keys — fixed in
+the same change; both evaluators now emit the identical metric set, and the
+openpi one takes `--action_horizon` for the h30 arm). Evaluations produced
+before 2026-08-16 predate the L1/per-dim-MSE keys (their JSONs already contain
+the norm-based chunk MSE/RMSE) and can be re-scored from saved checkpoints on
+demand. ACT-flow and Diffusion Policy are additionally evaluated
 with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
 seeds are varied only after this screen selects configurations worth promoting.
 The collector keeps inference-seed averaging and training-seed variability as

@@ -93,6 +93,8 @@ def main():
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset_root", default="/mnt/data1/sroi/lerobot/sroiv2_strawberry_validation_rotvec")
     p.add_argument("--samples_per_episode", type=int, default=5)
+    p.add_argument("--action_horizon", type=int, default=10,
+                   help="policy action chunk length (h10 arms -> 10; h30 arm -> 30)")
     p.add_argument("--max_queries", type=int, default=None,
                    help="cap total queries (smoke tests); None = all episodes")
     p.add_argument("--output", required=True)
@@ -106,7 +108,7 @@ def main():
 
     repo_id = "sroiv2_strawberry_validation_rotvec"
     meta = ld.LeRobotDatasetMetadata(repo_id, root=args.dataset_root)
-    action_horizon = 10
+    action_horizon = args.action_horizon
     ds = ld.LeRobotDataset(repo_id, root=args.dataset_root,
                            delta_timestamps={"action": [t / meta.fps for t in range(action_horizon)]})
 
@@ -132,10 +134,13 @@ def main():
     policy = _policy_config.create_trained_policy(train_config, args.checkpoint,
                                                   default_prompt="pick the strawberry")
 
-    metric_names = ("rotation_chunk_mean_deg", "rotation_chunk_rmse_deg", "rotation_end_deg",
-                    "xyz_chunk_mean_m", "xyz_chunk_rmse_m", "xyz_end_m",
-                    "gripper_chunk_mean", "gripper_end", "rot_jerk_deg", "xyz_jerk_m",
-                    "gt_rot_jerk_deg", "gt_xyz_jerk_m")
+    metric_names = ("rotation_chunk_mean_deg", "rotation_chunk_rmse_deg", "rotation_chunk_mse_deg2",
+                    "rotation_end_deg",
+                    "xyz_chunk_mean_m", "xyz_chunk_rmse_m", "xyz_chunk_mse_m2", "xyz_end_m",
+                    "gripper_chunk_mean", "gripper_chunk_rmse", "gripper_chunk_mse", "gripper_end",
+                    "xyz_l1_per_dim_m", "xyz_mse_per_dim_m2",
+                    "rotvec_l1_per_dim_deg", "rotvec_mse_per_dim_deg2",
+                    "rot_jerk_deg", "xyz_jerk_m", "gt_rot_jerk_deg", "gt_xyz_jerk_m")
     samples = []
     infer_s = []
     for si, (ep, fi) in enumerate(query):
@@ -164,6 +169,13 @@ def main():
         xyz_err = torch.linalg.vector_norm(pred[:, :3] - gt[:, :3], dim=-1)
         grip_err = (pred[:, 6] - gt[:, 6]).abs()
         rot_mse = float((rot_err ** 2).mean()); xyz_mse = float((xyz_err ** 2).mean()); grip_mse = float((grip_err ** 2).mean())
+        # per-component L1/MSE (must mirror eval_open_loop_dataset.py per_component_l1_mse):
+        # component-wise over steps x dims -- the action-space sense the training
+        # objectives optimize. xyz per-dim MSE = norm-based xyz chunk MSE / 3.
+        xyz_delta = pred[:, :3] - gt[:, :3]
+        rotvec_delta_deg = torch.rad2deg(pred[:, 3:6] - gt[:, 3:6])
+        xyz_l1 = float(xyz_delta.abs().mean()); xyz_mse_pd = float((xyz_delta ** 2).mean())
+        rv_l1 = float(rotvec_delta_deg.abs().mean()); rv_mse_pd = float((rotvec_delta_deg ** 2).mean())
         prj, pxj = within_chunk_jerk(pred); grj, gxj = within_chunk_jerk(gt)
         samples.append({
             "episode_index": ep, "frame_index": fi,
@@ -173,6 +185,8 @@ def main():
             "xyz_chunk_mse_m2": xyz_mse, "xyz_end_m": float(xyz_err[-1]),
             "gripper_chunk_mean": float(grip_err.mean()), "gripper_chunk_rmse": grip_mse ** 0.5,
             "gripper_chunk_mse": grip_mse, "gripper_end": float(grip_err[-1]),
+            "xyz_l1_per_dim_m": xyz_l1, "xyz_mse_per_dim_m2": xyz_mse_pd,
+            "rotvec_l1_per_dim_deg": rv_l1, "rotvec_mse_per_dim_deg2": rv_mse_pd,
             "rot_jerk_deg": prj, "xyz_jerk_m": pxj, "gt_rot_jerk_deg": grj, "gt_xyz_jerk_m": gxj,
         })
         if (si + 1) % 50 == 0 or si + 1 == len(query):
@@ -186,7 +200,8 @@ def main():
     ci = bootstrap_ci(ep_means, metric_names)
     report = {
         "policy_type": args.config_name, "checkpoint": args.checkpoint,
-        "is_rot6d": is_rot6d, "num_episodes": len(ep_samples), "num_samples": len(samples),
+        "is_rot6d": is_rot6d, "action_horizon": args.action_horizon,
+        "num_episodes": len(ep_samples), "num_samples": len(samples),
         "inference_latency_seconds": {"mean": float(np.mean(infer_s)), "median": float(np.median(infer_s))},
         "summary": {"episode_balanced": eb, "episode_balanced_95ci": ci},
     }

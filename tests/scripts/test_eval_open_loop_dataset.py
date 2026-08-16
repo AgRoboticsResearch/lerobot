@@ -7,6 +7,7 @@ from examples.umi_relative_ee.eval_open_loop_dataset import (
     bootstrap_episode_confidence_intervals,
     choose_query_indices,
     inference_step_field,
+    per_component_l1_mse,
     rotation_error_deg,
     summarize,
     summarize_inference_latency,
@@ -97,6 +98,27 @@ def test_rotation_error_deg_uses_absolute_pose_geodesic_error():
     torch.testing.assert_close(error, torch.tensor([0.0, 90.0]), atol=1e-4, rtol=0)
 
 
+def test_per_component_l1_mse_definitions_and_norm_relation():
+    predicted = torch.zeros(2, 7)
+    ground_truth = torch.zeros(2, 7)
+    predicted[0, :3] = torch.tensor([0.3, -0.4, 0.0])
+    predicted[1, 3:6] = torch.tensor([1.0, -2.0, 0.0]) * torch.pi / 180  # deg-scale rotvec delta
+    ground_truth[1, 5] = torch.pi / 180
+
+    metrics = per_component_l1_mse(predicted, ground_truth)
+
+    # hand-computed component-wise values over steps x dims
+    assert metrics["xyz_l1_per_dim_m"] == pytest.approx((0.3 + 0.4 + 0.0) / 3 / 2)
+    assert metrics["xyz_mse_per_dim_m2"] == pytest.approx((0.09 + 0.16) / 3 / 2)
+    assert metrics["rotvec_l1_per_dim_deg"] == pytest.approx((1.0 + 2.0 + 1.0) / 3 / 2)
+    assert metrics["rotvec_mse_per_dim_deg2"] == pytest.approx((1.0 + 4.0 + 1.0) / 3 / 2)
+    # per-dim MSE is the norm-based chunk MSE divided by the dimension count
+    xyz_norm_mse = float(
+        torch.linalg.vector_norm(predicted[:, :3] - ground_truth[:, :3], dim=-1).pow(2).mean()
+    )
+    assert metrics["xyz_mse_per_dim_m2"] == pytest.approx(xyz_norm_mse / 3)
+
+
 def test_summarize_inference_latency_excludes_cold_call():
     summary = summarize_inference_latency([9.0, 1.0, 2.0, 3.0])
 
@@ -146,6 +168,10 @@ def test_summarize_reports_episode_balanced_primary_metric():
         "xyz_chunk_mse_m2",
         "gripper_chunk_rmse",
         "gripper_chunk_mse",
+        "xyz_l1_per_dim_m",
+        "xyz_mse_per_dim_m2",
+        "rotvec_l1_per_dim_deg",
+        "rotvec_mse_per_dim_deg2",
         "rot_jerk_deg",
         "xyz_jerk_m",
         "gt_rot_jerk_deg",

@@ -225,6 +225,30 @@ def within_chunk_jerk(poses: torch.Tensor) -> dict[str, float]:
     return {"rot_jerk_deg": float(rot_jerk), "xyz_jerk_m": float(xyz_jerk)}
 
 
+def per_component_l1_mse(predicted: torch.Tensor, ground_truth: torch.Tensor) -> dict[str, float]:
+    """Component-wise L1/MSE over steps x dims — the action-space sense the
+    training objectives (ACT L1, flow velocity-MSE) optimize.
+
+    Distinct from the per-step norm-based chunk means: the xyz per-dim MSE is
+    the norm-based chunk MSE divided by 3. Gripper is single-dim, so its L1/MSE
+    are already ``gripper_chunk_mean``/``gripper_chunk_mse``. The rotvec metrics
+    act on the raw axis-angle components in deg with no geodesic wraparound
+    correction — exactly what a component-wise loss would see (safe here: the
+    relative-EE rotations are near-identity, far from the +-pi wrap).
+
+    ``predicted``/``ground_truth`` are ``[steps, 7]`` absolute
+    ``[xyz, axis-angle, gripper]`` chunks.
+    """
+    xyz_delta = predicted[:, :3] - ground_truth[:, :3]
+    rotvec_delta_deg = torch.rad2deg(predicted[:, 3:6] - ground_truth[:, 3:6])
+    return {
+        "xyz_l1_per_dim_m": float(xyz_delta.abs().mean()),
+        "xyz_mse_per_dim_m2": float((xyz_delta**2).mean()),
+        "rotvec_l1_per_dim_deg": float(rotvec_delta_deg.abs().mean()),
+        "rotvec_mse_per_dim_deg2": float((rotvec_delta_deg**2).mean()),
+    }
+
+
 def bootstrap_episode_confidence_intervals(
     episode_means: dict[int, dict[str, float]],
     metric_names: tuple[str, ...],
@@ -272,6 +296,10 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
         "gripper_chunk_rmse",
         "gripper_chunk_mse",
         "gripper_end",
+        "xyz_l1_per_dim_m",
+        "xyz_mse_per_dim_m2",
+        "rotvec_l1_per_dim_deg",
+        "rotvec_mse_per_dim_deg2",
         "rot_jerk_deg",
         "xyz_jerk_m",
         "gt_rot_jerk_deg",
@@ -476,6 +504,7 @@ def main() -> None:
         rotation_mse = float((rotation_error**2).mean())
         xyz_mse = float((xyz_error**2).mean())
         gripper_mse = float((gripper_error**2).mean())
+        per_dim = per_component_l1_mse(predicted, ground_truth)
         pred_jerk = within_chunk_jerk(predicted)
         gt_jerk = within_chunk_jerk(ground_truth)
         samples.append(
@@ -494,6 +523,7 @@ def main() -> None:
                 "gripper_chunk_rmse": float(gripper_mse**0.5),
                 "gripper_chunk_mse": gripper_mse,
                 "gripper_end": float(gripper_error[-1]),
+                **per_dim,
                 "rot_jerk_deg": pred_jerk["rot_jerk_deg"],
                 "xyz_jerk_m": pred_jerk["xyz_jerk_m"],
                 "gt_rot_jerk_deg": gt_jerk["rot_jerk_deg"],
