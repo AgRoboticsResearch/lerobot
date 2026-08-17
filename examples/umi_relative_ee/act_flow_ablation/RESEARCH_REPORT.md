@@ -1298,6 +1298,8 @@ artifact root that symlinks `train/`; the legacy tree was left untouched).
 | ACT-flow s2000 | 50k | 31.42 | 5.70 | 9.96 | 236.6 | 1.74 | 6.49 | 0.963 | 0.634 |
 | ACT-flow s3000 | 50k | 31.97 | 5.45 | 10.21 | 273.6 | 1.62 | 5.81 | 0.961 | 0.654 |
 
+![Seed-23k companions on the v2 metrics](figures/seed23k_v2metrics.png)
+
 Read-outs, restricted to matched-step comparisons (budgets differ across the
 set, so these rows are not comparable with the seed-1000 100k tables except
 where noted):
