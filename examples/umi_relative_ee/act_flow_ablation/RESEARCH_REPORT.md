@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1196,7 +1196,7 @@ conclusions are:
    prediction videos for validation episodes 0–2 of both arms under
    `outputs/debug/viz_openpi/{rot6d,rotvec}/`.)
 
-### 9.2.5 Horizon-30 openpi arm + JAX-vs-PyTorch stack A/B — in flight
+### 9.2.5 Horizon-30 openpi arm + JAX-vs-PyTorch stack A/B — complete
 
 The horizon-matched correction (§9.2.4) left two attribution questions open: does
 official openpi keep its behavior at the port's native 30-step horizon, and is the
@@ -1259,6 +1259,79 @@ horizon effect inside official openpi at fixed budget; B-vs-A isolates
 JAX-vs-PyTorch at matched recipe; B-vs-the-kiwi-1M-port isolates the recipe
 (LR/batch/schedule/padding-mode) inside the PyTorch stack at matched horizon
 — the 1M continuation (§9.2.2) also gives B a same-stack long-budget reference.
+
+**Status (2026-08-17): complete.** Both arms finished training (openpi h30
+13.4 h, port 12.1 h) and the full preregistered evaluation chain ran: the JAX
+arm at native h30 with three inference seeds and re-scored at t+10
+(`--eval_horizon 10`, added to `eval_openpi_open_loop.py` as the mirror of the
+LeRobot evaluator's flag); the §9.2.4 h10 arms re-scored on the v2 metric set;
+the port at h30 and t+10 with three inference seeds each. As before, official
+openpi's serving is inference-seed-invariant (endpoint spread 0.002 mm across
+seeds) while the port shows ±0.35 mm (h30) / ±0.10 mm (t+10) sampler spread.
+All rows: episode-balanced means, 95% bootstrap CIs, 500 queries, PyAV.
+
+| Arm (training) | Scoring | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | acc@0.5 | acc@0.1 | Rot jerk (°) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A: openpi h30-trained | t+30 | 23.83 [22.11, 25.62] | 4.93 [4.58, 5.30] | 7.40 | 134.7 | 1.428 | 0.973 | 0.702 [0.689, 0.715] | 0.181 |
+| A: openpi h30-trained | t+10 | 10.89 [10.25, 11.53] | 1.96 [1.85, 2.06] | 3.10 | 22.3 | 0.567 | 0.991 | 0.905 [0.898, 0.912] | 0.163 |
+| A0: openpi h10-trained, rot6d (§9.2.4) | t+10 | **9.41** [8.89, 9.94] | **1.70** [1.61, 1.78] | 2.67 | 17.1 | 0.503 | 0.995 | **0.934** [0.930, 0.939] | 0.161 |
+| A0: openpi h10-trained, rotvec (§9.2.4) | t+10 | 10.06 [9.44, 10.70] | 1.66 [1.57, 1.75] | 2.80 | 20.5 | 0.501 | 0.995 | 0.933 [0.927, 0.938] | 0.202 |
+| B: port h30-trained (openpi recipe) | t+30 | 25.05 [23.31, 26.86] | 4.65 [4.39, 4.93] | **7.16** | 145.9 | **1.315** | 0.974 | 0.721 [0.710, 0.731] | **0.094** |
+| B: port h30-trained (openpi recipe) | t+10 | 9.57 [9.02, 10.13] | 1.81 [1.72, 1.90] | **2.42** | **15.3** | **0.482** | 0.993 | 0.920 [0.914, 0.925] | **0.086** |
+
+Read-outs, following the preregistered decomposition:
+
+1. **Scoring horizon, quantized on identical weights.** The same Arm A
+   checkpoint scores 23.83 mm / 4.93° / acc@0.1 0.702 at t+30 but
+   10.89 mm / 1.96° / 0.905 at t+10 — a 2.2× endpoint factor from scoring
+   window alone, with zero model change. This converts §9.2.4's cross-model
+   horizon correction into a within-model measurement. (The acc@τ scales pool
+   each eval's own GT chunks, so cross-horizon acc@τ comparisons carry a small
+   normalization shift; the millimeter endpoint comparison does not, and shows
+   the same 2.2×.)
+2. **Training horizon at matched scoring: h10 training is more precise at
+   t+10.** A0 (h10-trained) beats A (h30-trained) at t+10 with disjoint
+   intervals on XYZ endpoint (9.94 vs 10.25 mm), rotation endpoint
+   (1.78 vs 1.85°), and acc@0.1 (0.939 vs 0.912) at the identical 20k-step /
+   320k-sample budget. Spreading the same capacity over a 3× longer chunk
+   costs ~15% near-horizon precision and buys no smoothness (rot-jerk 0.161
+   vs 0.163). Practical corollary: train at the horizon you will execute, not
+   longer, when the budget is fixed.
+3. **JAX vs PyTorch at matched recipe: no accuracy gap; the port is ~2×
+   smoother.** At t+30, XYZ endpoint is statistically tied (A's point estimate
+   1.2 mm better, intervals overlapping heavily), rotation tied (B's point
+   estimate better), acc@0.1 borderline-tied (B 0.721 vs A 0.702, intervals
+   touching). At t+10 B is better on XYZ endpoint (9.57 vs 10.89, disjoint)
+   and acc@0.1 (0.920 vs 0.905, disjoint). The one horizon-consistent,
+   recipe-independent difference is smoothness: B's rot-jerk is 0.094°/0.086°
+   versus A's 0.181°/0.163° — half the jerk at both scoring windows (and
+   below GT ≈ 0.155°), with XYZ jerk 0.53 vs 1.10 mm. This replicates the
+   §9.2.4 h10 observation (port 0.072° vs openpi 0.161°) under a fully matched
+   recipe at h30, so the port's smoothness advantage is a property of the
+   stacks themselves (PyTorch-bf16 vs JAX-bf16 numerics plus the recorded
+   stack-native differences), not of LR/batch/schedule.
+4. **The openpi recipe's sample efficiency transfers into the PyTorch stack.**
+   B — the port trained with the openpi recipe on 320k samples — scores
+   9.57 [9.02, 10.13] mm at t+10, statistically tied with the kiwi port-recipe
+   700K reference (8.98 [8.40, 9.57], 2.8M samples): the same accuracy point
+   at ~1/9 the samples, now inside a single stack. The §9.2.4 ~9×
+   sample-efficiency finding is therefore recipe-driven, not JAX-driven.
+   (acc@0.1 for the 700K reference and the full 1M-vs-20k recipe comparison
+   land with the kiwi re-evals; §9.2.2.)
+5. **At full 30-step lookahead, stacks and model classes collapse together.**
+   At matched t+30 scoring the h30-trained 3B flow-VLMs (acc@0.1 0.702 A /
+   0.721 B) sit inside the ACT family's 100k–3M band (0.681–0.744,
+   §9.2.6–9.2.7) — indistinguishable on precision — while at t+10 the same
+   VLMs reach 0.92–0.93 with no measurable ACT counterpart (seed-1000 weights
+   are husks). Horizon and budget dominate stack and parameter count on this
+   task; what the VLM stacks actually buy is smoothness (B 0.094° at t+30 vs
+   ACT 0.056–0.126° — comparable) and sample efficiency.
+
+Raw metrics: `outputs/research_report/openpi_h30_eval/` and
+`openpi_sroi_eval/{rot6d,rotvec}_v2metrics/` (repo); `eval_common_h32/
+pi05_port_openpi_args_h30{,_h10}/seed{1000,2000,3000}/` (artifact root).
+Checkpoints: `~/codes/openpi/checkpoints/pi05_lora_sroi_rot6d_h30/run1/19999/`
+and `outputs/train/pi05_port_openpi_args_rot6d_h30_bs16_20k/checkpoints/020000/`.
 
 ### 9.2.6 Partial-budget seed-2000/3000 salvage check (new L1/MSE metrics)
 

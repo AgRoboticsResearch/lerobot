@@ -119,6 +119,9 @@ def main():
     p.add_argument("--samples_per_episode", type=int, default=5)
     p.add_argument("--action_horizon", type=int, default=10,
                    help="policy action chunk length (h10 arms -> 10; h30 arm -> 30)")
+    p.add_argument("--eval_horizon", type=int, default=None,
+                   help="truncate predicted and GT chunks to the first N steps before scoring "
+                        "(mirror of eval_open_loop_dataset.py; e.g. score an h30 model at t+10)")
     p.add_argument("--max_queries", type=int, default=None,
                    help="cap total queries (smoke tests); None = all episodes")
     p.add_argument("--output", required=True)
@@ -193,6 +196,8 @@ def main():
         pred = torch.as_tensor(pred, dtype=torch.float32)
         steps = min(len(pred), len(gt))
         pred, gt = pred[:steps], gt[:steps]
+        if args.eval_horizon is not None:
+            pred, gt = pred[: args.eval_horizon], gt[: args.eval_horizon]
         rot_err = rotation_error_deg(pred, gt)
         xyz_err = torch.linalg.vector_norm(pred[:, :3] - gt[:, :3], dim=-1)
         grip_err = (pred[:, 6] - gt[:, 6]).abs()
@@ -235,6 +240,7 @@ def main():
     report = {
         "policy_type": args.config_name, "checkpoint": args.checkpoint,
         "is_rot6d": is_rot6d, "action_horizon": args.action_horizon,
+        "eval_horizon": args.eval_horizon,
         "num_episodes": len(ep_samples), "num_samples": len(samples),
         "inference_latency_seconds": {"mean": float(np.mean(infer_s)), "median": float(np.median(infer_s))},
         "accuracy_at_tau_normalization": {
