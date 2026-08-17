@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1409,7 +1409,14 @@ where noted):
 Driver: `reeval_seed23k_v2metrics.sh` (idempotent, husk-guarded, VRAM-gated at
 ≥4 GiB free so it ran concurrently with the in-flight h30 chain); per-eval logs
 under `reeval_v2metrics/logs/`. Pre-accuracy@τ copies of the same ten reports
-are preserved under `reeval_v2metrics/eval_common_h32_pre_tau/`.
+are preserved under `reeval_v2metrics/eval_common_h32_pre_tau/`. The compact
+CSV evidence for this section and §9.2.7, plus both figures, are regenerable
+via the collector's dedicated v2 pass (`collect_results.py --v2_eval_roots`)
+and `plot_v2metrics.py` (§11): the shadow tree needs its own pass because its
+runs violate two assumptions of the strict matrix collector by design —
+early-stopped companions evaluated below their directory budget (80k/50k
+checkpoints under `100000steps` names) and the historical run's
+pre-convention naming.
 
 ### 9.2.7 Historical production ACT: 30-point budget curve on the v2 metrics
 
@@ -1477,6 +1484,34 @@ Read-outs:
    ≤1× the common budget outperforms a 30× budget range of the original
    recipe — the sharpest single line of evidence that the §9.1 capacity and
    objective results dominate longer training on this task.
+
+### 9.2.8 ACT R50-V1 long-budget run (1M steps) — in flight
+
+That capacity-vs-budget conclusion is cross-budget (R50 companions at 80k vs
+an R18 curve). The direct question — does R50 capacity keep compounding with
+budget, or does it hit the same ~23 mm / flat-acc@0.1 plateau the R18 curve
+shows from 400k? — needs an R50 budget curve, and every seed-1000 R50
+checkpoint was stranded by the disk failures (§9.2.6). A fresh
+**`act_r50_v1_vae` seed-1000 run at 1M steps** was therefore launched on the
+host on 2026-08-17 17:46 (`run_one.sh act_r50_v1_vae 1000000 1000`,
+`UMI_SAVE_FREQ=50000`, 12.9–13.0 steps/s, ETA ≈ 21.5 h; checkpoints every 50k
+under `train/act_r50_v1_vae_seed1000_1000000steps/`, log
+`logs/act_r50_v1_vae_seed1000_1000000steps.log`). V1 initialization per
+§9.1.2: the best-performing ACT at the common 100k budget and the strict
+initialization control; the objective/optimizer match the historical R18
+production run, so the two budget curves are directly comparable.
+
+**Analysis plan (preregistered).** When training completes, evaluate the
+100k-spaced checkpoints (100k–1M) on the fixed 100-episode / 500-query
+protocol with the full v2 metric set, mirroring §9.2.7 exactly (driver
+patterned on `eval_historical_act_curve.sh`; outputs under
+`reeval_v2metrics/eval_common_h32/` in collector-compatible run names).
+Comparisons: (a) R50-vs-R18 budget curves on acc@0.1 and XYZ endpoint — does
+the capacity gap persist, shrink, or invert as budget grows; (b) the 100k
+point against the stranded seed-1000 R50-V1 100k evaluation (22.33 mm / 4.58°,
+§9.1.2) as a fresh-run replication check; (c) rot-jerk — whether R50 shows the
+same late-training smoothness degradation that penalizes the R18 curve from
+700k.
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -2269,6 +2304,27 @@ collector outputs. Use a writable Matplotlib cache, for example:
 MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run python \
   examples/umi_relative_ee/act_flow_ablation/plot_results.py
 ```
+
+The v2-metric sweep (§9.2.6–9.2.8) has its own collection pass and figure
+renderer, reading the shadow eval root instead of the canonical matrix tree
+(whose ACT-matrix JSONs are disk-failure husks; the frozen pre-failure
+`results/` CSVs and figures remain the record for §9.1–9.2.1 and are never
+regenerated from the degraded canonical scan):
+
+```bash
+uv run python examples/umi_relative_ee/act_flow_ablation/collect_results.py \
+  --v2_eval_roots /mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/eval_common_h32
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
+  examples/umi_relative_ee/act_flow_ablation/plot_v2metrics.py
+```
+
+The v2 pass records the authoritative evaluated checkpoint step from each
+report filename (early-stopped companions sit in `100000steps` directories
+but were evaluated at their true 80k/50k checkpoints), aggregates every
+metric present across a run's reports (v2 keys ride along when present),
+emits `v2_evaluations.csv` / `v2_run_summary.csv` under
+`reeval_v2metrics/results/`, and skips unreadable report files with a loud
+warning rather than aborting the sweep.
 Example:
 
 ```bash

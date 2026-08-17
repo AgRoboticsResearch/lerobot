@@ -15,9 +15,18 @@ from typing import Any
 
 import numpy as np
 
-DEFAULT_ROOT = Path("/media/zfei/Glowat512/projects/lerobot-arch-exp")
+DEFAULT_ROOT = Path("/mnt/data1/projects/lerobot-arch-exp")
 RUN_RE = re.compile(r"^(?P<variant>.+)_seed(?P<seed>\d+)_(?P<steps>\d+)steps$")
+# The historical production run (§9.2.7) predates the seed/budget naming
+# convention: act_umi_identity_rot6d_1459_<7-digit-step>steps, training seed
+# 1000 (verified in §3's audit of its saved train_config.json).
+HIST_RUN_RE = re.compile(r"^(?P<variant>act_umi_identity_rot6d_1459)_(?P<steps>\d{7})steps$")
 REPORT_STEP_RE = re.compile(r"_(?P<step>\d{6})_open_loop_metrics\.json$")
+# v2-metric reports may carry 6- or 7-digit checkpoint steps and the
+# historical family omits the run-name prefix; evaluated_step is taken from
+# the report filename, which is authoritative over the directory budget
+# (early-stopped companion runs are evaluated at their true final step).
+V2_REPORT_STEP_RE = re.compile(r"_(?P<step>\d{6,7})_open_loop_metrics\.json$")
 SEED_DIR_RE = re.compile(r"^seed(?P<seed>\d+)$")
 LEARNABLE_PARAM_RE = re.compile(r"num_learnable_params=(?P<params>\d+)")
 TOTAL_PARAM_RE = re.compile(r"num_total_params=(?P<params>\d+)")
@@ -53,6 +62,22 @@ EXTRA_PAIRED_VARIANTS = (
     ("smolvla_axis_angle", "smolvla_rot6d"),
     ("lingbot_va_axis_angle", "smolvla_axis_angle"),
 )
+# v2 metric set (2026-08-16/17 evaluator extensions): per-component L1,
+# per-dimension MSE, and pi0.5-style thresholded accuracy at tau=0.5/0.1
+# (plus component views). Present in reports produced after those commits;
+# older reports (e.g. the kiwi pi0.5-port JSONs) predate them.
+V2_METRICS = (
+    "xyz_l1_per_dim_m",
+    "xyz_mse_per_dim_m2",
+    "rotvec_l1_per_dim_deg",
+    "rotvec_mse_per_dim_deg2",
+    "action_acc_at_0p5",
+    "action_acc_at_0p1",
+    "xyz_acc_at_0p5",
+    "xyz_acc_at_0p1",
+    "rotvec_acc_at_0p5",
+    "rotvec_acc_at_0p1",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +90,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--expected_num_episodes", type=int, default=100)
     parser.add_argument("--expected_samples_per_episode", type=int, default=5)
+    parser.add_argument(
+        "--v2_eval_roots",
+        default=None,
+        help=(
+            "Comma-separated evaluation roots to scan with the v2-metric pass "
+            "(e.g. <artifact_root>/reeval_v2metrics/eval_common_h32). Runs the v2 "
+            "pass INSTEAD of the strict matrix scan: the shadow tree holds "
+            "early-stopped companions evaluated below their directory budget and "
+            "historical runs outside the seed/budget naming convention, both of "
+            "which the strict pass rejects by design."
+        ),
+    )
+    parser.add_argument(
+        "--v2_out_dir",
+        type=Path,
+        default=None,
+        help="Output directory for the v2 pass (default: <first v2 root>/../results).",
+    )
     return parser.parse_args()
 
 
@@ -504,8 +547,173 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def parse_v2_run_name(name: str) -> dict[str, Any]:
+    match = RUN_RE.fullmatch(name)
+    if match is not None:
+        values = match.groupdict()
+        return {
+            "run_name": name,
+            "variant": values["variant"],
+            "training_seed": int(values["seed"]),
+            "budget_steps": int(values["steps"]),
+        }
+    match = HIST_RUN_RE.fullmatch(name)
+    if match is not None:
+        return {
+            "run_name": name,
+            "variant": match["variant"],
+            "training_seed": 1000,
+            "budget_steps": int(match["steps"]),
+        }
+    raise ValueError(f"Unrecognized v2 run name: {name}")
+
+
+def aggregate_available_episode_metrics(
+    reports: list[dict[str, Any]],
+) -> tuple[tuple[str, ...], dict[str, np.ndarray]]:
+    """Like aggregate_episode_metrics, but over every per-episode metric present
+    in ALL reports of the run — v2 L1/MSE/accuracy@tau keys ride along when the
+    reports carry them and are absent for pre-2026-08-16 reports."""
+    if not reports:
+        raise ValueError("At least one evaluation report is required")
+    episode_id_sets = [set(report["summary"]["per_episode"]) for report in reports]
+    if any(episode_ids != episode_id_sets[0] for episode_ids in episode_id_sets[1:]):
+        raise ValueError("Inference-seed evaluation reports have mismatched episode IDs")
+    episode_ids = tuple(sorted(episode_id_sets[0]))
+    if not episode_ids:
+        raise ValueError("Evaluation reports have no common episodes")
+    available: set[str] = set(reports[0]["summary"]["per_episode"][episode_ids[0]])
+    for report in reports[1:]:
+        available &= set(report["summary"]["per_episode"][episode_ids[0]])
+    return episode_ids, {
+        metric: np.asarray(
+            [
+                statistics.mean(
+                    float(report["summary"]["per_episode"][episode_id][metric]) for report in reports
+                )
+                for episode_id in episode_ids
+            ],
+            dtype=np.float64,
+        )
+        for metric in sorted(available)
+    }
+
+
+def collect_v2_metrics(
+    eval_roots: list[Path],
+    out_dir: Path,
+    *,
+    expected_num_episodes: int,
+    expected_samples_per_episode: int,
+) -> None:
+    """Collect the v2-metric (L1 / per-dim MSE / accuracy@tau) evaluation sweep.
+
+    The strict matrix pass above keys runs off train/ directories and enforces
+    report-step == budget-step. The v2 sweep lives in shadow eval roots whose
+    runs violate both assumptions by design: early-stopped seed-23k companions
+    (directory says 100000steps, real checkpoint 080000/050000) and the
+    historical production curve (outside the naming convention). This pass
+    therefore drives from the eval directories, records the authoritative
+    evaluated step from each report filename, and skips unreadable report
+    files (artifact-disk husks, §8 incidents 11-12) with a loud warning
+    instead of aborting the sweep.
+    """
+    evaluation_rows = []
+    run_rows = []
+    reports_by_run: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    inference_seeds_by_run: dict[str, set[int]] = defaultdict(set)
+    runs_by_name: dict[str, dict[str, Any]] = {}
+    skipped: list[tuple[str, str]] = []
+    for root in eval_roots:
+        for run_dir in sorted(path for path in root.glob("*") if path.is_dir()):
+            try:
+                run = parse_v2_run_name(run_dir.name)
+            except ValueError:
+                continue
+            if run_dir.name in runs_by_name:
+                raise ValueError(f"Run directory appears in multiple v2 roots: {run_dir.name}")
+            runs_by_name[run_dir.name] = run
+            for report_path in sorted(run_dir.glob("seed*/*_open_loop_metrics.json")):
+                try:
+                    report = json.loads(report_path.read_text())
+                except (json.JSONDecodeError, OSError) as error:
+                    skipped.append((str(report_path), str(error)[:80]))
+                    continue
+                step_match = V2_REPORT_STEP_RE.search(report_path.name)
+                if step_match is None:
+                    raise ValueError(f"Cannot parse evaluated step from {report_path}")
+                row = {
+                    **run,
+                    "evaluated_step": int(step_match["step"]),
+                    "has_v2_metrics": all(
+                        metric in report["summary"]["episode_balanced"] for metric in V2_METRICS
+                    ),
+                    **flatten_evaluation(report_path, run),
+                }
+                evaluation_rows.append(row)
+                inference_seed = validate_evaluation_report(
+                    report_path,
+                    report,
+                    expected_num_episodes=expected_num_episodes,
+                    expected_samples_per_episode=expected_samples_per_episode,
+                )
+                if inference_seed in inference_seeds_by_run[run_dir.name]:
+                    raise ValueError(f"Duplicate inference seed {inference_seed} for {run_dir.name}")
+                inference_seeds_by_run[run_dir.name].add(inference_seed)
+                bounds = report.get("query_action_offset_bounds")
+                if bounds != {"min": -1, "max": 31}:
+                    raise ValueError(f"Unexpected common-horizon query bounds in {report_path}: {bounds}")
+                reports_by_run[run_dir.name].append(report)
+    for run_name, reports in sorted(reports_by_run.items()):
+        episode_ids, metrics = aggregate_available_episode_metrics(reports)
+        evaluated_steps = {row["evaluated_step"] for row in evaluation_rows if row["run_name"] == run_name}
+        if len(evaluated_steps) != 1:
+            raise ValueError(f"Multiple evaluated checkpoint steps within {run_name}: {evaluated_steps}")
+        row = {
+            **runs_by_name[run_name],
+            "evaluated_step": evaluated_steps.pop(),
+            "num_inference_seeds": len(reports),
+            "num_episodes": len(episode_ids),
+        }
+        for metric, values in metrics.items():
+            low, high = bootstrap_mean_interval(values, rng=np.random.default_rng(0))
+            seed_means = [float(report["summary"]["episode_balanced"][metric]) for report in reports]
+            row[metric] = float(values.mean())
+            row[f"{metric}_ci_low"] = low
+            row[f"{metric}_ci_high"] = high
+            row[f"{metric}_inference_seed_sd"] = float(np.std(seed_means))
+        run_rows.append(row)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    write_csv(out_dir / "v2_evaluations.csv", evaluation_rows)
+    write_csv(out_dir / "v2_run_summary.csv", run_rows)
+    if skipped:
+        print(f"WARNING: skipped {len(skipped)} unreadable report files (husks):")
+        for path, error in skipped:
+            print(f"  {path}: {error}")
+    print(
+        f"v2 pass collected {len(evaluation_rows)} evaluations across {len(run_rows)} runs "
+        f"({sum(1 for row in evaluation_rows if row['has_v2_metrics'])} with v2 metrics) "
+        f"under {out_dir}"
+    )
+
+
+
+
+
 def main() -> None:
     args = parse_args()
+    if args.v2_eval_roots:
+        eval_roots = [Path(part) for part in args.v2_eval_roots.split(",") if part.strip()]
+        if not eval_roots:
+            raise SystemExit("--v2_eval_roots provided but empty")
+        out_dir = args.v2_out_dir if args.v2_out_dir is not None else eval_roots[0].parent / "results"
+        collect_v2_metrics(
+            eval_roots,
+            out_dir,
+            expected_num_episodes=args.expected_num_episodes,
+            expected_samples_per_episode=args.expected_samples_per_episode,
+        )
+        return
     train_rows = []
     validation_rows = []
     evaluation_rows = []
