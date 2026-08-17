@@ -78,6 +78,30 @@ def rotvec_to_rot6d_state(state):  # (7,) -> (10,) for the rot6d variant input s
     return np.concatenate([xyz, M, grip]).astype(np.float32)
 
 
+def gt_quantile_scales(ground_truths):
+    # Mirror of eval_open_loop_dataset.gt_quantile_scales: per-dim (q99-q01)/2
+    # half-ranges of the pooled GT chunks -> the protocol-fixed "normalized
+    # action units" for accuracy@tau (q01 -> -1, q99 -> +1, pi0.5 convention).
+    pooled = torch.cat(list(ground_truths), dim=0).to(torch.float32)
+    q01 = torch.quantile(pooled, 0.01, dim=0)
+    q99 = torch.quantile(pooled, 0.99, dim=0)
+    return ((q99 - q01) / 2).clamp_min(1e-9)
+
+
+def accuracy_at_tau(predicted, ground_truth, scales, taus=(0.5, 0.1)):
+    # Mirror of eval_open_loop_dataset.accuracy_at_tau: pi0.5-style thresholded
+    # accuracy -- fraction of action dims (steps x dims) within tau of GT in
+    # normalized action units; inclusive <=; component views per the L1/MSE
+    # split; raw axis-angle components, no geodesic correction.
+    normalized_error = (predicted - ground_truth).abs().to(torch.float32) / scales.to(torch.float32)
+    metrics = {}
+    for group, columns in {"action": slice(None), "xyz": slice(0, 3), "rotvec": slice(3, 6)}.items():
+        for tau in taus:
+            key = f"{group}_acc_at_{str(tau).replace('.', 'p')}"
+            metrics[key] = float((normalized_error[:, columns] <= tau).to(torch.float32).mean())
+    return metrics
+
+
 def bootstrap_ci(episode_means, metric_names, num_resamples=10000, seed=0, confidence=0.95):
     vals = np.asarray([[r[n] for n in metric_names] for r in episode_means.values()], dtype=np.float64)
     rng = np.random.default_rng(seed)
@@ -140,8 +164,12 @@ def main():
                     "gripper_chunk_mean", "gripper_chunk_rmse", "gripper_chunk_mse", "gripper_end",
                     "xyz_l1_per_dim_m", "xyz_mse_per_dim_m2",
                     "rotvec_l1_per_dim_deg", "rotvec_mse_per_dim_deg2",
+                    "action_acc_at_0p5", "action_acc_at_0p1",
+                    "xyz_acc_at_0p5", "xyz_acc_at_0p1",
+                    "rotvec_acc_at_0p5", "rotvec_acc_at_0p1",
                     "rot_jerk_deg", "xyz_jerk_m", "gt_rot_jerk_deg", "gt_xyz_jerk_m")
     samples = []
+    scored_chunks = []
     infer_s = []
     for si, (ep, fi) in enumerate(query):
         didx = ep_data_index_from[ep] + fi
@@ -189,8 +217,14 @@ def main():
             "rotvec_l1_per_dim_deg": rv_l1, "rotvec_mse_per_dim_deg2": rv_mse_pd,
             "rot_jerk_deg": prj, "xyz_jerk_m": pxj, "gt_rot_jerk_deg": grj, "gt_xyz_jerk_m": gxj,
         })
+        scored_chunks.append((pred, gt))
         if (si + 1) % 50 == 0 or si + 1 == len(query):
             print(f"  {si+1}/{len(query)} queries done")
+
+    # accuracy@tau needs a global normalization (see gt_quantile_scales).
+    tau_scales = gt_quantile_scales([gt for _, gt in scored_chunks])
+    for s, (pred, gt) in zip(samples, scored_chunks, strict=True):
+        s.update(accuracy_at_tau(pred, gt, tau_scales))
 
     ep_samples = defaultdict(list)
     for s in samples:
@@ -203,6 +237,10 @@ def main():
         "is_rot6d": is_rot6d, "action_horizon": args.action_horizon,
         "num_episodes": len(ep_samples), "num_samples": len(samples),
         "inference_latency_seconds": {"mean": float(np.mean(infer_s)), "median": float(np.median(infer_s))},
+        "accuracy_at_tau_normalization": {
+            "definition": "per-dim error / ((q99-q01)/2 of pooled GT chunks); inclusive <= tau",
+            "per_dim_half_ranges": [float(scale) for scale in tau_scales],
+        },
         "summary": {"episode_balanced": eb, "episode_balanced_95ci": ci},
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

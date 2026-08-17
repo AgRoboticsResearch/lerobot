@@ -249,6 +249,50 @@ def per_component_l1_mse(predicted: torch.Tensor, ground_truth: torch.Tensor) ->
     }
 
 
+def gt_quantile_scales(ground_truths: list[torch.Tensor]) -> torch.Tensor:
+    """Per-dim (q99 - q01)/2 half-ranges of the pooled ground-truth chunks.
+
+    These define the protocol-fixed "normalized action units" for
+    ``accuracy_at_tau``: dividing a per-dim error by this scale maps q01 to -1
+    and q99 to +1, the same convention as π0.5's quantile normalization. The
+    scales come from this evaluation's own GT queries (a fixed, published set),
+    NOT from any model's training normalization, so accuracy@tau stays
+    comparable across models whose training normalizations differ (ACT MIN_MAX
+    vs π0.5/openpi quantile).
+    """
+    pooled = torch.cat(list(ground_truths), dim=0).to(torch.float32)
+    q01 = torch.quantile(pooled, 0.01, dim=0)
+    q99 = torch.quantile(pooled, 0.99, dim=0)
+    return ((q99 - q01) / 2).clamp_min(1e-9)
+
+
+def accuracy_at_tau(
+    predicted: torch.Tensor,
+    ground_truth: torch.Tensor,
+    scales: torch.Tensor,
+    taus: tuple[float, ...] = (0.5, 0.1),
+) -> dict[str, float]:
+    """π0.5-style thresholded accuracy: the fraction of action dimensions
+    (over steps x dims) whose error falls within tau of the ground truth in
+    normalized action units, reported at tau = 0.5 (motion-intent level) and
+    tau = 0.1 (movement-precision level).
+
+    ``scales`` is the per-dim half-range from ``gt_quantile_scales``; the
+    comparison is inclusive (error <= tau). Component views follow the
+    ``per_component_l1_mse`` split; gripper contributes only to the overall
+    ``action_`` accuracy. Raw axis-angle components, no geodesic wraparound
+    correction — the component-wise sense, as in the L1/MSE metrics.
+    """
+    normalized_error = (predicted - ground_truth).abs().to(torch.float32) / scales.to(torch.float32)
+    groups = {"action": slice(None), "xyz": slice(0, 3), "rotvec": slice(3, 6)}
+    metrics: dict[str, float] = {}
+    for group, columns in groups.items():
+        for tau in taus:
+            key = f"{group}_acc_at_{str(tau).replace('.', 'p')}"
+            metrics[key] = float((normalized_error[:, columns] <= tau).to(torch.float32).mean())
+    return metrics
+
+
 def bootstrap_episode_confidence_intervals(
     episode_means: dict[int, dict[str, float]],
     metric_names: tuple[str, ...],
@@ -300,6 +344,12 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
         "xyz_mse_per_dim_m2",
         "rotvec_l1_per_dim_deg",
         "rotvec_mse_per_dim_deg2",
+        "action_acc_at_0p5",
+        "action_acc_at_0p1",
+        "xyz_acc_at_0p5",
+        "xyz_acc_at_0p1",
+        "rotvec_acc_at_0p5",
+        "rotvec_acc_at_0p1",
         "rot_jerk_deg",
         "xyz_jerk_m",
         "gt_rot_jerk_deg",
@@ -450,6 +500,7 @@ def main() -> None:
         )
 
     samples: list[dict[str, float]] = []
+    scored_chunks: list[tuple[torch.Tensor, torch.Tensor]] = []
     inference_seconds: list[float] = []
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -530,8 +581,15 @@ def main() -> None:
                 "gt_xyz_jerk_m": gt_jerk["xyz_jerk_m"],
             }
         )
+        scored_chunks.append((predicted, ground_truth))
         if (sample_index + 1) % 50 == 0 or sample_index + 1 == len(query_indices):
             logger.info("Completed %d/%d query frames", sample_index + 1, len(query_indices))
+
+    # accuracy@tau needs a global normalization: per-dim (q99-q01)/2 half-ranges
+    # pooled over this evaluation's GT chunks (protocol-fixed, model-independent).
+    tau_scales = gt_quantile_scales([ground_truth for _, ground_truth in scored_chunks])
+    for sample, (predicted, ground_truth) in zip(samples, scored_chunks, strict=True):
+        sample.update(accuracy_at_tau(predicted, ground_truth, tau_scales))
 
     report = {
         "policy_type": policy_config.type,
@@ -557,6 +615,10 @@ def main() -> None:
             ),
             "mask_padded_action_dims": getattr(policy_config, "mask_padded_action_dims_at_inference", None),
             "legacy_full_action_noise": args.legacy_full_action_noise,
+        },
+        "accuracy_at_tau_normalization": {
+            "definition": "per-dim error / ((q99-q01)/2 of pooled GT chunks); inclusive <= tau",
+            "per_dim_half_ranges": [float(scale) for scale in tau_scales],
         },
         "summary": summarize(samples),
         "samples": samples,

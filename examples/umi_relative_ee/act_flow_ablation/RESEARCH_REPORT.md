@@ -88,6 +88,14 @@ distinguish:
   uses the same time direction: training interpolates
   `x_t = t * noise + (1-t) * action`, predicts `noise-action`, and inference
   integrates from `t=1` to `t=0` with negative steps.
+- [π0.5](https://arxiv.org/abs/2504.16054) reports scaling-law results on a
+  metric quartet designed to be robust to metric choice: MSE and L1 averaged
+  over action dimensions and the chunk horizon, plus thresholded accuracies
+  accuracy@τ — the fraction of action dimensions within τ of ground truth in
+  normalized action units — at τ=0.5 (motion-intent level, suited to
+  human-to-robot transfer) and τ=0.1 (movement-precision level, informative
+  in-domain). The 2026-08-16/17 evaluator extensions mirror exactly this
+  quartet on decoded physical poses.
 
 These papers establish plausibility and implementation conventions; none can
 answer the dataset-specific questions without controlled local experiments.
@@ -334,8 +342,20 @@ objectives optimize, implemented as `per_component_l1_mse` in
 `eval_open_loop_dataset.py` and mirrored in `eval_openpi_open_loop.py` (whose
 summary registry previously computed but omitted the chunk-MSE keys — fixed in
 the same change; both evaluators now emit the identical metric set, and the
-openpi one takes `--action_horizon` for the h30 arm). Evaluations produced
-before 2026-08-16 predate the L1/per-dim-MSE keys (their JSONs already contain
+openpi one takes `--action_horizon` for the h30 arm). A π0.5-style thresholded
+**accuracy@τ** (added 2026-08-17; τ = 0.5 "motion-intent level" and τ = 0.1
+"movement-precision level" — see the π0.5 reference in §2) completes the set:
+the fraction of action
+dimensions (over steps × dims, inclusive ≤) whose error falls within τ in
+normalized action units. The normalization is protocol-fixed, not per-model:
+per-dim errors are divided by (q99 − q01)/2 half-ranges pooled over this
+evaluation's own GT chunks (q01 → −1, q99 → +1, the π0.5 quantile convention),
+so the metric stays comparable across the MIN_MAX-trained ACT matrix and the
+quantile-trained flow models; the scales are recorded in every report JSON.
+Overall (`action_`) accuracy spans all seven decoded dims; `xyz_` and
+`rotvec_` views follow the L1/MSE component split. Evaluations produced
+before 2026-08-16 predate the L1/per-dim-MSE keys and before 2026-08-17 the
+accuracy@τ keys (their JSONs already contain
 the norm-based chunk MSE/RMSE); the kiwi/openpi checkpoints retain weights and
 can be re-scored on demand, whereas the ACT seed-1000 matrix proved
 unrecoverable after the disk failures (§9.2.6), so its tables keep the
@@ -1261,21 +1281,22 @@ Six seed-2000/3000 companion retrains — started on the healthy internal root
 before the multi-seed phase was dropped — did retain real checkpoints: ACT-L1
 seeds 2000/3000 at the full 100k budget, ACT R50-VAE seeds 2000/3000 stopped at
 80k, and matched ACT-flow seeds 2000/3000 stopped at 50k. All six were evaluated
-on 2026-08-17 with the updated evaluator (per-component L1 / per-dim MSE,
-commit 51ff19f5) under the identical fixed 100-episode / 500-query protocol;
+on 2026-08-17 with the updated evaluator (per-component L1 / per-dim MSE /
+accuracy@τ, commits 51ff19f5 + this change) under the identical fixed
+100-episode / 500-query protocol;
 deterministic ACT at inference seed 1000, ACT-flow at inference seeds
 1000/2000/3000 (inference-seed spread ≤0.7 mm endpoint, similar to π0.5's
 ±0.17 mm). Outputs live under `reeval_v2metrics/eval_common_h32/` (a shadow
 artifact root that symlinks `train/`; the legacy tree was left untouched).
 
-| Training seed | Budget | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Rotvec MSE/dim (°²) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| ACT-L1 s2000 | 100k | 24.33 | 4.833 | 7.10 | 144.5 | 1.387 | 4.62 |
-| ACT-L1 s3000 | 100k | 23.73 | 4.868 | 7.11 | 141.1 | 1.424 | 4.84 |
-| ACT R50-VAE s2000 | 80k | 22.21 | 4.518 | 6.61 | 121.9 | 1.330 | 4.10 |
-| ACT R50-VAE s3000 | 80k | 22.10 | 4.230 | 6.62 | 121.8 | 1.252 | 3.70 |
-| ACT-flow s2000 | 50k | 31.42 | 5.70 | 9.96 | 236.6 | 1.74 | 6.49 |
-| ACT-flow s3000 | 50k | 31.97 | 5.45 | 10.21 | 273.6 | 1.62 | 5.81 |
+| Training seed | Budget | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Rotvec MSE/dim (°²) | acc@0.5 | acc@0.1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT-L1 s2000 | 100k | 24.33 | 4.833 | 7.10 | 144.5 | 1.387 | 4.62 | 0.975 | 0.719 |
+| ACT-L1 s3000 | 100k | 23.73 | 4.868 | 7.11 | 141.1 | 1.424 | 4.84 | 0.972 | 0.719 |
+| ACT R50-VAE s2000 | 80k | 22.21 | 4.518 | 6.61 | 121.9 | 1.330 | 4.10 | 0.976 | 0.736 |
+| ACT R50-VAE s3000 | 80k | 22.10 | 4.230 | 6.62 | 121.8 | 1.252 | 3.70 | 0.978 | 0.744 |
+| ACT-flow s2000 | 50k | 31.42 | 5.70 | 9.96 | 236.6 | 1.74 | 6.49 | 0.963 | 0.634 |
+| ACT-flow s3000 | 50k | 31.97 | 5.45 | 10.21 | 273.6 | 1.62 | 5.81 | 0.961 | 0.654 |
 
 Read-outs, restricted to matched-step comparisons (budgets differ across the
 set, so these rows are not comparable with the seed-1000 100k tables except
@@ -1303,10 +1324,17 @@ where noted):
    identically on both translation and rotation. The MSE:L1 ratio separates the
    families (flow 24–27 vs L1 ≈ 20 vs R50 ≈ 18.4 µm/mm), i.e. flow's errors
    have a heavier tail, consistent with its measured roughness (§9.2).
+6. **accuracy@τ sharpens the same picture**: at τ=0.5 (motion intent) all
+   six runs cluster within 1.7 pp (0.961–0.978) — every variant captures the
+   coarse motion — while at τ=0.1 (movement precision) the families separate by
+   up to 11 pp (flow 0.634–0.654 vs ACT-L1 0.719 vs R50-VAE 0.736–0.744).
+   Precision, not motion intent, is where the objectives differ — mirroring
+   how π0.5 uses the two thresholds for transfer vs in-domain scaling trends.
 
 Driver: `reeval_seed23k_v2metrics.sh` (idempotent, husk-guarded, VRAM-gated at
 ≥4 GiB free so it ran concurrently with the in-flight h30 chain); per-eval logs
-under `reeval_v2metrics/logs/`.
+under `reeval_v2metrics/logs/`. Pre-accuracy@τ copies of the same ten reports
+are preserved under `reeval_v2metrics/eval_common_h32_pre_tau/`.
 
 ### 9.3 Answers and promotion decision after stage one
 

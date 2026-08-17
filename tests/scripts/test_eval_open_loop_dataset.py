@@ -4,8 +4,10 @@ import pytest
 import torch
 
 from examples.umi_relative_ee.eval_open_loop_dataset import (
+    accuracy_at_tau,
     bootstrap_episode_confidence_intervals,
     choose_query_indices,
+    gt_quantile_scales,
     inference_step_field,
     per_component_l1_mse,
     rotation_error_deg,
@@ -119,6 +121,42 @@ def test_per_component_l1_mse_definitions_and_norm_relation():
     assert metrics["xyz_mse_per_dim_m2"] == pytest.approx(xyz_norm_mse / 3)
 
 
+def test_accuracy_at_tau_thresholded_fractions():
+    predicted = torch.zeros(2, 7)
+    ground_truth = torch.zeros(2, 7)
+    predicted[0, :3] = torch.tensor([0.4, -0.6, 0.05])
+    predicted[1, 3:6] = torch.tensor([0.09, 0.5, -1.0])
+    predicted[0, 6] = 0.5
+
+    # unit scales: normalized error equals the raw per-dim error
+    metrics = accuracy_at_tau(predicted, ground_truth, torch.ones(7))
+
+    # row 0 within 0.5: xyz [yes, no, yes], rotvec [yes]*3, gripper yes -> 6/7
+    # row 1 within 0.5: xyz [yes]*3, rotvec [yes(0.09), yes(0.5 boundary), no], gripper yes -> 6/7
+    assert metrics["action_acc_at_0p5"] == pytest.approx(12 / 14)
+    # within 0.1: row 0 -> [no, no, yes, yes, yes, yes, no] = 4/7
+    #             row 1 -> [yes, yes, yes, yes, no, no, yes] = 5/7
+    assert metrics["action_acc_at_0p1"] == pytest.approx(9 / 14)
+    assert metrics["xyz_acc_at_0p5"] == pytest.approx(5 / 6)
+    assert metrics["rotvec_acc_at_0p1"] == pytest.approx(4 / 6)
+
+    # doubling the scales halves every normalized error: every dim is within
+    # 0.5 (max error 1.0/2), but 0.4, 0.6, 0.5 and 1.0 still exceed 0.1 halved
+    metrics_wide = accuracy_at_tau(predicted, ground_truth, torch.full((7,), 2.0))
+    assert metrics_wide["action_acc_at_0p5"] == pytest.approx(14 / 14)
+    assert metrics_wide["action_acc_at_0p1"] == pytest.approx(9 / 14)
+
+
+def test_gt_quantile_scales_pools_chunks_and_halves_range():
+    chunks = [torch.linspace(0.0, 9.0, 10).unsqueeze(1).repeat(1, 7) for _ in range(3)]
+
+    scales = gt_quantile_scales(chunks)
+
+    # pooling 3 identical 0..9 chunks repeats every value: linear-interpolation
+    # quantiles give q01=0.0, q99=9.0 -> half-range 4.5 per dim
+    assert torch.allclose(scales, torch.full((7,), 4.5))
+
+
 def test_summarize_inference_latency_excludes_cold_call():
     summary = summarize_inference_latency([9.0, 1.0, 2.0, 3.0])
 
@@ -172,6 +210,12 @@ def test_summarize_reports_episode_balanced_primary_metric():
         "xyz_mse_per_dim_m2",
         "rotvec_l1_per_dim_deg",
         "rotvec_mse_per_dim_deg2",
+        "action_acc_at_0p5",
+        "action_acc_at_0p1",
+        "xyz_acc_at_0p5",
+        "xyz_acc_at_0p1",
+        "rotvec_acc_at_0p5",
+        "rotvec_acc_at_0p1",
         "rot_jerk_deg",
         "xyz_jerk_m",
         "gt_rot_jerk_deg",
