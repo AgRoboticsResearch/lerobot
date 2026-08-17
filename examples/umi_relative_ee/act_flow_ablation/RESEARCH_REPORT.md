@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.4) — variant rank order replicates across training seeds. Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1335,6 +1335,73 @@ Driver: `reeval_seed23k_v2metrics.sh` (idempotent, husk-guarded, VRAM-gated at
 ≥4 GiB free so it ran concurrently with the in-flight h30 chain); per-eval logs
 under `reeval_v2metrics/logs/`. Pre-accuracy@τ copies of the same ten reports
 are preserved under `reeval_v2metrics/eval_common_h32_pre_tau/`.
+
+### 9.2.7 Historical production ACT: 30-point budget curve on the v2 metrics
+
+A follow-up question — why accuracy@τ covered only three ACT variants — led to
+a fresh weights-level audit on 2026-08-17 that re-confirmed the §9.2.6 husk
+inventory (27 of 33 `train/` directories empty; exactly six real runs, all
+already scored) but found that the **original production run**
+`outputs/train/act_umi_identity_rot6d_1459` — the 3M-step R18-VAE model whose
+audit motivated this investigation (§3) — is fully intact on the repository
+disk, outside the failed artifact mount: all thirty 100k-spaced checkpoints
+retain real weights. Every checkpoint from 100k to 3M was therefore evaluated
+with the full v2 metric set under the identical fixed 100-episode / 500-query
+protocol (driver `eval_historical_act_curve.sh`, launched as a VRAM-gated
+backfill alongside the in-flight h30 chain; outputs
+`reeval_v2metrics/eval_common_h32/act_umi_identity_rot6d_1459_<step>steps/seed1000/`).
+This is the only ACT-family budget curve on the new metrics and the only
+surviving model trained past 100k; at 3M steps × batch 8 it has seen 24M
+samples (≈171 epochs of the 140,522-frame train set).
+
+| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | acc@0.5 | acc@0.1 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k | 25.57 [23.64, 27.56] | 5.019 | 8.47 | 0.969 | 0.681 [0.667, 0.695] |
+| 200k | 24.35 [22.60, 26.19] | 4.977 | 8.06 | 0.972 | 0.693 [0.679, 0.707] |
+| 400k | 23.89 [22.19, 25.64] | 4.854 | 7.95 | 0.972 | 0.697 [0.682, 0.712] |
+| 600k | 23.87 [22.07, 25.73] | 4.810 | 7.93 | 0.973 | 0.699 [0.685, 0.713] |
+| 800k | 23.83 [21.99, 25.70] | 4.761 | 7.82 | 0.973 | 0.705 [0.691, 0.720] |
+| 1M | 23.31 [21.53, 25.13] | 4.711 | 7.72 | 0.973 | 0.707 [0.693, 0.722] |
+| 1.5M | 23.44 [21.69, 25.24] | 4.579 | 7.68 | 0.974 | 0.713 [0.698, 0.727] |
+| 2M | 23.42 [21.62, 25.27] | 4.498 | 7.66 | 0.973 | 0.716 [0.701, 0.731] |
+| 2.5M | 23.40 [21.52, 25.30] | 4.511 | 7.71 | 0.974 | 0.715 [0.700, 0.729] |
+| 3M | 23.31 [21.45, 25.20] | 4.498 | 7.66 | 0.974 | 0.715 [0.700, 0.731] |
+
+(The table shows ten milestones; the figure below plots all thirty points.
+Rotvec L1/dim declines 1.469 → 1.320° over the same range; XYZ MSE/dim
+189 → 160 µm².)
+
+![Historical ACT 30-point budget curve](figures/historical_act_budget_curve.png)
+
+Read-outs:
+
+1. **acc@0.5 is budget-blind; acc@0.1 is the budget-sensitive metric.** Across
+   a 30× step range acc@0.5 moves only 0.969 → 0.975 — less than its own
+   interval half-width — while acc@0.1 rises 0.681 → 0.718 with the 100k and
+   ≥1.4M intervals fully disjoint. This is a local, within-recipe confirmation
+   of exactly the π0.5 doctrine (§2): τ=0.5 saturates at the motion-intent
+   level, τ=0.1 resolves in-domain precision trends.
+2. **Precision gains are front-loaded and bounded.** Roughly half of the total
+   +3.4pp acc@0.1 gain arrives by 400k; from 1M on the curve is flat within
+   its intervals (0.707–0.718). XYZ endpoint error plateaus at 23.3–23.9 mm
+   from 400k — the 100k-vs-3M endpoint intervals even overlap slightly,
+   whereas acc@0.1 separates them cleanly, making accuracy@0.1 the more
+   sensitive early budget indicator in this family.
+3. **Late training trades smoothness for marginal precision.** Within-chunk
+   rotation jerk improves to a 0.7M minimum of 0.037° and then degrades ~45%
+   to 0.054° at 3M, replicating the §3 pre-existing audit (best ≈0.036° around
+   700k) and reinforcing its warning against training ACT far past the
+   endpoint plateau.
+4. **Protocol cross-validation.** The new fixed-protocol numbers agree with
+   the §3 audit within 0.3–0.6 mm (25.57 vs 25.1 mm at 100k; 23.2 vs 22.9 mm
+   at 2.3M), tying the v2-metric series to the historical record.
+5. **Capacity beats a 30× budget on precision.** At 100k the historical
+   R18-VAE scores acc@0.1 = 0.681, and even at 3M it never exceeds 0.718 —
+   below the R50-VAE seed-2000/3000 companions at only 80k (0.736–0.744) and
+   the ACT-L1 companions at 100k (0.719). A backbone/objective change at
+   ≤1× the common budget outperforms a 30× budget range of the original
+   recipe — the sharpest single line of evidence that the §9.1 capacity and
+   objective results dominate longer training on this task.
 
 ### 9.3 Answers and promotion decision after stage one
 
