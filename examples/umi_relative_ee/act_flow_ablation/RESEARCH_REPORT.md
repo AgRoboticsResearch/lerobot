@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); conclusions therefore rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.4) — variant rank order replicates across training seeds. Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. A horizon-30 openpi arm plus a JAX-vs-PyTorch matched-recipe stack A/B are in flight on the host (§9.2.5, sequential chain, first results ≈ 2026-08-17).
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -336,8 +336,10 @@ summary registry previously computed but omitted the chunk-MSE keys — fixed in
 the same change; both evaluators now emit the identical metric set, and the
 openpi one takes `--action_horizon` for the h30 arm). Evaluations produced
 before 2026-08-16 predate the L1/per-dim-MSE keys (their JSONs already contain
-the norm-based chunk MSE/RMSE) and can be re-scored from saved checkpoints on
-demand. ACT-flow and Diffusion Policy are additionally evaluated
+the norm-based chunk MSE/RMSE); the kiwi/openpi checkpoints retain weights and
+can be re-scored on demand, whereas the ACT seed-1000 matrix proved
+unrecoverable after the disk failures (§9.2.6), so its tables keep the
+norm-based metrics as the surviving record. ACT-flow and Diffusion Policy are additionally evaluated
 with inference seeds 1000, 2000, and 3000 to expose sampling variance. Training
 seeds are varied only after this screen selects configurations worth promoting.
 The collector keeps inference-seed averaging and training-seed variability as
@@ -1238,6 +1240,74 @@ JAX-vs-PyTorch at matched recipe; B-vs-the-kiwi-1M-port isolates the recipe
 (LR/batch/schedule/padding-mode) inside the PyTorch stack at matched horizon
 — the 1M continuation (§9.2.2) also gives B a same-stack long-budget reference.
 
+### 9.2.6 Partial-budget seed-2000/3000 salvage check (new L1/MSE metrics)
+
+The dropped multi-seed confirmation (§8, incident 12) was partially recovered on
+2026-08-17. A weights-level audit (checking for actual `.safetensors`, not
+directory names) of the canonical artifact root found that the **entire seed-1000
+matrix is unrecoverable** — every `train/<run>_seed1000_*/checkpoints/<step>/pretrained_model/`
+directory is an empty skeleton (the failed disk's directory tree was copied, the
+file contents were not), and the canonical `eval_common_h32/` metric JSONs for
+the ACT matrix suffered the same fate (only the six kiwi π0.5-port JSONs
+survive). The §9.2.4 statement that ACT R50-V1 "cannot be re-scored at horizon
+10" therefore stands, the seed-1000 tables above are the surviving record of
+those evaluations, and none of them can be extended with the L1/per-dim-MSE
+metrics. (An initial name-level listing had suggested seed-1000 weights were
+alive; the safetensors-level check overruled it. Loading a husk fails with
+`draccus.ParsingError: Expected a dict with a 'type' key for PreTrainedConfig,
+got {}`.)
+
+Six seed-2000/3000 companion retrains — started on the healthy internal root
+before the multi-seed phase was dropped — did retain real checkpoints: ACT-L1
+seeds 2000/3000 at the full 100k budget, ACT R50-VAE seeds 2000/3000 stopped at
+80k, and matched ACT-flow seeds 2000/3000 stopped at 50k. All six were evaluated
+on 2026-08-17 with the updated evaluator (per-component L1 / per-dim MSE,
+commit 51ff19f5) under the identical fixed 100-episode / 500-query protocol;
+deterministic ACT at inference seed 1000, ACT-flow at inference seeds
+1000/2000/3000 (inference-seed spread ≤0.7 mm endpoint, similar to π0.5's
+±0.17 mm). Outputs live under `reeval_v2metrics/eval_common_h32/` (a shadow
+artifact root that symlinks `train/`; the legacy tree was left untouched).
+
+| Training seed | Budget | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Rotvec MSE/dim (°²) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT-L1 s2000 | 100k | 24.33 | 4.833 | 7.10 | 144.5 | 1.387 | 4.62 |
+| ACT-L1 s3000 | 100k | 23.73 | 4.868 | 7.11 | 141.1 | 1.424 | 4.84 |
+| ACT R50-VAE s2000 | 80k | 22.21 | 4.518 | 6.61 | 121.9 | 1.330 | 4.10 |
+| ACT R50-VAE s3000 | 80k | 22.10 | 4.230 | 6.62 | 121.8 | 1.252 | 3.70 |
+| ACT-flow s2000 | 50k | 31.42 | 5.70 | 9.96 | 236.6 | 1.74 | 6.49 |
+| ACT-flow s3000 | 50k | 31.97 | 5.45 | 10.21 | 273.6 | 1.62 | 5.81 |
+
+Read-outs, restricted to matched-step comparisons (budgets differ across the
+set, so these rows are not comparable with the seed-1000 100k tables except
+where noted):
+
+1. **Variant rank order replicates across training seeds.** In both seeds,
+   R50-VAE < ACT-L1 < ACT-flow on every one of the seven columns. The Q1
+   capacity conclusion and the Q2 matched-flow deficit are not seed-1000
+   artifacts. ACT-L1 at 100k lands at 23.7–24.3 mm across three seeds
+   (seed-1000: 23.69 mm) — cross-seed SD ≈ 0.35 mm against between-variant
+   gaps of 8–9 mm.
+2. **The dropped multi-seed confirmation would not have changed any
+   conclusion.** Training-seed spread (≤0.6 mm L1, ≤0.6 mm flow, ≤0.11 mm R50
+   within pairs) is an order of magnitude smaller than every paired variant gap
+   the report rests on — retroactively validating the compute-efficiency
+   decision and the use of episode-bootstrap intervals.
+3. **R50-VAE at only 80k (22.1–22.2 mm) already matches the best seed-1000
+   100k ACT endpoints** (R50-V1 22.33 mm, ACT-L1 23.69 mm) — consistent with
+   the §9.1.2 capacity attribution, though this is a cross-budget observation.
+4. **ACT-flow at 50k sits at 31.4–32.0 mm in both seeds** versus ≈29.6 mm
+   derived for seed-1000 at 50k (from the §9.2.1 paired 12.26% endpoint
+   improvement to 25.995 mm at 100k): seed-1000 was the favorable draw, and the
+   flow-vs-L1 deficit is, if anything, larger in the recovered seeds.
+5. **The new metrics reorder nothing**: L1 and per-dim MSE rank the six runs
+   identically on both translation and rotation. The MSE:L1 ratio separates the
+   families (flow 24–27 vs L1 ≈ 20 vs R50 ≈ 18.4 µm/mm), i.e. flow's errors
+   have a heavier tail, consistent with its measured roughness (§9.2).
+
+Driver: `reeval_seed23k_v2metrics.sh` (idempotent, husk-guarded, VRAM-gated at
+≥4 GiB free so it ran concurrently with the in-flight h30 chain); per-eval logs
+under `reeval_v2metrics/logs/`.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
@@ -1278,7 +1348,10 @@ strengthened by the independently-trained π0.5 650K/700K flow-VLM reference
 (§9.2.2), which is stable to ±0.17 mm endpoint XYZ across three inference seeds.
 A future seed-2000/3000 iteration would tighten the intervals but is unlikely to
 reverse the rank order given the size of the seed-1000 gaps and the consistency
-of the π0.5 reference.
+of the π0.5 reference — a prediction the §9.2.6 partial-budget salvage check
+subsequently confirmed directly: two recovered seeds each for ACT-L1, R50-VAE,
+and matched flow replicated the rank order on every metric, with cross-seed
+spreads an order of magnitude smaller than the variant gaps.
 
 **Final recommendation (seed-1000 basis).** Endpoint-pose accuracy at matched
 100k budgets ranks: ACT-L1 ≈ ACT R50-V1 (best of the ACT/diffusion family,
