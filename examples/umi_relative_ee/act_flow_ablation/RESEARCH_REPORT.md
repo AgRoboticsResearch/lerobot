@@ -1671,13 +1671,18 @@ families — superseded by their 100k+ checkpoints. Outputs live under
 plus a cross-schema compiler; drivers: `eval_unified_h10_sweep.sh` (host),
 `kiwi_eval_unified_h10.sh` (kiwi, K-phase).
 
-**Status: host rows complete (2026-08-18, all 52 runs incl. the R50-V1 1M
-final and both SmolVLA notations); only the kiwi π0.5-port rows
-(1M/700K/650K) remain pending.** The SmolVLA rows were front-run on
+**Status: 70 of 71 rows complete (2026-08-19); only the π0.5-port 1M final
+remains pending** (kiwi trainer ETA ≈ 2026-08-19 08:50; lands with K1). The SmolVLA rows were front-run on
 2026-08-18: the two kiwi-trained checkpoints were copied (weights only) to
 the host artifact tree and evaluated on the then-idle host GPU with
 identical flags (`eval_smolvla_unified_h10_host.sh`) rather than waiting
-for the kiwi trainer to free that machine. The host sweep evaluated the full inventory as a
+for the kiwi trainer to free that machine. The π0.5-port **budget curve**
+(all 50k-spaced intermediates 50k–900k, three inference seeds each) was
+front-run the same way on 2026-08-18/19 by `eval_pi05_curve_h10_host.sh`:
+weights-only copies from the still-training kiwi run (no GPU impact there),
+evaluated on the host under the canonical flags; the 650K/700K re-scores
+here supersede their §9.2.4 t+10 evals, which predate the canonical query
+window. The host sweep evaluated the full inventory as a
 VRAM-gated backfill alongside the R50 trainer (the final two rows — R50-V1
 900k/1M — landed when training exited at 16:16); every report passed the
 protocol assertions programmatically — canonical bounds `[-1,31]`, horizon 10,
@@ -1688,9 +1693,10 @@ ground-truth jerk (0.152° / 0.70 mm) in every row. Compilation:
 with the assertions above; LeRobot rows re-derived per-episode →
 inference-seed-averaged → bootstrapped, openpi rows taken from the
 evaluator's own episode-balanced summary) →
-`results/unified_h10_run_summary.csv`; figures via `plot_unified_h10.py`.
-Still pending: the kiwi π0.5-port rows (1M/700K/650K — K1/K2, after the
-trainer exits ≈2026-08-19). Complete results — every run of the sweep is tabulated below (no
+`results/unified_h10_run_summary.csv`; figures via `plot_unified_h10.py`
+(the budget and jitter-budget panels now carry the π0.5-port curve as a
+third line).
+Complete results — every run of the sweep is tabulated below (no
 figure-only results: the metrics figure shows a one-per-family subset of
 exactly these rows, and every point of the budget figure is one of these
 rows). Run names are the artifact-tree names under
@@ -1750,20 +1756,43 @@ per-dimension (µm² / deg²):
 | pi05_lora_sroi_rot6d_seed1000_0020000steps | 20000 | 10.66 [10.05, 11.28] | 1.80 [1.70, 1.89] | 2.95 | 20.5 | 0.518 | 0.58 | 0.993 | 0.919 [0.913, 0.925] | 0.157 |
 | pi05_lora_sroi_rotvec_seed1000_0020000steps | 20000 | 11.00 [10.31, 11.68] | 1.65 [1.56, 1.74] | 2.97 | 22.5 | 0.489 | 0.53 | 0.993 | 0.920 [0.914, 0.926] | 0.200 |
 | pi05_port_openpi_recipe_seed1000_020000steps | 20000 | 9.57 [9.07, 10.08] | 1.81 [1.73, 1.89] | 2.42 | 15.3 | 0.482 | 0.54 | 0.993 | 0.920 [0.914, 0.925] | 0.086 |
-| π0.5 port 1M / 700K / 650K (kiwi) | — | *pending K4* | | | | | | | | | |
+| pi05_port_seed1000_0050000steps | 50000 | 9.61 [9.10, 10.13] | 1.82 [1.75, 1.89] | 2.43 | 15.3 | 0.500 | 0.56 | 0.992 | 0.920 [0.914, 0.924] | 0.117 |
+| pi05_port_seed1000_0100000steps | 100000 | 9.12 [8.64, 9.61] | 1.73 [1.66, 1.81] | 2.30 | 13.8 | 0.465 | 0.50 | 0.994 | 0.926 [0.921, 0.931] | 0.183 |
+| pi05_port_seed1000_0150000steps | 150000 | 9.20 [8.68, 9.72] | 1.66 [1.58, 1.74] | 2.29 | 14.1 | 0.449 | 0.46 | 0.992 | 0.928 [0.923, 0.933] | 0.153 |
+| pi05_port_seed1000_0200000steps | 200000 | 8.89 [8.39, 9.41] | 1.64 [1.56, 1.72] | 2.23 | 13.3 | 0.434 | 0.46 | 0.992 | 0.929 [0.924, 0.934] | 0.084 |
+| pi05_port_seed1000_0250000steps | 250000 | 8.87 [8.38, 9.38] | 1.69 [1.60, 1.77] | 2.19 | 13.3 | 0.447 | 0.48 | 0.993 | 0.930 [0.925, 0.935] | 0.086 |
+| pi05_port_seed1000_0300000steps | 300000 | 8.95 [8.42, 9.48] | 1.61 [1.53, 1.70] | 2.21 | 13.7 | 0.430 | 0.45 | 0.992 | 0.930 [0.925, 0.935] | 0.139 |
+| pi05_port_seed1000_0350000steps | 350000 | 8.94 [8.40, 9.48] | 1.64 [1.56, 1.71] | 2.20 | 13.3 | 0.430 | 0.44 | 0.993 | 0.931 [0.926, 0.936] | 0.099 |
+| pi05_port_seed1000_0400000steps | 400000 | 8.82 [8.26, 9.38] | 1.63 [1.54, 1.72] | 2.19 | 13.0 | 0.434 | 0.45 | 0.992 | 0.931 [0.926, 0.936] | 0.082 |
+| pi05_port_seed1000_0450000steps | 450000 | 9.04 [8.50, 9.59] | 1.65 [1.56, 1.73] | 2.23 | 13.4 | 0.429 | 0.46 | 0.993 | 0.931 [0.926, 0.936] | 0.084 |
+| pi05_port_seed1000_0500000steps | 500000 | 8.90 [8.37, 9.44] | 1.66 [1.57, 1.75] | 2.19 | 13.3 | 0.437 | 0.47 | 0.992 | 0.931 [0.926, 0.936] | 0.089 |
+| pi05_port_seed1000_0550000steps | 550000 | 8.84 [8.27, 9.40] | 1.61 [1.52, 1.69] | 2.18 | 13.4 | 0.424 | 0.44 | 0.992 | 0.931 [0.926, 0.936] | 0.076 |
+| pi05_port_seed1000_0600000steps | 600000 | 8.94 [8.38, 9.52] | 1.64 [1.55, 1.73] | 2.20 | 13.7 | 0.434 | 0.46 | 0.992 | 0.930 [0.925, 0.935] | 0.090 |
+| pi05_port_seed1000_0650000steps | 650000 | 9.07 [8.48, 9.66] | 1.63 [1.55, 1.72] | 2.23 | 14.2 | 0.430 | 0.45 | 0.992 | 0.930 [0.924, 0.935] | 0.076 |
+| pi05_port_seed1000_0700000steps | 700000 | 9.03 [8.47, 9.59] | 1.63 [1.54, 1.72] | 2.22 | 13.9 | 0.432 | 0.46 | 0.992 | 0.930 [0.925, 0.935] | 0.073 |
+| pi05_port_seed1000_0750000steps | 750000 | 9.02 [8.42, 9.62] | 1.65 [1.56, 1.73] | 2.23 | 14.0 | 0.435 | 0.46 | 0.992 | 0.930 [0.924, 0.935] | 0.077 |
+| pi05_port_seed1000_0800000steps | 800000 | 9.00 [8.42, 9.59] | 1.64 [1.55, 1.73] | 2.22 | 14.1 | 0.433 | 0.46 | 0.992 | 0.930 [0.924, 0.935] | 0.078 |
+| pi05_port_seed1000_0850000steps | 850000 | 8.89 [8.31, 9.48] | 1.65 [1.56, 1.74] | 2.20 | 13.8 | 0.434 | 0.47 | 0.992 | 0.929 [0.924, 0.935] | 0.073 |
+| pi05_port_seed1000_0900000steps | 900000 | 9.00 [8.43, 9.57] | 1.65 [1.56, 1.75] | 2.22 | 14.0 | 0.437 | 0.47 | 0.991 | 0.930 [0.924, 0.935] | 0.085 |
+| π0.5 port 1M (kiwi) | — | *pending K4* | | | | | | | | | |
 | smolvla_rot6d_seed1000_100000steps | 100000 | 9.08 [8.62, 9.57] | 1.66 [1.59, 1.74] | 2.26 | 12.9 | 0.455 | 0.45 | 0.993 | 0.931 [0.927, 0.935] | 0.552 |
 | smolvla_axis_angle_seed1000_100000steps | 100000 | 9.18 [8.71, 9.66] | 1.68 [1.61, 1.76] | 2.28 | 13.1 | 0.459 | 0.45 | 0.993 | 0.931 [0.927, 0.936] | 0.492 |
 
 ![Unified horizon-10 metrics across all surviving models](figures/unified_h10_metrics.png)
 
-![Unified horizon-10 budget curves](figures/unified_h10_budget.png)
+![Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh
+R50-V1 points, and the 18-point π0.5-port curve as the third line: fast to
+a 8.82–9.07 mm plateau (~200k) then flat through 900k, in contrast to
+R50-V1's t+10 drift](figures/unified_h10_budget.png)
 
 ![Unified horizon-10 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.152° / 0.70 mm)](figures/unified_h10_jitter.png)
 
 ![Unified horizon-10 jitter vs training steps — the R18 curve degrades
 0.043° → 0.063° from 100k to 3M while R50-V1 improves to 0.027–0.036°;
-ACT-flow sits 5–25× above every other family](figures/unified_h10_jitter_budget.png)
+ACT-flow sits 5–25× above every other family; the π0.5-port curve holds
+0.073–0.09° (≈half of GT) from 200k onward — flat where the ACT curves
+move](figures/unified_h10_jitter_budget.png)
 
 Host-side read-outs (kiwi rows will extend, not re-rank, these):
 
@@ -1785,7 +1814,8 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    interval overlaps the R50-VAE companions' (0.929) — tied, not ahead. The historical R18
    production model sits visibly above the pack (12.0–13.1 mm, 0.88–0.90)
    even at 30× budget.
-3. **Near-horizon budget behavior differs by family.** The historical R18
+3. **Near-horizon budget behavior differs by family — and the π0.5 port
+   shows no overfitting at all.** The historical R18
    improves slowly and monotonically (13.10 → 11.99 mm, acc@0.1
    0.880 → 0.901 over 100k→3M); the fresh R50-V1 *degrades* from its 100k
    point (9.20 → 10.61 mm, 0.921 → 0.912 by 1M; the loss saturates after
@@ -1794,14 +1824,25 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    0.043 → 0.033). The h30 companion evaluation (§9.2.8 read-out 4) answers
    the flip: on the same checkpoints, budget *improves* t+30 endpoint
    (23.24 → 21.32 mm) while degrading t+10 — the budget optimum is
-   horizon-dependent.
+   horizon-dependent. The 18-point π0.5-port curve adds the third regime:
+   fast then **flat** — 9.61 mm @50k, 9.12 @100k, and a 8.82–9.07 mm
+   plateau from 200k through 900k with every interval overlapping its
+   neighbors; acc@0.1 rises 0.920 → 0.931 by 350k and then stops. The port
+   is fully converged on t+10 metrics by ~1/5 of its 1M schedule (matching
+   §9.2.5's Arm-B sample-efficiency result), shows none of the ACT families'
+   late-training drift, and the 2026-08-16 700K resume segment (650K→900K)
+   is continuous with the pre-resume curve — the continuation did not
+   perturb the operating point.
 4. **The matched-ACT-flow deficit is horizon-independent.** ACT-flow
    @50k is worst on every co-primary metric at t+10 too (15.0–15.6 mm,
    acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
    others), and its rot-jerk (0.74–0.76°) is 5–25× rougher than every other
    family. SmolVLA is the second-roughest (0.49–0.55° ≈ 3.3× GT) — the only
    surviving families above ground-truth jerk are SmolVLA, the openpi arms
-   (0.157–0.200°), and ACT-flow. The Q2 conclusion (ACT-transformer denoiser/conditioning recipe,
+   (0.157–0.200°), and ACT-flow. The π0.5-port curve shows the opposite
+   extreme: rot-jerk sits at 0.073–0.09° (≈half of GT) from 200k onward —
+   its smoothness is established early and budget-stable, like its accuracy.
+   The Q2 conclusion (ACT-transformer denoiser/conditioning recipe,
    not flow matching itself) survives the horizon change unaltered.
 5. **acc@0.5 is saturated for every surviving model** (0.991–0.994, spread
    below the interval half-widths): motion-intent precision is solved
@@ -2627,7 +2668,11 @@ R50-V1 curve, official openpi arms under the canonical query window) and
 kiwi after the 1M training exits) — the SmolVLA h10 rows were front-run on
 2026-08-18 by `eval_smolvla_unified_h10_host.sh` (checkpoints copied from
 kiwi, identical flags, host GPU), so K1's SmolVLA section is a redundant
-cross-machine check. Both are idempotent and write
+cross-machine check, and the 18-point π0.5-port budget curve (50k–900k,
+three seeds each) was front-run the same way on 2026-08-18/19 by
+`eval_pi05_curve_h10_host.sh` (weights-only copies from the still-training
+kiwi run; the 650K/700K re-scores supersede §9.2.4's pre-canonical-window
+t+10 evals). All three drivers are idempotent and write
 RUN_RE-compatible report trees under `reeval_v2metrics/eval_unified_h10/`.
 Because the tree mixes the two evaluators' report schemas, collection is done
 by the dedicated cross-schema compiler, which enforces the §9.2.9 protocol
@@ -2642,7 +2687,7 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 
 outputs `results/unified_h10_run_summary.csv` (per-run means + 95% CIs, all
 co-primary metrics) and `figures/unified_h10_{metrics,budget,jitter,jitter_budget}.png`; rerun both
-after the R-phase sweep rerun (R50-V1 900k/1M rows) and after K4 (kiwi rows).
+after the SmolVLA 1M eval chain (§9.2.10) and after K4 (kiwi π0.5-port 1M row).
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories
