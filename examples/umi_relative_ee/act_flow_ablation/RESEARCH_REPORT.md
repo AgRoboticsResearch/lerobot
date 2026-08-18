@@ -1072,7 +1072,7 @@ whether the conclusion transfers to a flow-VLM; see §9.2.4. Raw
 SmolVLA metrics under
 `outputs/research_report/smolvla_notation_eval_20260814/`.)
 
-### 9.2.4 Independent replication on official openpi π0.5 (rot6d vs rotvec) — awaiting results
+### 9.2.4 Independent replication on official openpi π0.5 (rot6d vs rotvec) — complete
 
 The SmolVLA tie above leaves open whether the conclusion transfers to a larger
 flow-VLM trained with the **official openpi stack** (JAX/Flax, Physical
