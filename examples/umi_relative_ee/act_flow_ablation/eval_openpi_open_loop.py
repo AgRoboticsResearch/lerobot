@@ -124,6 +124,12 @@ def main():
                         "(mirror of eval_open_loop_dataset.py; e.g. score an h30 model at t+10)")
     p.add_argument("--max_queries", type=int, default=None,
                    help="cap total queries (smoke tests); None = all episodes")
+    p.add_argument("--query_min_action_offset", type=int, default=None,
+                   help="explicit query-frame window (mirror of eval_open_loop_dataset.py): "
+                        "frames [max(0,-min), length-1-max], endpoint-inclusive linspace. "
+                        "Pass -1/31 to land on the canonical fixed 500-query set.")
+    p.add_argument("--query_max_action_offset", type=int, default=None,
+                   help="see --query_min_action_offset")
     p.add_argument("--output", required=True)
     p.add_argument("--seed", type=int, default=1000)
     args = p.parse_args()
@@ -143,13 +149,24 @@ def main():
     query = []
     for ep in range(meta.total_episodes):
         length = meta.episodes[ep]["length"]
-        lo, hi = 0, max(0, length - action_horizon - 1)
-        if hi <= lo:
-            continue
-        for j in range(args.samples_per_episode):
-            fi = int(round(lo + (hi - lo) * (j + 0.5) / args.samples_per_episode))
-            # map (ep, fi) -> global dataset index via episode_data_index
-            query.append((ep, fi))
+        if args.query_max_action_offset is None:
+            lo, hi = 0, max(0, length - action_horizon - 1)
+            if hi <= lo:
+                continue
+            for j in range(args.samples_per_episode):
+                fi = int(round(lo + (hi - lo) * (j + 0.5) / args.samples_per_episode))
+                # map (ep, fi) -> global dataset index via episode_data_index
+                query.append((ep, fi))
+        else:
+            # canonical LeRobot-evaluator window (eval_open_loop_dataset.
+            # choose_query_indices): identical frames to the fixed 500-query set
+            lo = max(0, -args.query_min_action_offset)
+            hi = length - 1 - args.query_max_action_offset
+            if hi < lo:
+                continue
+            count = min(args.samples_per_episode, hi - lo + 1)
+            for fi in np.unique(np.linspace(lo, hi, num=count, dtype=np.int64)):
+                query.append((ep, int(fi)))
     if args.max_queries is not None:
         query = query[: args.max_queries]
     ep_data_index_from = [0]
@@ -241,6 +258,9 @@ def main():
         "policy_type": args.config_name, "checkpoint": args.checkpoint,
         "is_rot6d": is_rot6d, "action_horizon": args.action_horizon,
         "eval_horizon": args.eval_horizon,
+        "query_action_offset_bounds": {"min": args.query_min_action_offset,
+                                       "max": args.query_max_action_offset},
+        "query_frames": [[int(ep), int(fi)] for ep, fi in query],
         "num_episodes": len(ep_samples), "num_samples": len(samples),
         "inference_latency_seconds": {"mean": float(np.mean(infer_s)), "median": float(np.median(infer_s))},
         "accuracy_at_tau_normalization": {

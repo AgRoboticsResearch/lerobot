@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1513,6 +1513,101 @@ point against the stranded seed-1000 R50-V1 100k evaluation (22.33 mm / 4.58°,
 same late-training smoothness degradation that penalizes the R18 curve from
 700k.
 
+### 9.2.9 Unified horizon-10 re-evaluation of every surviving model
+
+The metric set grew during the investigation — per-component L1 / per-dim MSE
+were added on 2026-08-16 and accuracy@τ on 2026-08-17 — so different tables
+carry different columns, several rows predate the additions, and a few re-scores
+ran with policy-derived query windows (`[-1,29]`) or the openpi evaluator's own
+window instead of the canonical explicit bounds. On top of that, §9.2.4/§9.2.5
+established that cross-horizon endpoint numbers are invalid (a 2.2× artifact).
+This section therefore re-scores **every model with surviving weights under one
+protocol and the full metric set**, with **endpoint pose, L1/MSE, and
+accuracy@0.5/0.1 treated as co-primary metrics**. Scoring horizon is fixed at
+**t+10** — the deepest horizon every surviving model supports (the official
+openpi h10 arms predict 10 steps) — so no model is excluded on horizon grounds
+and no cross-horizon comparison ever arises. No model is retrained.
+
+**Protocol (fixed for every row).** The canonical 500-query set: 100
+validation episodes × 5 evenly spaced query frames per episode, selected by
+endpoint-inclusive linspace over the frames where the action-offset bounds
+`[-1, 31]` fit (verified to reproduce the recorded frame set of every prior
+canonical evaluation exactly). Prediction and ground truth are both truncated
+to the first 10 steps of the chunk before scoring, so *endpoint* means t+10
+for every model — h10-native models (openpi arms) score their native last
+step, h30-trained models score their first-10-step truncation, all on
+identical frames. Deterministic models (ACT family) use inference seed 1000;
+stochastic samplers (ACT-flow, π0.5 port, SmolVLA) use inference seeds
+1000/2000/3000 averaged within each episode before episodes are averaged;
+official openpi serving is inference-seed-invariant (spread 0.002 mm) and runs
+once. Open-loop: each query is scored independently from the ground-truth
+observation; predictions are decoded to absolute 7D poses through each
+checkpoint's saved postprocessor before any metric is computed. Intervals are
+95% nonparametric episode bootstrap (10,000 resamples, seed 0). The openpi
+evaluator was extended with the canonical query-window flag
+(`--query_min/max_action_offset`) so its frames are identical to the LeRobot
+evaluator's; both evaluators now record the bounds and `eval_horizon` in every
+JSON.
+
+**Metric definitions** (all computed on the truncated H=10 chunks of absolute
+decoded poses; `p` = xyz, `R` = orientation, `g` = gripper; `ĥ_t` = prediction
+at chunk step t):
+
+- **XYZ endpoint error (mm)** — `‖p̂_{t+10} − p_{t+10}‖₂`, the Euclidean
+  distance between predicted and ground-truth end-effector position at the
+  last scored step. The deployment-relevant "how far off is the pose I am
+  heading to" number.
+- **Rotation endpoint error (deg)** — geodesic angle
+  `arccos((tr(R̂ᵀ_{t+10} R_{t+10}) − 1)/2)` of the relative rotation at the
+  last scored step.
+- **Chunk-mean XYZ / rotation (mm / deg)** — mean over the 10 scored steps of
+  the per-step position norm / per-step geodesic rotation angle. Average
+  tracking quality through the executed window, not just its end.
+- **Per-component L1 per dim (mm / deg)** — mean absolute error per
+  dimension, averaged over steps × dims: xyz over {x,y,z}; rotation over the
+  **raw axis-angle components** (no geodesic correction — this is the
+  action-space sense the training objectives regress). Directly comparable to
+  an L1 training loss in physical units.
+- **Per-dim MSE (µm² / deg²)** — mean squared error per dimension over steps
+  × dims, same component split. Weight errors quadratically, exposing
+  heavy-tailed behavior that L1 hides (§9.2.6 read-out 5).
+- **accuracy@τ (τ = 0.5, 0.1)** — π0.5-style thresholded accuracy: the
+  fraction of (step, dim) entries whose absolute per-dim error is ≤ τ in
+  *normalized action units*, where each dim is normalized by the
+  protocol-fixed half-range `s_d = (q99 − q01)/2` pooled over **this
+  evaluation's own GT chunks** (q01 → −1, q99 → +1). τ=0.5 is the
+  motion-intent level, τ=0.1 the movement-precision level (§2). Because the
+  query set, horizon, and GT are identical for every row of this section, the
+  pooled scales — and therefore acc@τ — are strictly comparable across all
+  models regardless of their training normalization (MIN_MAX vs quantile).
+  Views: `action` (all 7 dims), `xyz` (dims 0–2), `rotvec` (dims 3–5).
+- **Within-chunk rotational jerk (deg)** — mean geodesic angle of the second
+  difference of orientation across consecutive step pairs (curvature of the
+  predicted rotation); **XYZ jerk (mm)** — mean norm of the second difference
+  of positions. Ground-truth jerk is reported alongside as the reference.
+- **Gripper endpoint** — `|ĝ_{t+10} − g_{t+10}|`.
+- Latency / peak CUDA memory remain recorded as secondary cost columns.
+
+**Inclusion inventory.** Every surviving checkpoint family is included:
+historical production ACT (30 checkpoints, 100k–3M), the six seed-23k
+companions (ACT-L1 @100k, R50-VAE @80k, ACT-flow @50k ×2 seeds each), the
+fresh ACT R50-V1 1M curve (§9.2.8, 100k-spaced), the π0.5 port (650K/700K/1M),
+Arm B (port h30-trained under the openpi recipe @20k, adopted from its
+conforming t+10 JSONs), SmolVLA both rotation notations @100k, and the three
+official openpi arms (rot6d/rotvec h10, rot6d h30 scored at t+10). Excluded,
+and why: the entire seed-1000 ACT/flow/DP matrix including both
+`umi_official` ports — weights stranded by the artifact-disk failures (§8
+incident 12; §9.2.6 safetensors audit); the 30k screen variants of surviving
+families — superseded by their 100k+ checkpoints. Outputs live under
+`reeval_v2metrics/eval_unified_h10/` (host) and are collected by the v2 pass
+plus a cross-schema compiler; drivers: `eval_unified_h10_sweep.sh` (host),
+`kiwi_eval_unified_h10.sh` (kiwi, K-phase).
+
+**Status: in flight (2026-08-18).** Host rows are evaluating as a VRAM-gated
+backfill alongside the R50 trainer; kiwi rows land with K1–K3. The results
+table and figures will be inserted here when the sweep completes, with
+read-outs restricted to same-protocol comparisons.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
@@ -2317,6 +2412,14 @@ uv run python examples/umi_relative_ee/act_flow_ablation/collect_results.py \
 MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
   examples/umi_relative_ee/act_flow_ablation/plot_v2metrics.py
 ```
+
+The unified horizon-10 sweep (§9.2.9) has its own drivers:
+`eval_unified_h10_sweep.sh` (host: historical ACT curve, seed-23k companions,
+R50-V1 curve, official openpi arms under the canonical query window) and
+`kiwi_eval_unified_h10.sh` (π0.5 port 650K/700K/1M, SmolVLA notations; run on
+kiwi after the 1M training exits). Both are idempotent and write
+RUN_RE-compatible report trees under `reeval_v2metrics/eval_unified_h10/`
+collectable by the same v2 pass.
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories

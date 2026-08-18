@@ -602,6 +602,7 @@ def main() -> None:
             "min": query_min_action_offset,
             "max": query_max_action_offset,
         },
+        "eval_horizon": args.eval_horizon,
         "seed": args.seed,
         "video_backend": args.video_backend,
         "inference_latency_seconds": summarize_inference_latency(inference_seconds),
