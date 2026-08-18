@@ -287,13 +287,14 @@ def main() -> int:
             return fmt.format(v)
         return f"{fmt.format(v)} [{fmt.format(r[f'{met}__ci_low'] * scale)}, {fmt.format(r[f'{met}__ci_high'] * scale)}]"
 
-    print(f"| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | acc@0.5 | acc@0.1 | Rot jerk (deg) |")
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for r in summary_rows:
         print(
             f"| {r['run']} | {r['step']} | {cell(r, 'xyz_end_m', 1000)} | {cell(r, 'rotation_end_deg', 1)} "
             f"| {cell(r, 'xyz_l1_per_dim_m', 1000, ci=False)} | {cell(r, 'xyz_mse_per_dim_m2', 1e6, '{:.1f}', False)} "
-            f"| {cell(r, 'rotvec_l1_per_dim_deg', 1, '{:.3f}', False)} | {cell(r, 'action_acc_at_0p5', 1, '{:.3f}', False)} "
+            f"| {cell(r, 'rotvec_l1_per_dim_deg', 1, '{:.3f}', False)} | {cell(r, 'rotvec_mse_per_dim_deg2', 1, '{:.2f}', False)} "
+            f"| {cell(r, 'action_acc_at_0p5', 1, '{:.3f}', False)} "
             f"| {cell(r, 'action_acc_at_0p1', 1, '{:.3f}')} | {cell(r, 'rot_jerk_deg', 1, '{:.3f}', False)} |"
         )
     assert gt_ref is not None and tau_ref is not None  # set with the first admitted row
