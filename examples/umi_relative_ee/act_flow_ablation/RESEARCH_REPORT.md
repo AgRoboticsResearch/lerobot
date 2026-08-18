@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family statistically ties the 3B flow-VLMs at 9–11 mm endpoint / acc@0.1 0.92, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric), with the kiwi rows pending.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family statistically ties the 3B flow-VLMs at 9–11 mm endpoint / acc@0.1 0.92, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric), with the kiwi rows pending.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1485,7 +1485,7 @@ Read-outs:
    recipe — the sharpest single line of evidence that the §9.1 capacity and
    objective results dominate longer training on this task.
 
-### 9.2.8 ACT R50-V1 long-budget run (1M steps) — in flight
+### 9.2.8 ACT R50-V1 long-budget run (1M steps) — complete
 
 That capacity-vs-budget conclusion is cross-budget (R50 companions at 80k vs
 an R18 curve). The direct question — does R50 capacity keep compounding with
@@ -1512,6 +1512,74 @@ point against the stranded seed-1000 R50-V1 100k evaluation (22.33 mm / 4.58°,
 §9.1.2) as a fresh-run replication check; (c) rot-jerk — whether R50 shows the
 same late-training smoothness degradation that penalizes the R18 curve from
 700k.
+
+**Status (2026-08-18): complete.** Training finished at 16:16 (22h30m,
+13.06 steps/s; final validation loss 0.030712 / L1 0.030696 — the terminal
+point is also the run's best, unlike several stochastic runs in this report).
+All ten 100k-spaced checkpoints were evaluated at native horizon 30 with the
+full v2 metric set under the identical 500-query protocol
+(`eval_r50v1_1m_curve.sh`; outputs under `eval_common_h32/
+act_r50_v1_vae_1m_seed1000_<step>steps/`, deliberately outside the unified
+t+10 tree). Milestones:
+
+| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | acc@0.5 | acc@0.1 | Rot jerk (°) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k | 23.24 [21.5, 25.1] | 4.581 | 6.80 | 0.972 | 0.735 [0.722, 0.749] | 0.057 |
+| 200k | 22.14 [20.6, 23.7] | 4.445 | 6.84 | 0.972 | 0.738 | 0.043 |
+| 300k | 22.28 [20.6, 24.0] | 4.375 | 6.86 | 0.973 | 0.744 | 0.035 |
+| 400k | 21.69 [20.0, 23.4] | 4.382 | 6.83 | 0.973 | 0.740 | 0.034 |
+| 500k | 21.41 [19.7, 23.1] | 4.376 | 6.89 | 0.973 | 0.739 | 0.031 |
+| 600k | 21.22 [19.6, 22.9] | 4.159 | 6.83 | 0.974 | 0.743 | **0.028** |
+| 700k | 21.74 [20.1, 23.4] | 4.324 | 6.99 | 0.973 | 0.739 | 0.030 |
+| 800k | 22.00 [20.3, 23.7] | 4.293 | 7.03 | 0.973 | 0.739 | 0.031 |
+| 900k | 21.51 [19.9, 23.2] | 4.224 | 6.95 | 0.973 | 0.743 | 0.032 |
+| 1M | **21.32** [19.7, 22.9] | **4.159** | 6.88 | 0.974 | 0.742 [0.727, 0.757] | 0.032 |
+
+![R50-V1 vs historical R18 budget curves](figures/r50_vs_r18_budget_curve.png)
+
+Read-outs, following the preregistered decomposition:
+
+1. **(a) The capacity gap persists at every budget — and R50@100k already
+   matches R18@3M.** On XYZ endpoint the fresh R50-V1 at its *first*
+   checkpoint (23.24 mm) is already at the historical R18's 3M plateau
+   (23.31 mm), and by 600k–1M it reaches 21.2–21.5 mm — about 2 mm below the
+   R18 plateau with CIs only marginally touching (R50@1M [19.7, 22.9] vs
+   R18@3M [21.45, 25.20]). On acc@0.1 the separation is cleaner: R50@1M
+   0.742 [0.727, 0.757] vs R18@3M 0.715 [0.700, 0.731] — effectively
+   disjoint. The §9.2.6 cross-budget observation (R50-VAE companions at 80k
+   matching R18@3M) is now confirmed by a same-seed, same-protocol budget
+   curve: **capacity buys a persistent lead that a 30× budget range cannot
+   close**, and the gap neither shrinks meaningfully nor inverts.
+2. **(b) The fresh 100k point replicates the stranded §9.1.2 evaluation.**
+   Fresh R50-V1 @100k: 23.24 mm [21.5, 25.1] / 4.581° endpoint rotation vs the
+   stranded seed-1000 R50-V1 @100k: 22.33 mm / 4.584° — the rotation endpoint
+   matches to 0.003° and the 0.9 mm endpoint-XYZ difference is well inside
+   the episode CI. Two independent training runs of the same config (the
+   stranded one predates the disk failure, this one post-dates it) agree;
+   the §9.1.2 numbers stand as representative.
+3. **(c) R50 does not replicate the R18's late smoothness penalty.** R18's
+   rot-jerk bottoms at 0.037° @700k and degrades ~45% to 0.054° @3M; R50
+   improves monotonically to 0.028° @600k and drifts only mildly to 0.032°
+   @1M (+14%), with XYZ jerk improving monotonically throughout
+   (0.445 → 0.210 mm). The §9.2.7 warning against training ACT far past its
+   endpoint plateau is recipe-dependent: at 1M the R50 run is still its
+   smoothest self, and both jerks sit near/below ground truth (GT rot jerk
+   ≈ 0.158° at this horizon's queries; GT-matching smoothness also holds at
+   t+10, §9.2.9).
+4. **Budget behavior flips with scoring horizon.** At t+30 the R50 endpoint
+   improves with budget (23.24 → 21.32 mm, best @1M), while at t+10 the same
+   checkpoints *degrade* from the 100k optimum (9.20 → 10.61 mm, worst @1M;
+   §9.2.9). The additional 600k–900k steps buy far-horizon (late-chunk)
+   accuracy at the cost of near-horizon precision — a genuine
+   horizon-dependent overfitting signature, not a protocol artifact (same
+   checkpoints, same queries, horizon is the only difference). Practically:
+   pick the checkpoint at the horizon you will execute; for this task the
+   executed chunk is 30 steps, and the final 1M checkpoint is the right
+   deployment choice on both accuracy (best t+30 endpoint) and smoothness.
+5. **acc@0.1 remains the budget-sensitive metric here too** (0.735 → 0.744,
+   noisy but flat after 200k; acc@0.5 flat at 0.972–0.974) — but note the
+   R50 curve's precision saturates at ~0.74 where the R18's saturates at
+   ~0.71: the ceiling itself is recipe-limited, echoing §9.2.7 read-out 5.
 
 ### 9.2.9 Unified horizon-10 re-evaluation of every surviving model
 

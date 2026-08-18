@@ -177,13 +177,100 @@ def plot_historical(rows: list[dict[str, str]], out_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
+    """§9.2.8: fresh R50-V1 1M curve vs historical R18 curve at horizon 30."""
+    hist = sorted(
+        (row for row in rows if row["variant"] == HIST_VARIANT),
+        key=lambda row: int(row["evaluated_step"]),
+    )
+    r50 = sorted(
+        (row for row in rows if row["variant"] == "act_r50_v1_vae_1m"),
+        key=lambda row: int(row["evaluated_step"]),
+    )
+    if not r50:
+        print("no act_r50_v1_vae_1m rows; skipping r50_vs_r18 figure")
+        return
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.4))
+
+    # (a) XYZ endpoint, both curves with CI bands
+    ax = axes[0]
+    for series, color, label in (
+        (hist, "#4878d0", "R18-VAE (historical, 100k–3M)"),
+        (r50, "#d65f5f", "R50-V1 (fresh, 100k–1M)"),
+    ):
+        steps = [int(row["evaluated_step"]) for row in series]
+        ax.plot(steps, [f(row, "xyz_end_m") * 1e3 for row in series], "o-", ms=3, color=color, label=label)
+        ax.fill_between(
+            steps,
+            [f(row, "xyz_end_m_ci_low") * 1e3 for row in series],
+            [f(row, "xyz_end_m_ci_high") * 1e3 for row in series],
+            color=color, alpha=0.15, lw=0,
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("training steps")
+    ax.set_ylabel("XYZ endpoint (mm)")
+    ax.set_title("XYZ endpoint, horizon 30 (95% CI bands)")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+
+    # (b) accuracy@0.1
+    ax = axes[1]
+    ax.plot(
+        [int(row["evaluated_step"]) for row in hist],
+        [f(row, "action_acc_at_0p1") for row in hist],
+        "o-", ms=3, color="#4878d0", label="R18-VAE",
+    )
+    ax.plot(
+        [int(row["evaluated_step"]) for row in r50],
+        [f(row, "action_acc_at_0p1") for row in r50],
+        "s-", ms=3, color="#d65f5f", label="R50-V1",
+    )
+    ax.set_xscale("log")
+    ax.set_xlabel("training steps")
+    ax.set_ylabel("accuracy@0.1 (action)")
+    ax.set_title("movement precision vs budget")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, loc="lower right")
+
+    # (c) rotational jerk, both curves with GT line
+    ax = axes[2]
+    ax.plot(
+        [int(row["evaluated_step"]) for row in hist],
+        [f(row, "rot_jerk_deg") for row in hist],
+        "o-", ms=3, color="#4878d0", label="R18-VAE",
+    )
+    ax.plot(
+        [int(row["evaluated_step"]) for row in r50],
+        [f(row, "rot_jerk_deg") for row in r50],
+        "s-", ms=3, color="#d65f5f", label="R50-V1",
+    )
+    ax.axhline(f(hist[0], "gt_rot_jerk_deg"), color="gray", ls=":", label="ground truth")
+    ax.set_xscale("log")
+    ax.set_xlabel("training steps")
+    ax.set_ylabel("rotational jerk (°)")
+    ax.set_title("within-chunk smoothness vs budget")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+
+    fig.suptitle("ACT R50-V1 (fresh 1M run) vs historical R18-VAE — same protocol, horizon 30", y=1.02)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     rows = load_rows(args.summary)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     plot_seed23k(rows, args.out_dir / "seed23k_v2metrics.png")
     plot_historical(rows, args.out_dir / "historical_act_budget_curve.png")
-    print(f"wrote {args.out_dir / 'seed23k_v2metrics.png'} and {args.out_dir / 'historical_act_budget_curve.png'}")
+    plot_r50_vs_r18(rows, args.out_dir / "r50_vs_r18_budget_curve.png")
+    print(
+        "wrote "
+        + ", ".join(str(args.out_dir / n) for n in (
+            "seed23k_v2metrics.png", "historical_act_budget_curve.png", "r50_vs_r18_budget_curve.png",
+        ))
+    )
 
 
 if __name__ == "__main__":
