@@ -1735,8 +1735,10 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    point (9.20 → 10.61 mm, 0.921 → 0.912 by 1M; the loss saturates after
    ~500k and the 100k-vs-1M acc@0.1 intervals are disjoint) — near-horizon
    overfitting — while its smoothness keeps improving (rot-jerk
-   0.043 → 0.033). The h30 companion evaluation (§9.2.8) will show whether
-   the h10 and h30 budget optima disagree.
+   0.043 → 0.033). The h30 companion evaluation (§9.2.8 read-out 4) answers
+   the flip: on the same checkpoints, budget *improves* t+30 endpoint
+   (23.24 → 21.32 mm) while degrading t+10 — the budget optimum is
+   horizon-dependent.
 4. **The matched-ACT-flow deficit is horizon-independent.** ACT-flow
    @50k is worst on every co-primary metric at t+10 too (15.0–15.6 mm,
    acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
