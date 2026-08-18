@@ -1752,6 +1752,13 @@ per-dimension (µm² / deg²):
 
 ![Unified horizon-10 budget curves](figures/unified_h10_budget.png)
 
+![Unified horizon-10 jitter — every run of the sweep, log scale, dashed =
+ground truth (0.152° / 0.70 mm)](figures/unified_h10_jitter.png)
+
+![Unified horizon-10 jitter vs training steps — the R18 curve degrades
+0.043° → 0.063° from 100k to 3M while R50-V1 improves to 0.027–0.036°;
+ACT-flow sits 5–25× above every other family](figures/unified_h10_jitter_budget.png)
+
 Host-side read-outs (kiwi rows will extend, not re-rank, these):
 
 1. **Protocol integrity is machine-checked, not assumed.** Every admitted
@@ -2618,7 +2625,7 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 ```
 
 outputs `results/unified_h10_run_summary.csv` (per-run means + 95% CIs, all
-co-primary metrics) and `figures/unified_h10_{metrics,budget}.png`; rerun both
+co-primary metrics) and `figures/unified_h10_{metrics,budget,jitter,jitter_budget}.png`; rerun both
 after the R-phase sweep rerun (R50-V1 900k/1M rows) and after K4 (kiwi rows).
 
 The v2 pass records the authoritative evaluated checkpoint step from each
