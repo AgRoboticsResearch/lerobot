@@ -1603,20 +1603,22 @@ families — superseded by their 100k+ checkpoints. Outputs live under
 plus a cross-schema compiler; drivers: `eval_unified_h10_sweep.sh` (host),
 `kiwi_eval_unified_h10.sh` (kiwi, K-phase).
 
-**Status: host rows complete (2026-08-18); kiwi rows pending.** The host sweep
-evaluated 48 runs (54 reports) as a VRAM-gated backfill alongside the R50
-trainer; every report passed the protocol assertions programmatically —
-canonical bounds `[-1,31]`, horizon 10, 500 queries / 100 episodes, identical
-accuracy@τ normalization scales across every row (LeRobot and openpi
-evaluators agree to 5 decimals), and identical ground-truth jerk
-(0.152° / 0.70 mm) in every row. Compilation: `compile_unified_h10.py`
-(cross-schema merge of the two evaluators' reports with the assertions above;
-LeRobot rows re-derived per-episode → inference-seed-averaged → bootstrapped,
-openpi rows taken from the evaluator's own episode-balanced summary) →
+**Status: host rows complete (2026-08-18, all 50 runs incl. the R50-V1 1M
+final); kiwi rows pending.** The host sweep evaluated the full inventory as a
+VRAM-gated backfill alongside the R50 trainer (the final two rows — R50-V1
+900k/1M — landed when training exited at 16:16); every report passed the
+protocol assertions programmatically — canonical bounds `[-1,31]`, horizon 10,
+500 queries / 100 episodes, identical accuracy@τ normalization scales across
+every row (LeRobot and openpi evaluators agree to 5 decimals), and identical
+ground-truth jerk (0.152° / 0.70 mm) in every row. Compilation:
+`compile_unified_h10.py` (cross-schema merge of the two evaluators' reports
+with the assertions above; LeRobot rows re-derived per-episode →
+inference-seed-averaged → bootstrapped, openpi rows taken from the
+evaluator's own episode-balanced summary) →
 `results/unified_h10_run_summary.csv`; figures via `plot_unified_h10.py`.
-Still pending: R50-V1 0900000/1000000 (rerun at R-phase) and the kiwi rows
-(π0.5 port 1M/700K/650K, SmolVLA both notations — K1–K4). Representative
-budget rows (full 48-row table in the CSV; CIs are 95% episode bootstrap):
+Still pending: the kiwi rows (π0.5 port 1M/700K/650K, SmolVLA both notations
+— K1–K4). Representative budget rows (full 50-row table in the CSV; CIs are
+95% episode bootstrap):
 
 | Model (surviving) | steps | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -1624,6 +1626,7 @@ budget rows (full 48-row table in the CSV; CIs are 95% episode bootstrap):
 | ACT R18-VAE (historical) | 3M | 11.99 [11.22, 12.76] | 1.90 | 3.15 | 27.9 | 0.536 | 0.993 | 0.901 [0.893, 0.908] | 0.063 |
 | ACT R50-V1 (fresh 1M run) | 100k | **9.20** [8.67, 9.72] | **1.78** [1.67, 1.88] | **2.35** | **14.1** | 0.508 | 0.993 | **0.921** [0.915, 0.927] | 0.043 |
 | ACT R50-V1 (fresh 1M run) | 800k | 10.58 [9.95, 11.21] | 1.81 | 2.63 | 19.7 | 0.502 | 0.994 | 0.913 [0.906, 0.919] | **0.032** |
+| ACT R50-V1 (fresh 1M run) | 1M | 10.61 [9.98, 11.26] | 1.79 | 2.64 | 20.3 | 0.500 | 0.993 | 0.912 [0.905, 0.918] | 0.036 |
 | ACT-L1 s2000 | 100k | 9.59 [9.03, 10.16] | 1.87 | 2.44 | 15.7 | 0.518 | 0.994 | 0.920 [0.914, 0.925] | 0.036 |
 | ACT-L1 s3000 | 100k | 9.88 [9.32, 10.48] | 1.94 | 2.57 | 16.6 | 0.535 | 0.993 | 0.916 [0.909, 0.922] | 0.044 |
 | ACT R50-VAE s2000 | 80k | 9.15 [8.62, 9.68] | 1.84 | 2.35 | 13.5 | 0.537 | 0.994 | 0.926 [0.920, 0.932] | 0.049 |
@@ -1636,7 +1639,6 @@ budget rows (full 48-row table in the CSV; CIs are 95% episode bootstrap):
 | openpi π0.5 rot6d h30-trained (JAX) | 20k | 10.09 [9.54, 10.66] | 1.81 | 2.90 | 18.9 | 0.530 | 0.994 | 0.918 [0.912, 0.923] | 0.161 |
 | π0.5 port 1M / 700K / 650K (kiwi) | — | *pending K4* | | | | | | | |
 | SmolVLA rot6d / axis-angle (kiwi) | 100k | *pending K4* | | | | | | | |
-| ACT R50-V1 900k / 1M | — | *pending R-phase* | | | | | | | |
 
 ![Unified horizon-10 metrics across all surviving models](figures/unified_h10_metrics.png)
 
@@ -1662,10 +1664,11 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
 3. **Near-horizon budget behavior differs by family.** The historical R18
    improves slowly and monotonically (13.10 → 11.99 mm, acc@0.1
    0.880 → 0.901 over 100k→3M); the fresh R50-V1 *degrades* from its 100k
-   point (9.20 → 10.58 mm, 0.921 → 0.913 by 800k) — near-horizon overfitting
-   — while its smoothness keeps improving (rot-jerk 0.043 → 0.027–0.032).
-   The h30 companion evaluation (§9.2.8) will show whether the h10 and h30
-   budget optima disagree.
+   point (9.20 → 10.61 mm, 0.921 → 0.912 by 1M; the loss saturates after
+   ~500k and the 100k-vs-1M acc@0.1 intervals are disjoint) — near-horizon
+   overfitting — while its smoothness keeps improving (rot-jerk
+   0.043 → 0.033). The h30 companion evaluation (§9.2.8) will show whether
+   the h10 and h30 budget optima disagree.
 4. **The matched-ACT-flow deficit is horizon-independent.** ACT-flow
    @50k is worst on every co-primary metric at t+10 too (15.0–15.6 mm,
    acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
