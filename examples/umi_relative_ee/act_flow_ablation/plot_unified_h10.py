@@ -372,7 +372,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         ax.set_ylabel(ylab)
         ax.set_ylim(0, ymax * 1.15)
         ax.grid(alpha=0.3)
-        ax.legend(fontsize=8, loc="upper left" if met == "rot_jerk_deg" else "lower right")
+        ax.legend(fontsize=8, loc="upper right")
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_jitter_budget.png")
     fig.savefig(out, dpi=200)
