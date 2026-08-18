@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. A π0.5-port 700K→1M continuation is in flight on kiwi (resumed 2026-08-16, ETA ≈ 64 h; §9.2.2) — its evaluation will extend the §9.2.2 and horizon-10 tables when it lands. The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) is in flight on the host since 2026-08-17 17:46 (§9.2.8, ETA ≈ Aug 18 15:30) to give the capacity conclusion its own budget curve. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family statistically ties the 3B flow-VLMs at 9–11 mm endpoint / acc@0.1 0.92, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric), with the kiwi rows pending.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1603,10 +1603,84 @@ families — superseded by their 100k+ checkpoints. Outputs live under
 plus a cross-schema compiler; drivers: `eval_unified_h10_sweep.sh` (host),
 `kiwi_eval_unified_h10.sh` (kiwi, K-phase).
 
-**Status: in flight (2026-08-18).** Host rows are evaluating as a VRAM-gated
-backfill alongside the R50 trainer; kiwi rows land with K1–K3. The results
-table and figures will be inserted here when the sweep completes, with
-read-outs restricted to same-protocol comparisons.
+**Status: host rows complete (2026-08-18); kiwi rows pending.** The host sweep
+evaluated 48 runs (54 reports) as a VRAM-gated backfill alongside the R50
+trainer; every report passed the protocol assertions programmatically —
+canonical bounds `[-1,31]`, horizon 10, 500 queries / 100 episodes, identical
+accuracy@τ normalization scales across every row (LeRobot and openpi
+evaluators agree to 5 decimals), and identical ground-truth jerk
+(0.152° / 0.70 mm) in every row. Compilation: `compile_unified_h10.py`
+(cross-schema merge of the two evaluators' reports with the assertions above;
+LeRobot rows re-derived per-episode → inference-seed-averaged → bootstrapped,
+openpi rows taken from the evaluator's own episode-balanced summary) →
+`results/unified_h10_run_summary.csv`; figures via `plot_unified_h10.py`.
+Still pending: R50-V1 0900000/1000000 (rerun at R-phase) and the kiwi rows
+(π0.5 port 1M/700K/650K, SmolVLA both notations — K1–K4). Representative
+budget rows (full 48-row table in the CSV; CIs are 95% episode bootstrap):
+
+| Model (surviving) | steps | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACT R18-VAE (historical) | 100k | 13.10 [12.30, 13.92] | 2.02 | 3.53 | 32.3 | 0.560 | 0.991 | 0.880 [0.873, 0.888] | 0.043 |
+| ACT R18-VAE (historical) | 3M | 11.99 [11.22, 12.76] | 1.90 | 3.15 | 27.9 | 0.536 | 0.993 | 0.901 [0.893, 0.908] | 0.063 |
+| ACT R50-V1 (fresh 1M run) | 100k | **9.20** [8.67, 9.72] | **1.78** [1.67, 1.88] | **2.35** | **14.1** | 0.508 | 0.993 | **0.921** [0.915, 0.927] | 0.043 |
+| ACT R50-V1 (fresh 1M run) | 800k | 10.58 [9.95, 11.21] | 1.81 | 2.63 | 19.7 | 0.502 | 0.994 | 0.913 [0.906, 0.919] | **0.032** |
+| ACT-L1 s2000 | 100k | 9.59 [9.03, 10.16] | 1.87 | 2.44 | 15.7 | 0.518 | 0.994 | 0.920 [0.914, 0.925] | 0.036 |
+| ACT-L1 s3000 | 100k | 9.88 [9.32, 10.48] | 1.94 | 2.57 | 16.6 | 0.535 | 0.993 | 0.916 [0.909, 0.922] | 0.044 |
+| ACT R50-VAE s2000 | 80k | 9.15 [8.62, 9.68] | 1.84 | 2.35 | 13.5 | 0.537 | 0.994 | 0.926 [0.920, 0.932] | 0.049 |
+| ACT R50-VAE s3000 | 80k | 9.18 [8.66, 9.72] | 1.74 | 2.37 | 14.2 | 0.500 | 0.994 | **0.929** [0.924, 0.934] | 0.059 |
+| ACT-flow s2000 | 50k | 15.00 [14.41, 15.63] | 2.53 | 4.55 | 43.5 | 0.830 | 0.992 | 0.840 [0.833, 0.846] | 0.744 |
+| ACT-flow s3000 | 50k | 15.63 [14.78, 16.50] | 2.30 | 4.72 | 53.2 | 0.805 | 0.991 | 0.843 [0.836, 0.850] | 0.763 |
+| π0.5 port (openpi recipe, Arm B) | 20k | 9.57 [9.07, 10.08] | 1.81 | **2.42** | 15.3 | **0.482** | 0.993 | 0.920 [0.914, 0.925] | 0.086 |
+| openpi π0.5 rot6d (JAX) | 20k | 10.66 [10.05, 11.28] | 1.80 | 2.95 | 20.5 | 0.518 | 0.993 | 0.919 [0.913, 0.925] | 0.157 |
+| openpi π0.5 rotvec (JAX) | 20k | 11.00 [10.31, 11.68] | **1.65** [1.56, 1.74] | 2.97 | 22.5 | 0.489 | 0.993 | 0.920 [0.914, 0.926] | 0.200 |
+| openpi π0.5 rot6d h30-trained (JAX) | 20k | 10.09 [9.54, 10.66] | 1.81 | 2.90 | 18.9 | 0.530 | 0.994 | 0.918 [0.912, 0.923] | 0.161 |
+| π0.5 port 1M / 700K / 650K (kiwi) | — | *pending K4* | | | | | | | |
+| SmolVLA rot6d / axis-angle (kiwi) | 100k | *pending K4* | | | | | | | |
+| ACT R50-V1 900k / 1M | — | *pending R-phase* | | | | | | | |
+
+![Unified horizon-10 metrics across all surviving models](figures/unified_h10_metrics.png)
+
+![Unified horizon-10 budget curves](figures/unified_h10_budget.png)
+
+Host-side read-outs (kiwi rows will extend, not re-rank, these):
+
+1. **Protocol integrity is machine-checked, not assumed.** Every admitted
+   row carries bounds `[-1,31]`, horizon 10, 500 queries, and — because the
+   query set, horizon, and GT are common — identical acc@τ normalization
+   scales and identical GT jerk. Cross-evaluator comparability (LeRobot
+   PyTorch vs openpi JAX decoding paths) is asserted at compile time to 5
+   decimals on the τ scales and 1e-6 on GT jerk.
+2. **At matched horizon the ACT capacity/objective family ties the 3B
+   flow-VLMs.** R50-V1 @100k (9.20 mm, acc@0.1 0.921), the R50-VAE
+   companions @80k (9.15–9.18 mm, 0.926–0.929), and ACT-L1 @100k
+   (9.59–9.88 mm, 0.916–0.920) all land inside the openpi/Arm-B interval
+   band (9.57–11.00 mm, 0.918–0.920) — the §9.2.4/§9.2.5 tie now extends to
+   the ACT side of the ledger: what separates models at t+10 is capacity and
+   objective recipe, not parameter count or stack. The historical R18
+   production model sits visibly above the pack (12.0–13.1 mm, 0.88–0.90)
+   even at 30× budget.
+3. **Near-horizon budget behavior differs by family.** The historical R18
+   improves slowly and monotonically (13.10 → 11.99 mm, acc@0.1
+   0.880 → 0.901 over 100k→3M); the fresh R50-V1 *degrades* from its 100k
+   point (9.20 → 10.58 mm, 0.921 → 0.913 by 800k) — near-horizon overfitting
+   — while its smoothness keeps improving (rot-jerk 0.043 → 0.027–0.032).
+   The h30 companion evaluation (§9.2.8) will show whether the h10 and h30
+   budget optima disagree.
+4. **The matched-ACT-flow deficit is horizon-independent.** ACT-flow
+   @50k is worst on every co-primary metric at t+10 too (15.0–15.6 mm,
+   acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
+   others), and its rot-jerk (0.74–0.76°) is 5–25× rougher than every other
+   family. The Q2 conclusion (ACT-transformer denoiser/conditioning recipe,
+   not flow matching itself) survives the horizon change unaltered.
+5. **acc@0.5 is saturated for every surviving model** (0.991–0.994, spread
+   below the interval half-widths): motion-intent precision is solved
+   across the board; only acc@0.1 separates families — the τ-doctrine
+   finding of §9.2.7 generalized to every stack in the inventory.
+6. **The rotation-notation tie holds under the canonical protocol**:
+   openpi rotvec vs rot6d at t+10 tie on acc@0.1 (0.920 vs 0.919) and
+   rotvec is even better on rotation endpoint (1.65° vs 1.80°, disjoint),
+   while rot6d is better on XYZ endpoint — no notation lever, mirroring
+   §9.2.3/§9.2.4 from the other direction.
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -2418,8 +2492,21 @@ The unified horizon-10 sweep (§9.2.9) has its own drivers:
 R50-V1 curve, official openpi arms under the canonical query window) and
 `kiwi_eval_unified_h10.sh` (π0.5 port 650K/700K/1M, SmolVLA notations; run on
 kiwi after the 1M training exits). Both are idempotent and write
-RUN_RE-compatible report trees under `reeval_v2metrics/eval_unified_h10/`
-collectable by the same v2 pass.
+RUN_RE-compatible report trees under `reeval_v2metrics/eval_unified_h10/`.
+Because the tree mixes the two evaluators' report schemas, collection is done
+by the dedicated cross-schema compiler, which enforces the §9.2.9 protocol
+assertions (bounds, horizon, 500 queries, cross-row acc@τ-scale and GT-jerk
+identity) before emitting one summary:
+
+```bash
+uv run python examples/umi_relative_ee/act_flow_ablation/compile_unified_h10.py
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
+  examples/umi_relative_ee/act_flow_ablation/plot_unified_h10.py
+```
+
+outputs `results/unified_h10_run_summary.csv` (per-run means + 95% CIs, all
+co-primary metrics) and `figures/unified_h10_{metrics,budget}.png`; rerun both
+after the R-phase sweep rerun (R50-V1 900k/1M rows) and after K4 (kiwi rows).
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories
