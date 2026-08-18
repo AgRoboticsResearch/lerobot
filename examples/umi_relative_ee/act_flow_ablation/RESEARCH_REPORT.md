@@ -1856,6 +1856,119 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    better on rotation endpoint (1.65° vs 1.80°, disjoint), while rot6d is
    better on XYZ endpoint — no notation lever in either stack.
 
+### 9.2.11 Unified native-h30 (full-chunk) evaluation of every chunk-30 model
+
+User-directed 2026-08-19: "for all the models that support chunk30, also do
+the full eval on h30." The §9.2.9 protocol with the horizon inverted —
+every model whose action chunk supports 30 steps is scored over the FULL
+chunk under the canonical 500-query window (bounds [-1,31], endpoint = t+30,
+deterministic ACT at seed 1000, stochastic flow models at 3 inference seeds
+averaged within episode, 95% episode bootstrap). Openpi's h10-trained arms
+(chunk 10) are out of scope by construction; the h30-trained openpi arm is
+a pending optional row (its canonical-window native-h30 score requires a
+JAX re-run). The tree is the shared `reeval_v2metrics/eval_common_h32/`
+holding the §9.2.7 historical curve, the §9.2.8 R50-V1 curve, the §9.2.6
+companions, and — new — the π0.5-port h30 curve (`pi05_port_<STEP>_h30_v2`
+runs; host front-run 50k–900k minus 650k/700k via
+`eval_pi05_curve_h30_host.sh`, kiwi K2 owns 650K/700K/1M).
+
+**Status: 46 rows complete (2026-08-19), 70 planned.** Pending: the
+π0.5-port h30 curve (48 host evals in flight as VRAM-gated backfill + 9
+kiwi evals at K2), the SmolVLA 1M full-width h30 curve (30 evals, chained
+after tonight's training exit), the kiwi masked-subspace 1M h30 curve (30
+evals, chained), and the SmolVLA notation ×3-seed re-evals at K3. Every
+admitted row passed the compiler's assertions — canonical bounds,
+full-chunk scoring, 500 queries/100 episodes, identical acc@τ scales
+(within-tree), and identical GT jerk (0.158° / 0.67 mm — the full-chunk
+GT invariants, slightly different from the t+10 values as expected).
+
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| act_r18_flow_u_lr1e5_seed2000_100000steps | 50000 | 31.41 [29.70, 33.18] | 5.70 [5.39, 6.02] | 9.97 | 236.6 | 1.743 | 6.49 | 0.963 | 0.634 [0.623, 0.644] | 0.772 |
+| act_r18_flow_u_lr1e5_seed3000_100000steps | 50000 | 31.97 [29.88, 34.09] | 5.45 [5.14, 5.80] | 10.21 | 273.6 | 1.620 | 5.81 | 0.961 | 0.654 [0.643, 0.665] | 0.818 |
+| act_r18_l1_seed2000_100000steps | 100000 | 24.33 [22.46, 26.29] | 4.83 [4.48, 5.19] | 7.10 | 144.5 | 1.387 | 4.62 | 0.975 | 0.719 [0.705, 0.733] | 0.055 |
+| act_r18_l1_seed3000_100000steps | 100000 | 23.73 [21.94, 25.61] | 4.87 [4.51, 5.24] | 7.11 | 141.1 | 1.424 | 4.84 | 0.972 | 0.719 [0.705, 0.733] | 0.052 |
+| act_r50_v1_vae_1m_seed1000_0100000steps | 100000 | 23.24 [21.46, 25.09] | 4.58 [4.23, 4.95] | 6.80 | 132.1 | 1.314 | 4.26 | 0.975 | 0.735 [0.722, 0.749] | 0.057 |
+| act_r50_v1_vae_1m_seed1000_0200000steps | 200000 | 22.14 [20.58, 23.75] | 4.45 [4.10, 4.81] | 6.84 | 127.7 | 1.288 | 4.02 | 0.977 | 0.738 [0.724, 0.752] | 0.043 |
+| act_r50_v1_vae_1m_seed1000_0300000steps | 300000 | 22.28 [20.61, 24.04] | 4.38 [4.00, 4.77] | 6.86 | 135.3 | 1.267 | 4.05 | 0.978 | 0.744 [0.729, 0.758] | 0.035 |
+| act_r50_v1_vae_1m_seed1000_0400000steps | 400000 | 21.69 [20.04, 23.41] | 4.38 [4.02, 4.77] | 6.83 | 131.8 | 1.274 | 4.03 | 0.977 | 0.740 [0.726, 0.755] | 0.034 |
+| act_r50_v1_vae_1m_seed1000_0500000steps | 500000 | 21.41 [19.73, 23.13] | 4.38 [4.02, 4.75] | 6.89 | 135.0 | 1.265 | 4.00 | 0.976 | 0.739 [0.724, 0.753] | 0.031 |
+| act_r50_v1_vae_1m_seed1000_0600000steps | 600000 | 21.22 [19.59, 22.91] | 4.16 [3.81, 4.53] | 6.83 | 132.7 | 1.225 | 3.73 | 0.977 | 0.743 [0.729, 0.758] | 0.028 |
+| act_r50_v1_vae_1m_seed1000_0700000steps | 700000 | 21.74 [20.07, 23.44] | 4.32 [3.96, 4.70] | 6.99 | 138.4 | 1.256 | 3.96 | 0.977 | 0.739 [0.724, 0.754] | 0.030 |
+| act_r50_v1_vae_1m_seed1000_0800000steps | 800000 | 22.00 [20.34, 23.70] | 4.29 [3.93, 4.67] | 7.03 | 139.3 | 1.255 | 3.96 | 0.978 | 0.739 [0.724, 0.754] | 0.031 |
+| act_r50_v1_vae_1m_seed1000_0900000steps | 900000 | 21.51 [19.89, 23.17] | 4.22 [3.86, 4.60] | 6.95 | 136.5 | 1.238 | 3.83 | 0.977 | 0.743 [0.728, 0.757] | 0.032 |
+| act_r50_v1_vae_1m_seed1000_1000000steps | 1000000 | 21.32 [19.74, 22.94] | 4.28 [3.92, 4.66] | 6.88 | 133.8 | 1.249 | 3.89 | 0.977 | 0.742 [0.726, 0.757] | 0.032 |
+| act_r50_vae_seed2000_100000steps | 80000 | 22.21 [20.60, 23.84] | 4.52 [4.19, 4.86] | 6.61 | 121.9 | 1.330 | 4.10 | 0.976 | 0.736 [0.723, 0.749] | 0.075 |
+| act_r50_vae_seed3000_100000steps | 80000 | 22.10 [20.46, 23.77] | 4.23 [3.91, 4.57] | 6.62 | 121.8 | 1.252 | 3.70 | 0.978 | 0.744 [0.731, 0.757] | 0.074 |
+| act_umi_identity_rot6d_1459_0100000steps | 100000 | 25.57 [23.64, 27.56] | 5.02 [4.67, 5.39] | 8.47 | 189.1 | 1.469 | 5.13 | 0.969 | 0.681 [0.667, 0.695] | 0.059 |
+| act_umi_identity_rot6d_1459_0200000steps | 200000 | 24.35 [22.60, 26.19] | 4.98 [4.61, 5.36] | 8.06 | 173.4 | 1.445 | 5.03 | 0.972 | 0.693 [0.679, 0.707] | 0.046 |
+| act_umi_identity_rot6d_1459_0300000steps | 300000 | 24.72 [22.94, 26.59] | 4.95 [4.58, 5.35] | 8.12 | 173.7 | 1.444 | 4.96 | 0.972 | 0.694 [0.680, 0.708] | 0.041 |
+| act_umi_identity_rot6d_1459_0400000steps | 400000 | 23.89 [22.19, 25.64] | 4.85 [4.49, 5.24] | 7.95 | 166.6 | 1.437 | 4.98 | 0.972 | 0.697 [0.682, 0.712] | 0.038 |
+| act_umi_identity_rot6d_1459_0500000steps | 500000 | 24.03 [22.21, 25.90] | 4.80 [4.43, 5.19] | 7.92 | 168.6 | 1.416 | 4.77 | 0.972 | 0.701 [0.687, 0.715] | 0.037 |
+| act_umi_identity_rot6d_1459_0600000steps | 600000 | 23.87 [22.07, 25.73] | 4.81 [4.44, 5.20] | 7.93 | 168.5 | 1.412 | 4.80 | 0.973 | 0.699 [0.685, 0.713] | 0.038 |
+| act_umi_identity_rot6d_1459_0700000steps | 700000 | 23.78 [22.01, 25.60] | 4.81 [4.44, 5.20] | 7.89 | 167.1 | 1.400 | 4.70 | 0.973 | 0.702 [0.688, 0.716] | 0.037 |
+| act_umi_identity_rot6d_1459_0800000steps | 800000 | 23.83 [21.99, 25.70] | 4.76 [4.40, 5.15] | 7.82 | 165.9 | 1.387 | 4.66 | 0.973 | 0.705 [0.691, 0.720] | 0.037 |
+| act_umi_identity_rot6d_1459_0900000steps | 900000 | 24.04 [22.18, 25.91] | 4.77 [4.39, 5.16] | 7.88 | 166.8 | 1.387 | 4.68 | 0.973 | 0.703 [0.689, 0.718] | 0.038 |
+| act_umi_identity_rot6d_1459_1000000steps | 1000000 | 23.31 [21.53, 25.13] | 4.71 [4.34, 5.10] | 7.72 | 159.9 | 1.371 | 4.59 | 0.973 | 0.707 [0.693, 0.722] | 0.038 |
+| act_umi_identity_rot6d_1459_1100000steps | 1100000 | 23.61 [21.78, 25.50] | 4.67 [4.31, 5.06] | 7.75 | 163.9 | 1.362 | 4.49 | 0.973 | 0.709 [0.695, 0.723] | 0.040 |
+| act_umi_identity_rot6d_1459_1200000steps | 1200000 | 23.55 [21.73, 25.39] | 4.66 [4.30, 5.05] | 7.73 | 162.4 | 1.358 | 4.48 | 0.974 | 0.710 [0.696, 0.725] | 0.040 |
+| act_umi_identity_rot6d_1459_1300000steps | 1300000 | 23.55 [21.72, 25.43] | 4.59 [4.23, 4.98] | 7.72 | 163.7 | 1.342 | 4.38 | 0.973 | 0.710 [0.696, 0.724] | 0.041 |
+| act_umi_identity_rot6d_1459_1400000steps | 1400000 | 23.45 [21.66, 25.27] | 4.60 [4.23, 4.99] | 7.71 | 160.7 | 1.350 | 4.41 | 0.974 | 0.713 [0.698, 0.727] | 0.042 |
+| act_umi_identity_rot6d_1459_1500000steps | 1500000 | 23.44 [21.69, 25.24] | 4.58 [4.22, 4.96] | 7.68 | 160.4 | 1.335 | 4.34 | 0.974 | 0.713 [0.698, 0.727] | 0.043 |
+| act_umi_identity_rot6d_1459_1600000steps | 1600000 | 23.46 [21.65, 25.33] | 4.59 [4.22, 4.98] | 7.71 | 161.0 | 1.347 | 4.42 | 0.974 | 0.710 [0.696, 0.725] | 0.043 |
+| act_umi_identity_rot6d_1459_1700000steps | 1700000 | 23.38 [21.57, 25.19] | 4.57 [4.19, 4.97] | 7.67 | 159.1 | 1.337 | 4.40 | 0.974 | 0.713 [0.698, 0.728] | 0.045 |
+| act_umi_identity_rot6d_1459_1800000steps | 1800000 | 23.44 [21.62, 25.29] | 4.58 [4.20, 4.98] | 7.69 | 160.1 | 1.343 | 4.42 | 0.973 | 0.711 [0.697, 0.726] | 0.046 |
+| act_umi_identity_rot6d_1459_1900000steps | 1900000 | 23.51 [21.68, 25.38] | 4.59 [4.22, 4.99] | 7.72 | 162.2 | 1.339 | 4.40 | 0.974 | 0.712 [0.696, 0.727] | 0.046 |
+| act_umi_identity_rot6d_1459_2000000steps | 2000000 | 23.42 [21.62, 25.27] | 4.50 [4.12, 4.90] | 7.66 | 159.8 | 1.316 | 4.29 | 0.973 | 0.716 [0.701, 0.731] | 0.048 |
+| act_umi_identity_rot6d_1459_2100000steps | 2100000 | 23.30 [21.54, 25.09] | 4.58 [4.20, 4.97] | 7.69 | 159.6 | 1.339 | 4.42 | 0.974 | 0.712 [0.697, 0.727] | 0.048 |
+| act_umi_identity_rot6d_1459_2200000steps | 2200000 | 23.22 [21.37, 25.12] | 4.54 [4.17, 4.94] | 7.62 | 159.4 | 1.328 | 4.35 | 0.974 | 0.714 [0.700, 0.729] | 0.047 |
+| act_umi_identity_rot6d_1459_2300000steps | 2300000 | 23.21 [21.37, 25.10] | 4.50 [4.13, 4.90] | 7.62 | 158.4 | 1.325 | 4.32 | 0.974 | 0.716 [0.701, 0.731] | 0.048 |
+| act_umi_identity_rot6d_1459_2400000steps | 2400000 | 23.20 [21.40, 25.06] | 4.48 [4.11, 4.87] | 7.64 | 159.0 | 1.309 | 4.25 | 0.974 | 0.718 [0.703, 0.733] | 0.048 |
+| act_umi_identity_rot6d_1459_2500000steps | 2500000 | 23.40 [21.52, 25.30] | 4.51 [4.14, 4.90] | 7.71 | 161.9 | 1.323 | 4.30 | 0.974 | 0.715 [0.700, 0.729] | 0.050 |
+| act_umi_identity_rot6d_1459_2600000steps | 2600000 | 23.31 [21.48, 25.17] | 4.45 [4.08, 4.85] | 7.63 | 159.7 | 1.315 | 4.23 | 0.974 | 0.718 [0.703, 0.733] | 0.052 |
+| act_umi_identity_rot6d_1459_2700000steps | 2700000 | 23.36 [21.50, 25.26] | 4.51 [4.13, 4.91] | 7.66 | 160.2 | 1.316 | 4.30 | 0.974 | 0.717 [0.702, 0.732] | 0.050 |
+| act_umi_identity_rot6d_1459_2800000steps | 2800000 | 23.49 [21.62, 25.40] | 4.47 [4.10, 4.85] | 7.69 | 162.0 | 1.310 | 4.24 | 0.974 | 0.715 [0.700, 0.731] | 0.050 |
+| act_umi_identity_rot6d_1459_2900000steps | 2900000 | 23.31 [21.48, 25.18] | 4.44 [4.07, 4.84] | 7.61 | 158.6 | 1.304 | 4.21 | 0.975 | 0.718 [0.703, 0.733] | 0.052 |
+| act_umi_identity_rot6d_1459_3000000steps | 3000000 | 23.31 [21.45, 25.20] | 4.50 [4.12, 4.89] | 7.66 | 160.1 | 1.320 | 4.30 | 0.974 | 0.715 [0.700, 0.731] | 0.054 |
+
+![Unified native-h30 metrics across chunk-30 models](figures/unified_h30_metrics.png)
+
+![Unified native-h30 budget curves — historical R18-VAE (30 ckpts) and
+fresh R50-V1 (10 ckpts); the π0.5-port and SmolVLA 1M curves land as their
+sweeps complete](figures/unified_h30_budget.png)
+
+![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
+ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
+
+![Unified native-h30 jitter vs training steps](figures/unified_h30_jitter_budget.png)
+
+Read-outs (extended as the pending rows land):
+
+1. **The horizon-10 tie does NOT carry to the native chunk horizon.** At
+   t+30 the endpoint errors are ~2.3× the t+10 values across every family
+   (R50-V1 21.3 mm vs 9.4–10.6; R18 23.3 vs 12.0; ACT-L1 23.7–24.3 vs
+   9.6–9.9), and the family ordering changes: the fresh R50-V1 curve is
+   clearly the best ACT family at full chunk (21.2–23.2 mm vs the
+   historical R18's 23.2–25.6 over the same budgets), consistent with the
+   §9.2.8 budget-flip finding. acc@0.1 drops from the 0.88–0.93 t+10 range
+   to 0.63–0.75 — t+30 accuracy is the hard, unsolved regime.
+2. **The two ACT budget regimes now have full-chunk curves.** R18 improves
+   slowly and monotonically (25.57 → 23.31 mm, acc@0.1 0.681 → 0.715 over
+   100k→3M); R50-V1 improves faster and plateaus (23.24 → 21.32 mm by 1M,
+   best 21.22 @600k, acc@0.1 0.735 → 0.742) — at t+30 the fresh run is
+   better at EVERY budget, not just early (contrast §9.2.9 read-out 3
+   where R50-V1 *degrades* at t+10: the budget optimum is horizon-dependent
+   in the opposite direction — more budget helps the far horizon).
+3. **Smoothness ordering is horizon-independent.** ACT-flow remains 10–15×
+   rougher than every other family (rot-jerk 0.77–0.82° vs 0.03–0.08 for
+   the ACT/VAE families); the VAE/L1 ACT families improve from ~0.06° at
+   their early checkpoints to 0.03–0.05°, all well under the 0.158° GT.
+   The SmolVLA/openpi/port full-chunk jitter rows land with their sweeps.
+4. **MSE:L1 tail ratio separates the objective families at t+30 too**
+   (ACT-flow ≈ 24–27 µm/mm vs ≈19–20 for the VAE/L1 families) — the
+   heavy-tail penalty of the unweighted flow objective grows with horizon,
+   matching the §9.2.6 diagnosis.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
@@ -2688,6 +2801,27 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 outputs `results/unified_h10_run_summary.csv` (per-run means + 95% CIs, all
 co-primary metrics) and `figures/unified_h10_{metrics,budget,jitter,jitter_budget}.png`; rerun both
 after the SmolVLA 1M eval chain (§9.2.10) and after K4 (kiwi π0.5-port 1M row).
+
+The native-h30 full-chunk evaluation (§9.2.11) shares the mechanics with the
+horizon inverted (no `--eval_horizon` → full 30-step scoring over the same
+canonical window): its tree is the shared
+`reeval_v2metrics/eval_common_h32/` (historical §9.2.7 curve, §9.2.8 R50-V1
+curve, §9.2.6 companions) plus the π0.5-port h30 front-run
+`eval_pi05_curve_h30_host.sh` (staged kiwi checkpoints, run names
+`pi05_port_<STEP>_h30_v2`; 650K/700K/1M owned by the kiwi K2 pass), the
+SmolVLA 1M h30 chains (host full-width + kiwi masked-subspace, both
+auto-chained after their trainings), and the K3 notation re-evals.
+Collection/figures:
+
+```bash
+uv run python examples/umi_relative_ee/act_flow_ablation/compile_unified_h30.py
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
+  examples/umi_relative_ee/act_flow_ablation/plot_unified_h30.py
+```
+
+outputs `results/unified_h30_run_summary.csv` and
+`figures/unified_h30_{metrics,budget,jitter,jitter_budget}.png`; rerun both
+as each pending batch lands (port curve, SmolVLA 1M curves, K2/K3 rows).
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories
