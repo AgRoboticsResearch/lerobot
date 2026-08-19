@@ -1872,11 +1872,11 @@ companions, and — new — the π0.5-port h30 curve (`pi05_port_<STEP>_h30_v2`
 runs; host front-run 50k–900k minus 650k/700k via
 `eval_pi05_curve_h30_host.sh`, kiwi K2 owns 650K/700K/1M).
 
-**Status: 46 rows complete (2026-08-19), 70 planned.** Pending: the
-π0.5-port h30 curve (48 host evals in flight as VRAM-gated backfill + 9
-kiwi evals at K2), the SmolVLA 1M full-width h30 curve (30 evals, chained
-after tonight's training exit), the kiwi masked-subspace 1M h30 curve (30
-evals, chained), and the SmolVLA notation ×3-seed re-evals at K3. Every
+**Status: 62 of 87 rows complete (2026-08-19); the π0.5-port h30 curve
+(16 host-front-run points, 50k–900k minus 650k/700k) is in.** Pending: the
+port 650K/700K/1M h30 rows (kiwi K2, in flight), the SmolVLA notation ×3
+seeds (K3, in flight), the SmolVLA 1M full-width h30 curve (chained after
+tonight's training exit), and the kiwi masked-subspace 1M h30 curve. Every
 admitted row passed the compiler's assertions — canonical bounds,
 full-chunk scoring, 500 queries/100 episodes, identical acc@τ scales
 (within-tree), and identical GT jerk (0.158° / 0.67 mm — the full-chunk
@@ -1930,12 +1930,29 @@ GT invariants, slightly different from the t+10 values as expected).
 | act_umi_identity_rot6d_1459_2800000steps | 2800000 | 23.49 [21.62, 25.40] | 4.47 [4.10, 4.85] | 7.69 | 162.0 | 1.310 | 4.24 | 0.974 | 0.715 [0.700, 0.731] | 0.050 |
 | act_umi_identity_rot6d_1459_2900000steps | 2900000 | 23.31 [21.48, 25.18] | 4.44 [4.07, 4.84] | 7.61 | 158.6 | 1.304 | 4.21 | 0.975 | 0.718 [0.703, 0.733] | 0.052 |
 | act_umi_identity_rot6d_1459_3000000steps | 3000000 | 23.31 [21.45, 25.20] | 4.50 [4.12, 4.89] | 7.66 | 160.1 | 1.320 | 4.30 | 0.974 | 0.715 [0.700, 0.731] | 0.054 |
+| pi05_port_0050000_h30_v2 | 50000 | 24.75 [23.29, 26.27] | 4.70 [4.45, 4.97] | 7.15 | 139.0 | 1.325 | 4.16 | 0.971 | 0.714 [0.705, 0.724] | 0.124 |
+| pi05_port_0100000_h30_v2 | 100000 | 23.05 [21.60, 24.58] | 4.43 [4.16, 4.71] | 6.76 | 123.8 | 1.254 | 3.70 | 0.977 | 0.730 [0.720, 0.740] | 0.170 |
+| pi05_port_0150000_h30_v2 | 150000 | 23.31 [21.77, 24.96] | 4.43 [4.13, 4.74] | 6.80 | 126.2 | 1.233 | 3.63 | 0.974 | 0.733 [0.722, 0.744] | 0.140 |
+| pi05_port_0200000_h30_v2 | 200000 | 22.52 [20.88, 24.24] | 4.34 [4.03, 4.64] | 6.61 | 121.9 | 1.207 | 3.54 | 0.975 | 0.737 [0.725, 0.749] | 0.086 |
+| pi05_port_0250000_h30_v2 | 250000 | 22.16 [20.64, 23.75] | 4.27 [3.98, 4.56] | 6.53 | 117.3 | 1.206 | 3.50 | 0.979 | 0.744 [0.733, 0.756] | 0.087 |
+| pi05_port_0300000_h30_v2 | 300000 | 22.09 [20.52, 23.73] | 4.27 [3.98, 4.58] | 6.56 | 120.7 | 1.183 | 3.42 | 0.975 | 0.744 [0.732, 0.755] | 0.131 |
+| pi05_port_0350000_h30_v2 | 350000 | 21.86 [20.32, 23.46] | 4.31 [3.99, 4.63] | 6.51 | 116.2 | 1.202 | 3.52 | 0.977 | 0.741 [0.729, 0.752] | 0.093 |
+| pi05_port_0400000_h30_v2 | 400000 | 21.82 [20.21, 23.47] | 4.27 [3.96, 4.59] | 6.44 | 115.7 | 1.189 | 3.45 | 0.974 | 0.744 [0.732, 0.756] | 0.083 |
+| pi05_port_0450000_h30_v2 | 450000 | 21.56 [20.01, 23.15] | 4.30 [3.98, 4.63] | 6.50 | 114.4 | 1.200 | 3.51 | 0.978 | 0.742 [0.729, 0.754] | 0.086 |
+| pi05_port_0500000_h30_v2 | 500000 | 21.84 [20.31, 23.41] | 4.33 [4.00, 4.66] | 6.49 | 116.2 | 1.206 | 3.56 | 0.975 | 0.743 [0.731, 0.755] | 0.089 |
+| pi05_port_0550000_h30_v2 | 550000 | 21.75 [20.18, 23.36] | 4.27 [3.95, 4.59] | 6.44 | 115.1 | 1.179 | 3.39 | 0.976 | 0.744 [0.732, 0.757] | 0.079 |
+| pi05_port_0600000_h30_v2 | 600000 | 21.83 [20.26, 23.46] | 4.30 [3.97, 4.63] | 6.49 | 116.5 | 1.195 | 3.49 | 0.975 | 0.743 [0.730, 0.755] | 0.087 |
+| pi05_port_0750000_h30_v2 | 750000 | 21.76 [20.12, 23.44] | 4.24 [3.92, 4.57] | 6.52 | 118.3 | 1.186 | 3.43 | 0.976 | 0.744 [0.731, 0.757] | 0.077 |
+| pi05_port_0800000_h30_v2 | 800000 | 21.78 [20.17, 23.44] | 4.27 [3.95, 4.60] | 6.50 | 117.0 | 1.187 | 3.44 | 0.976 | 0.743 [0.730, 0.756] | 0.081 |
+| pi05_port_0850000_h30_v2 | 850000 | 21.70 [20.06, 23.41] | 4.26 [3.93, 4.59] | 6.46 | 116.5 | 1.189 | 3.47 | 0.976 | 0.744 [0.731, 0.757] | 0.073 |
+| pi05_port_0900000_h30_v2 | 900000 | 21.76 [20.16, 23.41] | 4.28 [3.95, 4.61] | 6.50 | 116.8 | 1.193 | 3.48 | 0.976 | 0.743 [0.730, 0.756] | 0.091 |
 
 ![Unified native-h30 metrics across chunk-30 models](figures/unified_h30_metrics.png)
 
-![Unified native-h30 budget curves — historical R18-VAE (30 ckpts) and
-fresh R50-V1 (10 ckpts); the π0.5-port and SmolVLA 1M curves land as their
-sweeps complete](figures/unified_h30_budget.png)
+![Unified native-h30 budget curves — historical R18-VAE (30 ckpts),
+fresh R50-V1 (10 ckpts), and the π0.5-port h30 curve (16 points, plateau
+≈21.7–21.9 mm from 350k); SmolVLA 1M curves land as their chains
+finish](figures/unified_h30_budget.png)
 
 ![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
@@ -1963,11 +1980,26 @@ Read-outs (extended as the pending rows land):
    rougher than every other family (rot-jerk 0.77–0.82° vs 0.03–0.08 for
    the ACT/VAE families); the VAE/L1 ACT families improve from ~0.06° at
    their early checkpoints to 0.03–0.05°, all well under the 0.158° GT.
-   The SmolVLA/openpi/port full-chunk jitter rows land with their sweeps.
+   The π0.5-port h30 curve lands at 0.073–0.091° — between the ACT families
+   and GT, mirroring its h10 position; the SmolVLA curves land with their
+   sweeps.
 4. **MSE:L1 tail ratio separates the objective families at t+30 too**
    (ACT-flow ≈ 24–27 µm/mm vs ≈19–20 for the VAE/L1 families) — the
    heavy-tail penalty of the unweighted flow objective grows with horizon,
    matching the §9.2.6 diagnosis.
+5. **The π0.5-port full-chunk curve ties R50-V1 at every mature budget**
+   (16 host points, 50k–900k minus 650k/700k which kiwi owns). The port
+   reaches its 21.7–21.9 mm / acc@0.1 0.741–0.744 plateau by ~350k and
+   stays flat through 900k — no overfitting, mirroring its h10 curve
+   (§9.2.9). Against R50-V1 over the same budgets the endpoint CIs overlap
+   everywhere (port 21.70–21.84 vs R50-V1 21.22–21.74 mm at ≥600k; acc@0.1
+   0.743 vs 0.742–0.743), so the h10 ACT-vs-port tie carries to t+30.
+   What does NOT carry is the early-budget sample-efficiency edge: at h30
+   port@100k is only 23.05 vs R50-V1's 23.24 mm — a 0.2 mm gap versus the
+   clear §9.2.5 h10 lead — i.e. most of the port's apparent h10 early
+   advantage is a near-horizon artifact; at full chunk the two families
+   learn at nearly the same rate. The port remains mid-pack on smoothness
+   (0.073–0.091° rot-jerk vs ACT's 0.03–0.05°).
 
 ### 9.3 Answers and promotion decision after stage one
 
