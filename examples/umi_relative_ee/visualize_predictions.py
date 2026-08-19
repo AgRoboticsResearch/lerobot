@@ -129,6 +129,28 @@ def rot6d_to_matrix(action_10d: np.ndarray) -> np.ndarray:
     return T
 
 
+# Relative-chunk representation, set from the policy config at load time:
+# "rot6d" (10D [xyz, rot6d(6), gripper]) or "axis_angle" (7D [xyz, rotvec(3), gripper]).
+REL_REPRESENTATION = "rot6d"
+
+
+def rel_to_matrix(rel):
+    """Relative chunk pose -> 4x4 in the chunk-start frame, either notation."""
+    if REL_REPRESENTATION == "axis_angle":
+        from scipy.spatial.transform import Rotation
+
+        T = np.eye(4)
+        T[:3, 3] = rel[:3]
+        T[:3, :3] = Rotation.from_rotvec(np.asarray(rel[3:6])).as_matrix()
+        return T
+    return rot6d_to_matrix(rel)
+
+
+def rel_gripper_index() -> int:
+    """Last-column index of the gripper dim in a relative action vector."""
+    return 6 if REL_REPRESENTATION == "axis_angle" else 9
+
+
 def rot_angle_from_matrix(R: np.ndarray) -> float:
     cos = np.clip((np.trace(R) - 1) / 2, -1, 1)
     return float(np.arccos(cos))
@@ -185,6 +207,8 @@ def load_policy_and_processors(model_path: str, device: torch.device):
     policy.to(device)
     policy.eval()
     policy_config.device = str(device)
+    global REL_REPRESENTATION
+    REL_REPRESENTATION = str(getattr(policy_config, "umi_rotation_representation", "rot6d"))
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
         pretrained_path=model_path,
@@ -202,7 +226,7 @@ def rel_actions_to_traj(rel_10d: np.ndarray) -> np.ndarray:
     """Relative 10D chunk -> 3D points in the chunk-start frame (origin prepended)."""
     pts = [np.zeros(3)]
     for a in rel_10d:
-        pts.append(rot6d_to_matrix(a)[:3, 3])
+        pts.append(rel_to_matrix(a)[:3, 3])
     return np.asarray(pts)
 
 
@@ -220,7 +244,7 @@ def gt_rel_angles(gt_chunk: np.ndarray, gt_ref: np.ndarray) -> np.ndarray:
 
 
 def pred_rel_angles(rel_10d: np.ndarray) -> np.ndarray:
-    return np.asarray([rot_angle_from_matrix(rot6d_to_matrix(a)[:3, :3]) for a in rel_10d])
+    return np.asarray([rot_angle_from_matrix(rel_to_matrix(a)[:3, :3]) for a in rel_10d])
 
 
 def image_to_rgb_uint8(obs) -> np.ndarray:
@@ -622,12 +646,12 @@ def run_camera_mode(args):
                 from scipy.spatial.transform import Rotation
 
                 t_ref = aa_pose_to_matrix(current_state)
-                t_abs_last = t_ref @ rot6d_to_matrix(pred_rel[-1])
+                t_abs_last = t_ref @ rel_to_matrix(pred_rel[-1])
                 current_state = np.concatenate(
                     [
                         t_abs_last[:3, 3],
                         Rotation.from_matrix(t_abs_last[:3, :3]).as_rotvec(),
-                        [pred_rel[-1, 9]],
+                        [pred_rel[-1, rel_gripper_index()]],
                     ]
                 ).astype(np.float32)
 
@@ -636,13 +660,13 @@ def run_camera_mode(args):
                 cam_name = next(iter(cam_images))
                 img_rgb = cam_images[cam_name]
                 if K is not None:
-                    pred_poses = np.stack([np.eye(4)] + [rot6d_to_matrix(a) for a in pred_rel])
+                    pred_poses = np.stack([np.eye(4)] + [rel_to_matrix(a) for a in pred_rel])
                     px, py = project_future(pred_poses, 0, K, tip_kin)
                     img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
                 img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
                 hud1 = f"{policy_type.upper()}  step {step}  task='{args.task}'"
                 hud2 = (
-                    f"grip_pred={float(pred_rel[-1, 9]):.2f}  "
+                    f"grip_pred={float(pred_rel[-1, rel_gripper_index()]):.2f}  "
                     f"inf={ms_ema:.0f}ms  fps={1000.0 / max(ms_ema, 1e-3):.1f}"
                 )
                 for y, txt in ((25, hud1), (50, hud2)):
@@ -942,7 +966,7 @@ def main():
 
         pred_end = pred_traj[-1]
         if gt_traj is not None:
-            pred_end_pose = rot6d_to_matrix(pred_rel[-1])
+            pred_end_pose = rel_to_matrix(pred_rel[-1])
             gt_end_pose = np.linalg.inv(aa_pose_to_matrix(gt_ref)) @ aa_pose_to_matrix(gt_chunk[-1])
             xyz_err = float(np.linalg.norm(pred_end_pose[:3, 3] - gt_end_pose[:3, 3]))
             rot_err = rot_angle_from_matrix(pred_end_pose[:3, :3].T @ gt_end_pose[:3, :3])
@@ -953,7 +977,7 @@ def main():
 
         # draw projected gripper-tip trajectories on the camera image (sroi project_future)
         if args.project and tip_kin is not None and K is not None:
-            pred_poses = np.stack([np.eye(4)] + [rot6d_to_matrix(a) for a in pred_rel])
+            pred_poses = np.stack([np.eye(4)] + [rel_to_matrix(a) for a in pred_rel])
             px, py = project_future(pred_poses, 0, K, tip_kin)
             img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
             if gt_traj is not None:
@@ -968,7 +992,7 @@ def main():
             "task": args.task,
             "xyz_err": xyz_err,
             "rot_err": rot_err,
-            "grip_pred": float(pred_rel[-1, 9]),
+            "grip_pred": float(pred_rel[-1, rel_gripper_index()]),
             "grip_gt": float(gt_chunk[-1, 6]),
         }
         error_rows.append(info.copy())
