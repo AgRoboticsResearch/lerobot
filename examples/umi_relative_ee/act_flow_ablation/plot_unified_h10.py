@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 
 import matplotlib
 
@@ -47,6 +48,7 @@ COLORS = {
     "port": "#ff7f0e",
     "openpi": "#17becf",
     "smol": "#8c564b",
+    "smol1m": "#e377c2",
 }
 
 # Bar-chart representatives: (run, label, family). One row per surviving
@@ -69,6 +71,7 @@ REPRESENTATIVES = [
     ("pi05_port_seed1000_1000000steps", "π0.5 port 1M (kiwi)", "port"),
     ("pi05_port_seed1000_0700000steps", "π0.5 port 700K (kiwi)", "port"),
     ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d 100k", "smol"),
+    ("smolvla_rot6d_seed1000_1000000steps", "SmolVLA rot6d 1M (full-width)", "smol1m"),
     ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-angle 100k", "smol"),
 ]
 
@@ -174,6 +177,10 @@ def fig_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
     )
+    smol1m = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if re.fullmatch(r"smolvla_rot6d_seed1000_\d{7}steps", run)
+    )
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(
         "Unified horizon-10 budget curves — accuracy@0.1 and XYZ endpoint vs training steps",
@@ -188,6 +195,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
+            (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
         ):
             if not series:
                 continue
@@ -232,7 +240,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port + {len(smol1m)} smol-1M points)")
 
 
 def fig_jitter(rows: dict[str, dict]) -> None:
@@ -312,6 +320,10 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
     )
+    smol1m = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if re.fullmatch(r"smolvla_rot6d_seed1000_\d{7}steps", run)
+    )
     ref = next(iter(rows.values()))
     gt_rot = float(ref["gt_rot_jerk_deg"])
     gt_xyz = float(ref["gt_xyz_jerk_m"]) * 1000
@@ -331,6 +343,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
+            (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
         ):
             if not series:
                 continue
@@ -376,7 +389,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_jitter_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port + {len(smol1m)} smol-1M points)")
 
 
 def main() -> int:
