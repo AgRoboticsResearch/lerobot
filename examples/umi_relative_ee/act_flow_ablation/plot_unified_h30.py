@@ -49,6 +49,7 @@ COLORS = {
     "smol": "#8c564b",
     "smol1m": "#e377c2",
     "smolmask": "#7f7f7f",
+    "openpi": "#17becf",
 }
 
 # Bar-chart representatives: (run, label, family). One row per surviving
@@ -69,6 +70,7 @@ REPRESENTATIVES = [
     ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-angle 100k", "smol"),
     ("smolvla_rot6d_1m_seed1000_1000000steps", "SmolVLA rot6d 1M", "smol1m"),
     ("smolvla_masked_1m_seed1000_1000000steps", "SmolVLA masked 1M", "smolmask"),
+    ("pi05_lora_sroi_rot6d_h30_seed1000_0020000steps", "openpi rot6d-h30 20k (native)", "openpi"),
 ]
 
 PANELS = [
@@ -90,6 +92,7 @@ FAMILY_PREFIXES = [
     ("act_r50_vae_", "r50vae", "R50-VAE"),
     ("act_r18_flow_u_lr1e5_", "flow", "ACT-flow"),
     ("pi05_port_", "port", "π0.5 port h30"),
+    ("pi05_lora_sroi_rot6d_h30_", "openpi", "openpi rot6d-h30"),
     ("smolvla_rot6d_1m_", "smol1m", "SmolVLA rot6d 1M"),
     ("smolvla_masked_1m_", "smolmask", "SmolVLA masked 1M"),
     ("smolvla_rot6d_", "smol", "SmolVLA rot6d"),

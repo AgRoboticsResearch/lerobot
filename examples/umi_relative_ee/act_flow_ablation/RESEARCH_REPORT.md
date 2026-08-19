@@ -1989,18 +1989,22 @@ every model whose action chunk supports 30 steps is scored over the FULL
 chunk under the canonical 500-query window (bounds [-1,31], endpoint = t+30,
 deterministic ACT at seed 1000, stochastic flow models at 3 inference seeds
 averaged within episode, 95% episode bootstrap). Openpi's h10-trained arms
-(chunk 10) are out of scope by construction; the h30-trained openpi arm is
-a pending optional row (its canonical-window native-h30 score requires a
-JAX re-run). The tree is the shared `reeval_v2metrics/eval_common_h32/`
+(chunk 10) are out of scope by construction; the h30-trained openpi arm
+(rot6d, 20k steps) is included as an optional row — its canonical-window
+native-h30 score was re-run on the freed host GPU on 2026-08-19 (23.20
+[21.56, 24.91] mm / acc@0.1 0.725 / rot-jerk 0.178°, single inference seed
+like its §9.2.9 siblings, consistent with the old-window §9.2.5 Arm-A
+value 23.83 / 0.702 / 0.181). The tree is the shared `reeval_v2metrics/eval_common_h32/`
 holding the §9.2.7 historical curve, the §9.2.8 R50-V1 curve, the §9.2.6
 companions, and — new — the π0.5-port h30 curve (`pi05_port_<STEP>_h30_v2`
 runs; host front-run 50k–900k minus 650k/700k via
 `eval_pi05_curve_h30_host.sh`, kiwi K2 owns 650K/700K/1M).
 
-**Status: 77 of 87 rows complete (2026-08-19); the full π0.5-port h30
-curve (19 points, 50k–1M), the SmolVLA notation h30 pair, and the SmolVLA
-1M full-width h30 curve (10 points, §9.2.10) are in.** Pending: only the
-kiwi masked-subspace 1M h30 curve. Every
+**Status: 77 of 87 rows complete + the optional openpi h30 row (78 total;
+2026-08-19); the full π0.5-port h30 curve (19 points, 50k–1M), the SmolVLA
+notation h30 pair, the SmolVLA 1M full-width h30 curve (10 points,
+§9.2.10), and the openpi h30-trained arm are in.** Pending: only the kiwi
+masked-subspace 1M h30 curve. Every
 admitted row passed the compiler's assertions — canonical bounds,
 full-chunk scoring, 500 queries/100 episodes, identical acc@τ scales
 (within-tree), and identical GT jerk (0.158° / 0.67 mm — the full-chunk
@@ -2054,6 +2058,7 @@ GT invariants, slightly different from the t+10 values as expected).
 | act_umi_identity_rot6d_1459_2800000steps | 2800000 | 23.49 [21.62, 25.40] | 4.47 [4.10, 4.85] | 7.69 | 162.0 | 1.310 | 4.24 | 0.974 | 0.715 [0.700, 0.731] | 0.050 |
 | act_umi_identity_rot6d_1459_2900000steps | 2900000 | 23.31 [21.48, 25.18] | 4.44 [4.07, 4.84] | 7.61 | 158.6 | 1.304 | 4.21 | 0.975 | 0.718 [0.703, 0.733] | 0.052 |
 | act_umi_identity_rot6d_1459_3000000steps | 3000000 | 23.31 [21.45, 25.20] | 4.50 [4.12, 4.89] | 7.66 | 160.1 | 1.320 | 4.30 | 0.974 | 0.715 [0.700, 0.731] | 0.054 |
+| pi05_lora_sroi_rot6d_h30_seed1000_0020000steps | 20000 | 23.20 [21.56, 24.91] | 4.68 [4.36, 5.03] | 6.99 | 123.7 | 1.328 | 4.13 | 0.977 | 0.725 [0.712, 0.736] | 0.178 |
 | pi05_port_0050000_h30_v2 | 50000 | 24.75 [23.29, 26.27] | 4.70 [4.45, 4.97] | 7.15 | 139.0 | 1.325 | 4.16 | 0.971 | 0.714 [0.705, 0.724] | 0.124 |
 | pi05_port_0100000_h30_v2 | 100000 | 23.05 [21.60, 24.58] | 4.43 [4.16, 4.71] | 6.76 | 123.8 | 1.254 | 3.70 | 0.977 | 0.730 [0.720, 0.740] | 0.170 |
 | pi05_port_0150000_h30_v2 | 150000 | 23.31 [21.77, 24.96] | 4.43 [4.13, 4.74] | 6.80 | 126.2 | 1.233 | 3.63 | 0.974 | 0.733 [0.722, 0.744] | 0.140 |
@@ -2157,6 +2162,16 @@ Read-outs (extended as the pending rows land):
    trails ACT-L1's 100k budget (23.31 mm). Read with §9.2.10 read-out 3:
    near-horizon parity at full budget, far-horizon deficit that survives
    10× budget — the only family for which this is true.
+8. **The openpi h30-trained arm lands mid-pack at 2% of the port's
+   budget.** 23.20 [21.56, 24.91] mm / acc@0.1 0.725 at just 20k steps —
+   already at the ACT-L1@100k level (23.7) and ~1.7 mm from the mature
+   port/R50-V1 plateau, with GT-level smoothness (rot-jerk 0.178° vs GT
+   0.158°). The §9.2.5 sample-efficiency conclusion (the openpi recipe
+   learns ~9× faster than the ACT path) carries to the canonical-window
+   full-chunk protocol: the JAX arm is the most budget-efficient chunk-30
+   controller in the inventory, with the caveat of its 20k training budget
+   (§9.2.5 showed h30 training costs ~15% near-horizon precision vs h10
+   training — visible here as its absence from the t+10 leaders).
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -3011,8 +3026,9 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 
 outputs `results/unified_h30_run_summary.csv` and
 `figures/unified_h30_{metrics,budget,jitter,jitter_budget}.png`; the port
-curve, K2/K3 rows, and the SmolVLA full-width curve landed 2026-08-19 (77
-runs) — rerun both only after the masked curve lands.
+curve, K2/K3 rows, the SmolVLA full-width curve, and the optional openpi
+h30 row landed 2026-08-19 (78 runs) — rerun both only after the masked
+curve lands.
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories
