@@ -187,7 +187,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
-            (port, COLORS["port"], "π0.5 port (kiwi curve, 18 ckpts)", "^"),
+            (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
         ):
             if not series:
                 continue
@@ -330,7 +330,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
-            (port, COLORS["port"], "π0.5 port (kiwi curve, 18 ckpts)", "^"),
+            (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
         ):
             if not series:
                 continue
