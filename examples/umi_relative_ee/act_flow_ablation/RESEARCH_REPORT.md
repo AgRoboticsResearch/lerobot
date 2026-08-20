@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1687,10 +1687,11 @@ families — superseded by their 100k+ checkpoints. Outputs live under
 plus a cross-schema compiler; drivers: `eval_unified_h10_sweep.sh` (host),
 `kiwi_eval_unified_h10.sh` (kiwi, K-phase).
 
-**Status: all 81 rows complete (2026-08-19) — the π0.5-port 1M final landed
+**Status: all 91 rows complete (2026-08-20) — the π0.5-port 1M final landed
 with K1** (9.00 [8.43, 9.58] mm, flat vs 700K — no overfitting through the
-full schedule)**, and the SmolVLA rot6d 1M full-width curve (§9.2.10) joined
-the same day.** The SmolVLA rows were front-run on
+full schedule)**, the SmolVLA rot6d 1M full-width curve (§9.2.10) joined
+2026-08-19, and the kiwi masked-subspace 1M curve (10 rows, §9.2.10
+Option B) joined 2026-08-20.** The SmolVLA rows were front-run on
 2026-08-18: the two kiwi-trained checkpoints were copied (weights only) to
 the host artifact tree and evaluated on the then-idle host GPU with
 identical flags (`eval_smolvla_unified_h10_host.sh`) rather than waiting
@@ -1910,9 +1911,12 @@ every other model: 10 checkpoints × 3 inference seeds × both protocols
 deterministic-free flow sampling at seeds 1000/2000/3000 averaged within
 episode, 95% episode bootstrap.
 
-**Status: Option A (host full-width) complete 2026-08-19 — training
-20:14:56 @1M, 60/60 evals, 0 failures. Option B (kiwi masked) training,
-ETA ≈ 2026-08-20 13:00 + chained 60-eval pass; the A/B verdict lands then.**
+**Status: both arms complete. Option A (host full-width) 2026-08-19 —
+training 20:14:56 @1M, 60/60 evals, 0 failures. Option B (kiwi masked)
+2026-08-20 — training 14:00:14 @1M (28h46m, final flow loss 0.0421 on real
+dims with exactly 0.0000 on padded dims — the mask does what it claims),
+60/60 evals, 0 failures. A/B verdict below: endpoint-tie at every budget;
+masking buys only a small late-budget smoothness edge.**
 
 Unified horizon-10 rows (§9.2.9 protocol):
 
@@ -1940,7 +1944,7 @@ Native-h30 milestones (full 10-row table in §9.2.11):
 | 700k | 9.27 | 26.27 | 0.931 | 0.724 | 0.485 | 0.717 |
 | 1M | 9.06 | 26.26 | 0.933 | 0.729 | 0.428 | 0.656 |
 
-Read-outs (Option A; the padding A/B verdict lands with Option B):
+Read-outs (Option A):
 
 1. **Replication check: fresh-100k does NOT match notation-100k at t+10.**
    10.51 [9.95, 11.06] vs 9.08 [8.62, 9.57] mm — disjoint intervals, ~1.4 mm
@@ -1977,9 +1981,66 @@ Read-outs (Option A; the padding A/B verdict lands with Option B):
    behaves like the port's, not like matched-ACT-flow's (§9.2.9 read-out 4).
 
 The budget figures (`figures/unified_h10_budget.png`,
-`figures/unified_h30_budget.png`, `*_jitter_budget.png`) carry the
-full-width curve; the masked arm joins as the fifth line when its evals
-land.
+`figures/unified_h30_budget.png`, `*_jitter_budget.png`) carry both
+curves — full-width as the fourth line, masked as the fifth.
+
+Option B (masked-subspace) unified horizon-10 rows (§9.2.9 protocol):
+
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| smolvla_masked_seed1000_0100000steps | 100000 | 10.71 [10.15, 11.26] | 1.75 [1.67, 1.83] | 3.40 | 22.8 | 0.545 | 0.58 | 0.992 | 0.909 [0.903, 0.914] | 1.289 |
+| smolvla_masked_seed1000_0200000steps | 200000 | 10.43 [9.94, 10.92] | 1.70 [1.62, 1.78] | 3.59 | 22.3 | 0.578 | 0.59 | 0.992 | 0.911 [0.906, 0.916] | 0.762 |
+| smolvla_masked_seed1000_0300000steps | 300000 | 9.38 [8.91, 9.87] | 1.69 [1.60, 1.77] | 2.68 | 15.0 | 0.494 | 0.50 | 0.993 | 0.930 [0.925, 0.934] | 0.831 |
+| smolvla_masked_seed1000_0400000steps | 400000 | 9.05 [8.55, 9.54] | 1.71 [1.63, 1.80] | 2.43 | 13.4 | 0.533 | 0.55 | 0.993 | 0.930 [0.925, 0.935] | 0.813 |
+| smolvla_masked_seed1000_0500000steps | 500000 | 9.21 [8.72, 9.70] | 1.78 [1.70, 1.85] | 2.42 | 13.8 | 0.517 | 0.53 | 0.993 | 0.926 [0.921, 0.930] | 0.489 |
+| smolvla_masked_seed1000_0600000steps | 600000 | 9.55 [9.02, 10.07] | 1.78 [1.70, 1.86] | 2.67 | 15.4 | 0.568 | 0.58 | 0.993 | 0.925 [0.920, 0.930] | 0.455 |
+| smolvla_masked_seed1000_0700000steps | 700000 | 9.18 [8.70, 9.66] | 1.68 [1.60, 1.76] | 2.33 | 13.7 | 0.494 | 0.49 | 0.993 | 0.931 [0.926, 0.936] | 0.443 |
+| smolvla_masked_seed1000_0800000steps | 800000 | 9.28 [8.75, 9.82] | 1.63 [1.56, 1.71] | 2.31 | 14.0 | 0.444 | 0.44 | 0.993 | 0.932 [0.927, 0.936] | 0.403 |
+| smolvla_masked_seed1000_0900000steps | 900000 | 9.17 [8.65, 9.70] | 1.64 [1.56, 1.72] | 2.22 | 13.4 | 0.456 | 0.45 | 0.993 | 0.933 [0.928, 0.938] | 0.401 |
+| smolvla_masked_seed1000_1000000steps | 1000000 | 9.15 [8.63, 9.67] | 1.63 [1.55, 1.71] | 2.22 | 13.3 | 0.441 | 0.44 | 0.993 | 0.933 [0.929, 0.938] | 0.398 |
+
+Option B native-h30 milestones (full 10-row table in §9.2.11):
+
+| step | XYZ end h10 (mm) | XYZ end h30 (mm) | acc@0.1 h10 | acc@0.1 h30 | Rot jerk h10 (deg) | Rot jerk h30 (deg) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k | 10.71 | 29.07 | 0.909 | 0.699 | 1.289 | 1.582 |
+| 300k | 9.38 | 26.45 | 0.930 | 0.723 | 0.831 | 1.093 |
+| 500k | 9.21 | 25.84 | 0.926 | 0.724 | 0.489 | 0.718 |
+| 700k | 9.18 | 26.21 | 0.931 | 0.733 | 0.443 | 0.639 |
+| 1M | 9.15 | 26.15 | 0.933 | 0.736 | 0.398 | 0.595 |
+
+**Padding-mode A/B verdict (matched 1M budget, identical recipe and seed):**
+
+1. **Endpoint: statistical tie at every budget, both horizons.** t+10:
+   masked 10.71→9.15 mm vs full-width 10.51→9.06 — intervals overlap at
+   all ten steps (1M gap 0.09 mm, CIs ±0.5). t+30: 29.07→26.15 vs
+   28.50→26.26, likewise overlapping everywhere (masked's best mid-curve
+   point 25.84 @500k sits inside A's CI). Neither the plateau level
+   (~9.1 mm t+10 / ~26.2 mm t+30, from ~400k) nor the plateau onset
+   moves.
+2. **Near-horizon accuracy: tie.** acc@0.1 t+10 identical to the third
+   decimal at 1M (0.933 both); t+30 masked edges ahead 0.736 vs 0.729 —
+   inside the ±0.011 CI overlap.
+3. **Smoothness: the one real (small) difference — masking is ~7–9%
+   smoother at convergence and reaches the smooth regime earlier.** h10
+   rot-jerk @1M 0.398 vs 0.428°; h30 0.595 vs 0.656°. The h30 gap is
+   visible through the mid-curve: 200k 0.97 vs 1.09°, 300k 1.09 vs A's
+   1.51° spike, 700k 0.64 vs 0.72°. At 100k the picture briefly
+   reverses (masked 1.29/1.58 vs A 1.04/1.39°) — masking does not buy
+   a faster start.
+4. **The strawberry-dataset padding pathology does not reproduce here.**
+   `OPENPI_FULL_WIDTH_FLOW_MATCHING.md` found full-width padding decisive
+   for within-chunk jitter at 1M on strawberry; on this task the two
+   modes are near-interchangeable (endpoint tie, ≤9% jerk gap) — the
+   padding sensitivity is task-dependent, not a universal recipe rule.
+   Consistent with the §9.2.4 note that a 1M-step padding-loss A/B
+   already found full-width ≈ masked; and for §9.2.3's notation question
+   this confirms rot6d SmolVLA's behavior is padding-robust.
+5. **Practical default unchanged.** With endpoint tied and the smoothness
+   edge small, `openpi_full_width` (the library default, Option A) stays
+   the recommended recipe; `masked_subspace` is a safe drop-in where the
+   padded-dim loss term is undesirable (e.g. exact-loss accounting), at
+   no measured endpoint cost.
 
 ### 9.2.11 Unified native-h30 (full-chunk) evaluation of every chunk-30 model
 
@@ -2000,11 +2061,10 @@ companions, and — new — the π0.5-port h30 curve (`pi05_port_<STEP>_h30_v2`
 runs; host front-run 50k–900k minus 650k/700k via
 `eval_pi05_curve_h30_host.sh`, kiwi K2 owns 650K/700K/1M).
 
-**Status: 77 of 87 rows complete + the optional openpi h30 row (78 total;
-2026-08-19); the full π0.5-port h30 curve (19 points, 50k–1M), the SmolVLA
-notation h30 pair, the SmolVLA 1M full-width h30 curve (10 points,
-§9.2.10), and the openpi h30-trained arm are in.** Pending: only the kiwi
-masked-subspace 1M h30 curve. Every
+**Status: all rows complete (88 total; 2026-08-20); the full π0.5-port h30
+curve (19 points, 50k–1M), the SmolVLA notation h30 pair, the SmolVLA 1M
+full-width h30 curve (10 points, §9.2.10), the openpi h30-trained arm, and
+the kiwi masked-subspace 1M h30 curve (10 points, §9.2.10) are in.** Every
 admitted row passed the compiler's assertions — canonical bounds,
 full-chunk scoring, 500 queries/100 episodes, identical acc@τ scales
 (within-tree), and identical GT jerk (0.158° / 0.67 mm — the full-chunk
@@ -2090,13 +2150,24 @@ GT invariants, slightly different from the t+10 values as expected).
 | smolvla_rot6d_1m_seed1000_0900000steps | 900000 | 26.43 [24.71, 28.18] | 4.42 [4.18, 4.67] | 7.18 | 148.5 | 1.251 | 3.62 | 0.976 | 0.728 [0.718, 0.737] | 0.649 |
 | smolvla_rot6d_1m_seed1000_1000000steps | 1000000 | 26.26 [24.54, 28.02] | 4.41 [4.17, 4.66] | 7.15 | 146.7 | 1.247 | 3.62 | 0.976 | 0.729 [0.719, 0.738] | 0.656 |
 | smolvla_rot6d_seed1000_100000steps | 100000 | 27.29 [25.72, 28.87] | 4.68 [4.45, 4.92] | 7.35 | 150.6 | 1.296 | 3.95 | 0.974 | 0.714 [0.705, 0.723] | 0.924 |
+| smolvla_masked_1m_seed1000_0100000steps | 100000 | 29.07 [27.36, 30.74] | 4.70 [4.45, 4.96] | 8.22 | 178.1 | 1.314 | 3.93 | 0.971 | 0.699 [0.690, 0.708] | 1.582 |
+| smolvla_masked_1m_seed1000_0200000steps | 200000 | 26.44 [24.88, 28.00] | 4.44 [4.19, 4.71] | 7.84 | 149.1 | 1.297 | 3.73 | 0.977 | 0.717 [0.709, 0.726] | 0.966 |
+| smolvla_masked_1m_seed1000_0300000steps | 300000 | 26.45 [24.70, 28.21] | 4.52 [4.27, 4.79] | 7.36 | 145.2 | 1.273 | 3.70 | 0.976 | 0.723 [0.714, 0.732] | 1.093 |
+| smolvla_masked_1m_seed1000_0400000steps | 400000 | 26.22 [24.57, 27.91] | 4.43 [4.17, 4.71] | 7.15 | 141.2 | 1.277 | 3.73 | 0.976 | 0.728 [0.718, 0.738] | 1.026 |
+| smolvla_masked_1m_seed1000_0500000steps | 500000 | 25.84 [24.14, 27.61] | 4.51 [4.24, 4.80] | 7.15 | 142.7 | 1.291 | 3.77 | 0.975 | 0.724 [0.714, 0.734] | 0.718 |
+| smolvla_masked_1m_seed1000_0600000steps | 600000 | 26.27 [24.43, 28.11] | 4.44 [4.16, 4.73] | 7.37 | 150.2 | 1.287 | 3.73 | 0.975 | 0.726 [0.716, 0.736] | 0.653 |
+| smolvla_masked_1m_seed1000_0700000steps | 700000 | 26.21 [24.41, 28.03] | 4.37 [4.09, 4.67] | 7.17 | 148.8 | 1.243 | 3.60 | 0.975 | 0.733 [0.723, 0.744] | 0.639 |
+| smolvla_masked_1m_seed1000_0800000steps | 800000 | 26.74 [24.81, 28.74] | 4.40 [4.11, 4.69] | 7.28 | 156.9 | 1.222 | 3.57 | 0.974 | 0.732 [0.722, 0.743] | 0.586 |
+| smolvla_masked_1m_seed1000_0900000steps | 900000 | 26.30 [24.45, 28.22] | 4.36 [4.08, 4.65] | 7.15 | 150.9 | 1.220 | 3.53 | 0.975 | 0.734 [0.723, 0.745] | 0.596 |
+| smolvla_masked_1m_seed1000_1000000steps | 1000000 | 26.15 [24.31, 28.05] | 4.35 [4.07, 4.64] | 7.13 | 149.3 | 1.213 | 3.54 | 0.975 | 0.736 [0.725, 0.746] | 0.595 |
 
 ![Unified native-h30 metrics across chunk-30 models](figures/unified_h30_metrics.png)
 
 ![Unified native-h30 budget curves — historical R18-VAE (30 ckpts),
 fresh R50-V1 (10 ckpts), the π0.5-port h30 curve (19 points, plateau
-≈21.7–21.9 mm from 350k through 1M), and the SmolVLA 1M full-width curve
-(10 points, 28.5 → 26.3 mm); the masked curve lands last](figures/unified_h30_budget.png)
+≈21.7–21.9 mm from 350k through 1M), the SmolVLA 1M full-width curve
+(10 points, 28.5 → 26.3 mm), and the SmolVLA masked 1M curve
+(10 points, 29.1 → 26.2 mm; ties full-width, §9.2.10)](figures/unified_h30_budget.png)
 
 ![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
@@ -3005,7 +3076,7 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 outputs `results/unified_h10_run_summary.csv` (per-run means + 95% CIs, all
 co-primary metrics) and `figures/unified_h10_{metrics,budget,jitter,jitter_budget}.png`; the K-phase
 and the SmolVLA full-width chain landed 2026-08-19 (81 runs incl. the §9.2.10
-curve) — rerun both only after the masked chain completes §9.2.10.
+curve); the masked chain added its 10 rows on 2026-08-20 (91 runs total).
 
 The native-h30 full-chunk evaluation (§9.2.11) shares the mechanics with the
 horizon inverted (no `--eval_horizon` → full 30-step scoring over the same
@@ -3027,8 +3098,8 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 outputs `results/unified_h30_run_summary.csv` and
 `figures/unified_h30_{metrics,budget,jitter,jitter_budget}.png`; the port
 curve, K2/K3 rows, the SmolVLA full-width curve, and the optional openpi
-h30 row landed 2026-08-19 (78 runs) — rerun both only after the masked
-curve lands.
+h30 row landed 2026-08-19 (78 runs); the masked curve added its 10 rows
+on 2026-08-20 (88 runs total).
 
 The v2 pass records the authoritative evaluated checkpoint step from each
 report filename (early-stopped companions sit in `100000steps` directories
