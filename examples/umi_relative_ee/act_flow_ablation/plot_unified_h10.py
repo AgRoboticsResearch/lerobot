@@ -50,6 +50,7 @@ COLORS = {
     "smol": "#8c564b",
     "smol1m": "#e377c2",
     "smolmask": "#7f7f7f",
+    "openpi1m": "#bcbd22",
 }
 
 # Bar-chart representatives: (run, label, family). One row per surviving
@@ -68,6 +69,7 @@ REPRESENTATIVES = [
     ("pi05_lora_sroi_rot6d_seed1000_0020000steps", "openpi rot6d 20k", "openpi"),
     ("pi05_lora_sroi_rotvec_seed1000_0020000steps", "openpi rotvec 20k", "openpi"),
     ("pi05_lora_sroi_rot6d_h30_seed1000_0020000steps", "openpi rot6d-h30 20k", "openpi"),
+    ("pi05_openpi1m_seed1000_0100001steps", "openpi rot6d 100k (§9.2.12)", "openpi1m"),
     # kiwi rows (K4): rendered when present
     ("pi05_port_seed1000_1000000steps", "π0.5 port 1M (kiwi)", "port"),
     ("pi05_port_seed1000_0700000steps", "π0.5 port 700K (kiwi)", "port"),
@@ -99,6 +101,7 @@ FAMILY_PREFIXES = [
     ("pi05_lora_sroi_rot6d_h30_", "openpi", "openpi rot6d-h30"),
     ("pi05_lora_sroi_rot6d_", "openpi", "openpi rot6d"),
     ("pi05_lora_sroi_rotvec_", "openpi", "openpi rotvec"),
+    ("pi05_openpi1m_", "openpi1m", "openpi rot6d 1M-run"),
     ("pi05_port_", "port", "π0.5 port"),
     ("smolvla_rot6d_", "smol", "SmolVLA rot6d"),
     ("smolvla_axis_angle_", "smol", "SmolVLA axis-angle"),
@@ -226,6 +229,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
             ("pi05_lora_sroi_rot6d_seed1000_0020000steps", "openpi rot6d", "openpi"),
             ("pi05_lora_sroi_rotvec_seed1000_0020000steps", "openpi rotvec", "openpi"),
             ("pi05_lora_sroi_rot6d_h30_seed1000_0020000steps", "openpi h30", "openpi"),
+            ("pi05_openpi1m_seed1000_0100001steps", "openpi 1M-run 100k", "openpi1m"),
             ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe", "port"),
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
@@ -379,6 +383,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
             ("pi05_lora_sroi_rot6d_seed1000_0020000steps", "openpi rot6d", "openpi"),
             ("pi05_lora_sroi_rotvec_seed1000_0020000steps", "openpi rotvec", "openpi"),
             ("pi05_lora_sroi_rot6d_h30_seed1000_0020000steps", "openpi h30", "openpi"),
+            ("pi05_openpi1m_seed1000_0100001steps", "openpi 1M-run 100k", "openpi1m"),
             ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe", "port"),
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
