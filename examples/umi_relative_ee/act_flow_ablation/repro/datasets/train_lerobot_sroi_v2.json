@@ -1,0 +1,1142 @@
+{
+ "files": {
+  "data/chunk-000/file-000.parquet": [
+   777174,
+   "171fa96f1455d0a3868c5b2a54746161c69355f88650a3d17226ad6ef4701fa3"
+  ],
+  "meta/camera_info/episode_001/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_001/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_001/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_002/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_002/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_002/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_003/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_003/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_003/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_004/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_004/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_004/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_005/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_005/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_005/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_006/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_006/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_006/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_007/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_007/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_007/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_008/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_008/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_008/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_009/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_009/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_009/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_010/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_010/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_010/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_011/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_011/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_011/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_012/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_012/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_012/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_013/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_013/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_013/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_014/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_014/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_014/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_015/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_015/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_015/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_016/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_016/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_016/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_017/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_017/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_017/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_018/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_018/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_018/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_019/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_019/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_019/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_020/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_020/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_020/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_021/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_021/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_021/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_022/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_022/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_022/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_023/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_023/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_023/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_024/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_024/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_024/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_025/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_025/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_025/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_026/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_026/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_026/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_027/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_027/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_027/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_028/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_028/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_028/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_029/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_029/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_029/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_030/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_030/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_030/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_031/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_031/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_031/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_032/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_032/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_032/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_033/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_033/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_033/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_034/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_034/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_034/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_035/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_035/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_035/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_036/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_036/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_036/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_037/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_037/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_037/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_038/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_038/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_038/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_039/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_039/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_039/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_040/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_040/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_040/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_041/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_041/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_041/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_042/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_042/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_042/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_043/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_043/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_043/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_044/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_044/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_044/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_045/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_045/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_045/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_046/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_046/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_046/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_047/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_047/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_047/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_048/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_048/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_048/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_049/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_049/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_049/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_050/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_050/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_050/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_051/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_051/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_051/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_052/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_052/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_052/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_053/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_053/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_053/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_054/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_054/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_054/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_055/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_055/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_055/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_056/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_056/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_056/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_057/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_057/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_057/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_058/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_058/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_058/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_059/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_059/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_059/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_060/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_060/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_060/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_061/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_061/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_061/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_062/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_062/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_062/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_063/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_063/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_063/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_064/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_064/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_064/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_065/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_065/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_065/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_066/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_066/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_066/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_067/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_067/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_067/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_068/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_068/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_068/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_069/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_069/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_069/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_070/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_070/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_070/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_071/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_071/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_071/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_072/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_072/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_072/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_073/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_073/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_073/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_074/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_074/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_074/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_075/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_075/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_075/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_076/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_076/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_076/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_077/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_077/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_077/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_078/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_078/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_078/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_079/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_079/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_079/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_080/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_080/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_080/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_081/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_081/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_081/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_082/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_082/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_082/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_083/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_083/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_083/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_084/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_084/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_084/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/camera_info/episode_085/camera_info_color.json": [
+   637,
+   "f5bddeef8cfcb53c7f5caff97358eb6dbb68a646fcf46f04ccbb7f2f1424d918"
+  ],
+  "meta/camera_info/episode_085/camera_info_left.json": [
+   549,
+   "69b18d3c121efd6e36b86b435db0b1cd71d7b5daa1c39b1d2ca7af1ded65e50d"
+  ],
+  "meta/camera_info/episode_085/camera_info_right.json": [
+   564,
+   "75440cfa11a276efd60a86f6bbf85cfcd3a8b6b146fb811b8cd96430cf147288"
+  ],
+  "meta/episodes/chunk-000/file-000.parquet": [
+   277957,
+   "6206535c94d07dc266b5da91d988f078c56d1d5f7a13f3ff5ca5861f9c705767"
+  ],
+  "meta/info.json": [
+   2191,
+   "f84ab81f5ba52efe800e9e3b1fb1ac74d3641e5ff9e959228da153c41dd5ec97"
+  ],
+  "meta/stats.json": [
+   8275,
+   "42c3b5a4be6c2d3fc2c059a12bf3e6c85fae8e81b72c39d47df2b6b68686c8f1"
+  ],
+  "meta/tasks.parquet": [
+   2141,
+   "f084f516eb483b96b1b596085870a30be24a7ec74ecff89c87fa6309a6efe63e"
+  ]
+ },
+ "full_video_hash": false,
+ "generated": "2026-08-23 19:54:52",
+ "meta_info": {
+  "chunks_size": 1000,
+  "codebase_version": "v3.0",
+  "data_files_size_in_mb": 100,
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "features": {
+   "action": {
+    "dtype": "float32",
+    "names": [
+     "ee.x",
+     "ee.y",
+     "ee.z",
+     "ee.wx",
+     "ee.wy",
+     "ee.wz",
+     "ee.gripper_pos"
+    ],
+    "shape": [
+     7
+    ]
+   },
+   "episode_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "frame_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "observation.images.camera": {
+    "dtype": "video",
+    "info": {
+     "has_audio": false,
+     "video.channels": 3,
+     "video.codec": "av1",
+     "video.fps": 30,
+     "video.height": 480,
+     "video.is_depth_map": false,
+     "video.pix_fmt": "yuv420p",
+     "video.width": 640
+    },
+    "names": [
+     "height",
+     "width",
+     "channels"
+    ],
+    "shape": [
+     480,
+     640,
+     3
+    ]
+   },
+   "task_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "timestamp": {
+    "dtype": "float32",
+    "names": null,
+    "shape": [
+     1
+    ]
+   }
+  },
+  "fps": 30,
+  "robot_type": "so100",
+  "splits": {
+   "train": "0:85"
+  },
+  "total_episodes": 85,
+  "total_frames": 13050,
+  "total_tasks": 1,
+  "video_files_size_in_mb": 200,
+  "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+ },
+ "num_hashed_files": 260,
+ "num_videos": 1,
+ "root": "/mnt/data1/sroi/lerobot/lerobot_sroi_v2",
+ "video_bytes_total": 184557047,
+ "videos_manifest_sha256": "bcbce89a13a076bb49efdc3ce730946a6d1048e5aea786203a9039c156fb7e19"
+}

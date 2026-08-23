@@ -201,18 +201,27 @@ def _so3_angle_deg(matrix: torch.Tensor) -> torch.Tensor:
     return torch.rad2deg(torch.acos(cosine))
 
 
-def within_chunk_jerk(poses: torch.Tensor) -> dict[str, float]:
-    """Within-chunk smoothness of a single predicted or GT chunk.
+def within_chunk_second_difference(poses: torch.Tensor) -> dict[str, float]:
+    """Within-chunk curvature proxy of a single predicted or GT chunk.
 
     This is the "jitter" metric: how much the per-step motion *changes* across the
-    chunk (the second difference, a.k.a. jerk). It is computed on one prediction in
-    isolation (no cross-frame/open-loop accumulation). ~0 means a smooth,
-    near-constant-velocity trajectory; large values mean the predicted action
-    oscillates within the chunk — the wiggle seen in the video, which the endpoint
-    accuracy metrics (``rotation_end_deg`` etc.) cannot see.
+    chunk. It is the **discrete second difference** ``x[t+2] - 2*x[t+1] + x[t]``
+    (for rotation: the relative rotation between consecutive inter-step relative
+    rotations) — i.e. an *acceleration/curvature* proxy, **not** a physical jerk
+    (which is a third derivative), and it is **not** divided by ``dt**2``, so its
+    units are deg/step² and m/step² rather than physical deg/s² and m/s².
+    Historical JSON keys (``rot_jerk_deg`` / ``xyz_jerk_m``) are kept for compiler
+    compatibility; the report labels this metric as the "second difference".
+    Physical-unit velocity/acceleration/jerk live in ``within_chunk_dynamics``.
+
+    Computed on one prediction in isolation (no cross-frame/open-loop
+    accumulation). ~0 means a smooth, near-constant-velocity trajectory; large
+    values mean the predicted action oscillates within the chunk — the wiggle
+    seen in the video, which the endpoint accuracy metrics (``rotation_end_deg``
+    etc.) cannot see.
 
     ``poses`` is ``[steps, 7]`` absolute ``[xyz, axis-angle, gripper]``.
-    Returns rotation jerk (deg) and xyz jerk (m).
+    Returns rotation second difference (deg) and xyz second difference (m).
     """
     steps = poses.shape[0]
     if steps < 3:
@@ -223,6 +232,50 @@ def within_chunk_jerk(poses: torch.Tensor) -> dict[str, float]:
     step_xyz = poses[1:, :3] - poses[:-1, :3]  # inter-step position delta
     xyz_jerk = (step_xyz[1:] - step_xyz[:-1]).norm(dim=-1).mean()
     return {"rot_jerk_deg": float(rot_jerk), "xyz_jerk_m": float(xyz_jerk)}
+
+
+def within_chunk_dynamics(poses: torch.Tensor, dt: float) -> dict[str, float]:
+    """Physical-unit velocity / acceleration / jerk of one predicted or GT chunk.
+
+    Finite differences on the ``[steps, 7]`` absolute poses at control period
+    ``dt`` (seconds): velocity = first difference / dt, acceleration = second
+    difference / dt², jerk = **third** difference / dt³. Rotation uses the
+    magnitude of the inter-step SO(3) rotation as angular speed, then finite
+    differences of that scalar — so ``rot_jerk_deg_s3`` is the physical angular
+    jerk magnitude in deg/s³, and ``xyz_jerk_m_s3`` the translational jerk
+    magnitude in m/s³. Means are over the chunk.
+
+    Returns zeros when the chunk is too short for the given derivative order.
+    """
+    steps = poses.shape[0]
+    out = {
+        "rot_vel_deg_s": 0.0,
+        "rot_accel_deg_s2": 0.0,
+        "rot_jerk_deg_s3": 0.0,
+        "xyz_vel_m_s": 0.0,
+        "xyz_accel_m_s2": 0.0,
+        "xyz_jerk_m_s3": 0.0,
+    }
+    if dt <= 0:
+        raise ValueError(f"dt must be positive, got {dt}")
+    if steps >= 2:
+        rot = axis_angle_to_matrix(poses[:, 3:6])  # [steps, 3, 3]
+        step_rot = rot[:-1].transpose(-2, -1) @ rot[1:]
+        omega = _so3_angle_deg(step_rot) / dt  # angular speed per step, deg/s
+        step_xyz = (poses[1:, :3] - poses[:-1, :3]) / dt  # m/s vectors
+        out["rot_vel_deg_s"] = float(omega.mean())
+        out["xyz_vel_m_s"] = float(step_xyz.norm(dim=-1).mean())
+        if steps >= 3:
+            alpha = (omega[1:] - omega[:-1]) / dt  # deg/s², signed scalars
+            accel = (step_xyz[1:] - step_xyz[:-1]) / dt  # m/s² vectors
+            out["rot_accel_deg_s2"] = float(alpha.abs().mean())
+            out["xyz_accel_m_s2"] = float(accel.norm(dim=-1).mean())
+            if steps >= 4:
+                jerk_rot = (alpha[1:] - alpha[:-1]) / dt  # deg/s³, signed scalars
+                jerk_xyz = (accel[1:] - accel[:-1]) / dt  # m/s³ vectors
+                out["rot_jerk_deg_s3"] = float(jerk_rot.abs().mean())
+                out["xyz_jerk_m_s3"] = float(jerk_xyz.norm(dim=-1).mean())
+    return out
 
 
 def per_component_l1_mse(predicted: torch.Tensor, ground_truth: torch.Tensor) -> dict[str, float]:
@@ -354,6 +407,18 @@ def summarize(samples: list[dict[str, float]]) -> dict[str, Any]:
         "xyz_jerk_m",
         "gt_rot_jerk_deg",
         "gt_xyz_jerk_m",
+        "rot_vel_deg_s",
+        "rot_accel_deg_s2",
+        "rot_jerk_deg_s3",
+        "xyz_vel_m_s",
+        "xyz_accel_m_s2",
+        "xyz_jerk_m_s3",
+        "gt_rot_vel_deg_s",
+        "gt_rot_accel_deg_s2",
+        "gt_rot_jerk_deg_s3",
+        "gt_xyz_vel_m_s",
+        "gt_xyz_accel_m_s2",
+        "gt_xyz_jerk_m_s3",
     )
     episode_samples: dict[int, list[dict[str, float]]] = defaultdict(list)
     for sample in samples:
@@ -556,8 +621,11 @@ def main() -> None:
         xyz_mse = float((xyz_error**2).mean())
         gripper_mse = float((gripper_error**2).mean())
         per_dim = per_component_l1_mse(predicted, ground_truth)
-        pred_jerk = within_chunk_jerk(predicted)
-        gt_jerk = within_chunk_jerk(ground_truth)
+        pred_jerk = within_chunk_second_difference(predicted)
+        gt_jerk = within_chunk_second_difference(ground_truth)
+        dt = 1.0 / float(metadata.fps)
+        pred_dyn = within_chunk_dynamics(predicted, dt)
+        gt_dyn = within_chunk_dynamics(ground_truth, dt)
         samples.append(
             {
                 "episode_index": episode_index,
@@ -579,6 +647,8 @@ def main() -> None:
                 "xyz_jerk_m": pred_jerk["xyz_jerk_m"],
                 "gt_rot_jerk_deg": gt_jerk["rot_jerk_deg"],
                 "gt_xyz_jerk_m": gt_jerk["xyz_jerk_m"],
+                **pred_dyn,
+                **{f"gt_{k}": v for k, v in gt_dyn.items()},
             }
         )
         scored_chunks.append((predicted, ground_truth))
@@ -605,6 +675,17 @@ def main() -> None:
         "eval_horizon": args.eval_horizon,
         "seed": args.seed,
         "video_backend": args.video_backend,
+        "control_fps": float(metadata.fps),
+        "metric_definitions": {
+            "rot_jerk_deg": "unnormalized within-chunk SECOND difference (curvature/acceleration proxy), deg/step^2; NOT physical jerk",
+            "xyz_jerk_m": "unnormalized within-chunk SECOND difference (curvature/acceleration proxy), m/step^2; NOT physical jerk",
+            "rot_vel_deg_s": "mean inter-step rotation angle / dt, deg/s",
+            "rot_accel_deg_s2": "mean |second difference of angular speed| / dt^2, deg/s^2",
+            "rot_jerk_deg_s3": "mean |THIRD difference of angular speed| / dt^3, deg/s^3 (physical jerk)",
+            "xyz_vel_m_s": "mean |first position difference| / dt, m/s",
+            "xyz_accel_m_s2": "mean |second position difference| / dt^2, m/s^2",
+            "xyz_jerk_m_s3": "mean |third position difference| / dt^3, m/s^3 (physical jerk)",
+        },
         "inference_latency_seconds": summarize_inference_latency(inference_seconds),
         "cuda_peak_memory_bytes": (
             torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None

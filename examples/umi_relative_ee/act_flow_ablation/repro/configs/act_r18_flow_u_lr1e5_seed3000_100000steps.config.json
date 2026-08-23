@@ -1,0 +1,90 @@
+{
+    "type": "act",
+    "n_obs_steps": 1,
+    "input_features": {
+        "observation.images.camera": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                480,
+                640
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                20
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                10
+            ]
+        }
+    },
+    "device": "cuda",
+    "use_amp": false,
+    "use_peft": false,
+    "push_to_hub": false,
+    "repo_id": null,
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": null,
+    "chunk_size": 30,
+    "n_action_steps": 30,
+    "use_umi_relative_ee": true,
+    "umi_rot6d_identity_norm": true,
+    "obs_state_horizon": 2,
+    "obs_down_sample_steps": 1,
+    "disable_temporal_wrapper": true,
+    "use_joint_obs": false,
+    "ee_target_frame": "",
+    "derive_state_from_action": true,
+    "use_relative_actions": true,
+    "pose_dim": 6,
+    "use_rot6d": true,
+    "relative_exclude_joints": [
+        "gripper"
+    ],
+    "normalization_mapping": {
+        "VISUAL": "MEAN_STD",
+        "STATE": "MIN_MAX",
+        "ACTION": "MIN_MAX"
+    },
+    "vision_backbone": "resnet18",
+    "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+    "replace_final_stride_with_dilation": false,
+    "pre_norm": false,
+    "dim_model": 512,
+    "n_heads": 8,
+    "dim_feedforward": 3200,
+    "feedforward_activation": "relu",
+    "n_encoder_layers": 4,
+    "n_decoder_layers": 1,
+    "use_vae": false,
+    "latent_dim": 32,
+    "n_vae_encoder_layers": 4,
+    "temporal_ensemble_coeff": null,
+    "dropout": 0.1,
+    "kl_weight": 10.0,
+    "action_objective": "flow_matching",
+    "flow_num_inference_steps": 10,
+    "flow_time_sampling_beta_alpha": 1.0,
+    "flow_time_sampling_beta_beta": 1.0,
+    "flow_time_sampling_scale": 0.999,
+    "flow_time_sampling_offset": 0.001,
+    "flow_min_period": 0.004,
+    "flow_max_period": 4.0,
+    "diffusion_num_train_timesteps": 100,
+    "diffusion_num_inference_steps": 10,
+    "diffusion_beta_schedule": "squaredcos_cap_v2",
+    "diffusion_clip_sample": true,
+    "diffusion_clip_sample_range": 1.0,
+    "optimizer_lr": 1e-05,
+    "optimizer_weight_decay": 0.0001,
+    "optimizer_lr_backbone": 1e-05
+}

@@ -1,0 +1,29 @@
+{
+  "generated": "2026-08-23",
+  "lerobot_host": {
+    "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
+    "branch": "research/umi-act-flowmatching-ablation-20260811",
+    "commit": "c274c3d2ec6a12b24bfc26469fb6383408bb2c1e",
+    "dirty_files": 2,
+    "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
+    "src_py_tree_sha256": "05784c3a110fdc07370fc3a01ebbfeebbce5ae2e4b02428fbf003f1b10bebe0d"
+  },
+  "lerobot_kiwi": {
+    "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",
+    "note": "rsynced working copy, no .git; identity established by matching src/ python-tree hash",
+    "src_py_tree_sha256": "23168f8a5a1d23c9ce49ded48de476cd9525d3ec78208f50934372fb72f6c256",
+    "matches_host_src": false,
+    "src_equivalent_host_commit": "b3d169fdbeb6ceb4f329ce1b1e39b91e9a27a561 (2026-08-16)",
+    "divergence": "only source diffs vs host HEAD are the scheduler auto_scale flag (commit faba5fa5, training-schedule-only; inference/modeling code identical). Verified by full rsync --checksum diff + 5-digit metric reproduction on the smoke cross-check (act_r50_v1_vae@1M)."
+  },
+  "openpi_host": {
+    "path": "/home/zfei/codes/openpi",
+    "branch": "main",
+    "commit": "ad049ac0b5324d062037efd7749c132393d85135",
+    "dirty_files": 0,
+    "note": "all JAX openpi arms (\u00a79.2.4/\u00a79.2.5/\u00a79.2.12 and the in-flight pi05_lora_sroi_rot6d_h30_bs4_1m) trained from this checkout; per-arm TrainConfigs in src/openpi/training/config.py"
+  },
+  "openpi_kiwi": {
+    "note": "checkout deleted after \u00a79.2.5; its checkpoints are archived at /mnt/data/zfei/report_ckpts/pi05_lora_sroi_{rot6d,rotvec,rot6d_h30}/run1/19999 (code pinned by openpi_host)"
+  }
+}

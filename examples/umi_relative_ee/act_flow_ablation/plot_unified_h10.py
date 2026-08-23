@@ -256,11 +256,16 @@ def fig_budget(rows: dict[str, dict]) -> None:
 
 
 def fig_jitter(rows: dict[str, dict]) -> None:
-    """Jitter for EVERY run of the sweep, grouped by family, log-x bars.
+    """Within-chunk 2nd difference for EVERY run of the sweep, log-x bars.
 
-    Rotational jerk spans 0.027-0.76 deg and XYZ jerk 0.21-3.25 mm across
-    the sweep, so both panels use a log x-axis; the dashed line marks the
-    ground-truth jerk (identical across rows by the protocol invariance).
+    NOTE (2026-08-23): `rot_jerk_deg`/`xyz_jerk_m` are UNNORMALIZED within-
+    chunk second differences (deg/step², m/step²) — see §9.2.9's naming
+    correction and §9.2.13 for the physical-unit velocity/acceleration/jerk
+    at dt = 1/30 s. JSON keys are kept for compiler compatibility.
+
+    Rotational 2nd-diff spans 0.027-0.76 deg and XYZ 2nd-diff 0.21-3.25 mm
+    across the sweep, so both panels use a log x-axis; the dashed line marks
+    the ground-truth 2nd-diff (identical across rows by protocol invariance).
     """
     entries = []
     for run, r in rows.items():
@@ -287,8 +292,8 @@ def fig_jitter(rows: dict[str, dict]) -> None:
     for ax, (met, title, scale, gt) in zip(
         axes,
         (
-            ("rot_jerk_deg", "Within-chunk rotational jerk (deg)", 1, gt_rot),
-            ("xyz_jerk_m", "Within-chunk XYZ jerk (mm)", 1000, gt_xyz),
+            ("rot_jerk_deg", "Within-chunk rotational 2nd-diff (deg/step²)", 1, gt_rot),
+            ("xyz_jerk_m", "Within-chunk XYZ 2nd-diff (mm/step²)", 1000, gt_xyz),
         ),
     ):
         means, lows, highs, colors = [], [], [], []
@@ -350,8 +355,8 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         fontsize=12,
     )
     specs = [
-        (axes[0], "rot_jerk_deg", "Within-chunk rotational jerk (deg)", 1, gt_rot),
-        (axes[1], "xyz_jerk_m", "Within-chunk XYZ jerk (mm)", 1000, gt_xyz),
+        (axes[0], "rot_jerk_deg", "Within-chunk rotational 2nd-diff (deg/step²)", 1, gt_rot),
+        (axes[1], "xyz_jerk_m", "Within-chunk XYZ 2nd-diff (mm/step²)", 1000, gt_xyz),
     ]
     for ax, met, ylab, scale, gt in specs:
         ymax = 0.0

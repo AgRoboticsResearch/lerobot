@@ -1,0 +1,1329 @@
+{
+ "files": {
+  "DATA_SOURCES.md": [
+   2185,
+   "4f61acfe6dbabcc17affa6418cba1fdba95842319c7c164478f003967f60c8d8"
+  ],
+  "data/chunk-000/file-000.parquet": [
+   592509,
+   "4b78290c5e5ac6b4a6feb0386839744b771da8333868004c8b94f47e87bea22b"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_001/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_001/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_001/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_002/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_002/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_002/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_003/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_003/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_003/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_004/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_004/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_004/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_005/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_005/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_005/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_006/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_006/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_006/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_007/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_007/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_007/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_008/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_008/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_008/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_009/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_009/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_009/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_010/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_010/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_010/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_011/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_011/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_011/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_012/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_012/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_012/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_013/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_013/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_013/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_014/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_014/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_014/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_015/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_015/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_015/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_016/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_016/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_016/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_017/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_017/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_017/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_018/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_018/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_018/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_019/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_019/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_019/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_020/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_020/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_020/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_021/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_021/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_021/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_022/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_022/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_022/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_023/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_023/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_023/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_024/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_024/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_024/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_025/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_025/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_025/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_026/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_026/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_026/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_027/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_027/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_027/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_028/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_028/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_028/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_029/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_029/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_029/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_030/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_030/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_030/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_031/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_031/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_031/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_032/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_032/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_032/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_033/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_033/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_033/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_034/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_034/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_034/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_035/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_035/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_035/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_036/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_036/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_036/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_037/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_037/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_037/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_038/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_038/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_038/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_039/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_039/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_039/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_040/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_041/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_041/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_041/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_042/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_042/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_042/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_043/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_043/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_043/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_044/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_044/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_044/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_045/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_045/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_045/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_046/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_046/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_046/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_047/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_047/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_047/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_048/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_048/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_048/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_049/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_049/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_049/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_050/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_050/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_050/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_051/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_051/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_051/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_052/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_052/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_052/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_053/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_053/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_053/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_054/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_054/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_054/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_055/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_055/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_055/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_056/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_056/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_056/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_057/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_057/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_057/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_058/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_058/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_058/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_059/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_059/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_059/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_060/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_060/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_060/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_061/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_061/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_061/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_062/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_062/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_062/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_063/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_063/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_063/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_064/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_064/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_064/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_065/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_065/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_065/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_066/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_066/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_066/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_067/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_067/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_067/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_068/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_068/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_068/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_069/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_069/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_069/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_070/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_070/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_070/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_071/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_071/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_071/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_072/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_072/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_072/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_073/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_073/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_073/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_074/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_074/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_074/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_075/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_075/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_075/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_076/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_076/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_076/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_077/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_077/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_077/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_078/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_078/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_078/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_079/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_079/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_079/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_080/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_080/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_080/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_081/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_081/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_081/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_082/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_082/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_082/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_083/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_083/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_083/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_084/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_084/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_084/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_085/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_085/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_085/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_086/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_086/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_086/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_087/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_087/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_087/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_088/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_088/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_088/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_089/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_089/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_089/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_090/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_090/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_090/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_091/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_091/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_091/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_092/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_092/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_092/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_093/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_093/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_093/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_094/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_094/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_094/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_095/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_095/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_095/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_096/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_096/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_096/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_097/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_097/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_097/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_098/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_098/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_098/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_099/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_099/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_099/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_100/camera_info_color.json": [
+   634,
+   "aeca9b269dedb625ee71b2daaa054706c360fa33fad831300edb948f6b9e6a92"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_100/camera_info_left.json": [
+   551,
+   "917574d07af5152eb19fa652d1d5334807488842e32d6d3071a6830f3b81c367"
+  ],
+  "meta/camera_info/validation_20260714_160922-png__episode_100/camera_info_right.json": [
+   566,
+   "f8c896b219c8a014f4502eb719af1027c45d991730c301c27d5bd6eeb09918a0"
+  ],
+  "meta/episodes/chunk-000/file-000.parquet": [
+   311540,
+   "e1f685f0cb9ae62397526ea461da16542cf8c2fe8dcbda52af595956d2077150"
+  ],
+  "meta/info.json": [
+   2192,
+   "c842d2ae10f4a12386be07be3748f478b3e7f2135d0d9dedb3a9303701f9beed"
+  ],
+  "meta/stats.json": [
+   8277,
+   "345479428d76a1be09d8ba1ee6fe9c9734a134796c7f306d6c77ab3c7e4ffe62"
+  ],
+  "meta/tasks.parquet": [
+   2141,
+   "f084f516eb483b96b1b596085870a30be24a7ec74ecff89c87fa6309a6efe63e"
+  ]
+ },
+ "full_video_hash": true,
+ "generated": "2026-08-23 19:54:33",
+ "meta_info": {
+  "chunks_size": 1000,
+  "codebase_version": "v3.0",
+  "data_files_size_in_mb": 100,
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "features": {
+   "action": {
+    "dtype": "float32",
+    "names": [
+     "ee.x",
+     "ee.y",
+     "ee.z",
+     "ee.wx",
+     "ee.wy",
+     "ee.wz",
+     "ee.gripper_pos"
+    ],
+    "shape": [
+     7
+    ]
+   },
+   "episode_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "frame_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "observation.images.camera": {
+    "dtype": "video",
+    "info": {
+     "has_audio": false,
+     "video.channels": 3,
+     "video.codec": "av1",
+     "video.fps": 30,
+     "video.height": 480,
+     "video.is_depth_map": false,
+     "video.pix_fmt": "yuv420p",
+     "video.width": 640
+    },
+    "names": [
+     "height",
+     "width",
+     "channels"
+    ],
+    "shape": [
+     480,
+     640,
+     3
+    ]
+   },
+   "task_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "timestamp": {
+    "dtype": "float32",
+    "names": null,
+    "shape": [
+     1
+    ]
+   }
+  },
+  "fps": 30,
+  "robot_type": "so100",
+  "splits": {
+   "train": "0:100"
+  },
+  "total_episodes": 100,
+  "total_frames": 9274,
+  "total_tasks": 1,
+  "video_files_size_in_mb": 200,
+  "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+ },
+ "num_hashed_files": 306,
+ "num_videos": 1,
+ "root": "/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation",
+ "video_bytes_total": 159216554,
+ "video_hashes": {
+  "videos/observation.images.camera/chunk-000/file-000.mp4": "e15de7756fccbb45f580015a8b561c9397e5e5ac78bbb2de5d50921d4caf74fc"
+ },
+ "videos_manifest_sha256": "c55f4bc5ae424eb34a4aa063466d03a44a73ca13f216ad902ac824ead1b968a2"
+}

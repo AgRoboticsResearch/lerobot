@@ -1,0 +1,99 @@
+{
+    "type": "pi05",
+    "n_obs_steps": 1,
+    "input_features": {
+        "observation.images.camera": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                480,
+                640
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                20
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                10
+            ]
+        }
+    },
+    "device": "cuda",
+    "use_amp": false,
+    "use_peft": true,
+    "push_to_hub": false,
+    "repo_id": "zfff/pi05_openpi_split_lora_masked_1459_bs4_1m",
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified/outputs/train/pi05_openpi_split_lora_masked_1459_bs4_1m/checkpoints/last/pretrained_model",
+    "paligemma_variant": "gemma_2b",
+    "action_expert_variant": "gemma_300m",
+    "dtype": "bfloat16",
+    "chunk_size": 30,
+    "n_action_steps": 30,
+    "max_state_dim": 32,
+    "max_action_dim": 32,
+    "mask_padded_action_dims_at_inference": false,
+    "flow_matching_padding_mode": "masked_subspace",
+    "num_inference_steps": 10,
+    "time_sampling_beta_alpha": 1.5,
+    "time_sampling_beta_beta": 1.0,
+    "time_sampling_scale": 0.999,
+    "time_sampling_offset": 0.001,
+    "min_period": 0.004,
+    "max_period": 4.0,
+    "use_relative_actions": true,
+    "relative_exclude_joints": [
+        "gripper"
+    ],
+    "action_feature_names": [
+        "dx",
+        "dy",
+        "dz",
+        "rot6d_0",
+        "rot6d_1",
+        "rot6d_2",
+        "rot6d_3",
+        "rot6d_4",
+        "rot6d_5",
+        "gripper"
+    ],
+    "use_umi_relative_ee": true,
+    "umi_rot6d_identity_norm": false,
+    "rtc_config": null,
+    "image_resolution": [
+        224,
+        224
+    ],
+    "empty_cameras": 0,
+    "tokenizer_max_length": 200,
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "QUANTILES",
+        "ACTION": "QUANTILES"
+    },
+    "gradient_checkpointing": true,
+    "compile_model": false,
+    "compile_mode": "max-autotune",
+    "freeze_vision_encoder": true,
+    "train_expert_only": false,
+    "optimizer_lr": 5e-05,
+    "optimizer_betas": [
+        0.9,
+        0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 0.01,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 1000000,
+    "scheduler_decay_lr": 5e-06
+}

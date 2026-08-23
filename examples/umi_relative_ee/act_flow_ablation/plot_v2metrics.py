@@ -149,7 +149,7 @@ def plot_historical(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="center right")
 
-    # (c) rotation jerk vs budget with GT line
+    # (c) rotation 2nd-diff vs budget with GT line
     ax = axes[2]
     jerk = [f(row, "rot_jerk_deg") for row in hist]
     gt_jerk = f(hist[0], "gt_rot_jerk_deg")
@@ -166,8 +166,8 @@ def plot_historical(rows: list[dict[str, str]], out_path: Path) -> None:
     )
     ax.set_xscale("log")
     ax.set_xlabel("training steps")
-    ax.set_ylabel("rotational jerk (°)")
-    ax.set_title("Within-chunk rotational jerk")
+    ax.set_ylabel("rotational 2nd-diff (°/step²)")
+    ax.set_title("Within-chunk rotational 2nd-diff")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
 
@@ -232,7 +232,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right")
 
-    # (c) rotational jerk, both curves with GT line
+    # (c) rotational 2nd-diff, both curves with GT line
     ax = axes[2]
     ax.plot(
         [int(row["evaluated_step"]) for row in hist],
@@ -247,7 +247,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.axhline(f(hist[0], "gt_rot_jerk_deg"), color="gray", ls=":", label="ground truth")
     ax.set_xscale("log")
     ax.set_xlabel("training steps")
-    ax.set_ylabel("rotational jerk (°)")
+    ax.set_ylabel("rotational 2nd-diff (°/step²)")
     ax.set_title("within-chunk smoothness vs budget")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)

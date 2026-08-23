@@ -1,0 +1,136 @@
+{
+ "files": {
+  "MERGE_INFO.md": [
+   1053,
+   "37740385a2c9585db3953bfc204941c4543d8719d26d7251313b4469ad4be5b4"
+  ],
+  "data/chunk-000/file-000.parquet": [
+   7730648,
+   "26d751c94337685f1b3e6daae043f492424cf0795ad28a8c6012673a48895933"
+  ],
+  "merge_info.json": [
+   1873,
+   "a2037048c013f453bd53c247357a834753a9fe4dd51a0e188cc6f6ff71e1f286"
+  ],
+  "meta/episodes/chunk-000/file-000.parquet": [
+   1177616,
+   "d44256d2206485b7d113cd222690cbbf57dc2ab385333c563129f2de4f86bc42"
+  ],
+  "meta/info.json": [
+   2435,
+   "f43169fb702ea962cc0d72a8e8e1f1c069e8bafe1f68420315f13e2a24802c77"
+  ],
+  "meta/stats.json": [
+   8296,
+   "4376d25e140799c53e7deb34ce4bf6e65ccfa38e149778fc70a9e01d58692aef"
+  ],
+  "meta/tasks.parquet": [
+   2085,
+   "620dbb8d464035d8dcfd904573ffd476e8fb1ab1c4c5b8900f5a37231bcfe6fd"
+  ]
+ },
+ "full_video_hash": false,
+ "generated": "2026-08-23 19:54:50",
+ "meta_info": {
+  "chunks_size": 1000,
+  "codebase_version": "v3.0",
+  "data_files_size_in_mb": 100,
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "features": {
+   "action": {
+    "dtype": "float32",
+    "names": [
+     "ee.x",
+     "ee.y",
+     "ee.z",
+     "ee.wx",
+     "ee.wy",
+     "ee.wz",
+     "ee.gripper_pos"
+    ],
+    "shape": [
+     7
+    ]
+   },
+   "episode_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "frame_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "observation.images.camera": {
+    "dtype": "video",
+    "info": {
+     "has_audio": false,
+     "video.channels": 3,
+     "video.codec": "av1",
+     "video.crf": null,
+     "video.extra_options": {},
+     "video.fast_decode": null,
+     "video.fps": 30,
+     "video.g": null,
+     "video.height": 480,
+     "video.is_depth_map": false,
+     "video.pix_fmt": "yuv420p",
+     "video.preset": null,
+     "video.video_backend": "pyav",
+     "video.width": 640
+    },
+    "names": [
+     "height",
+     "width",
+     "channels"
+    ],
+    "shape": [
+     480,
+     640,
+     3
+    ]
+   },
+   "task_index": {
+    "dtype": "int64",
+    "names": null,
+    "shape": [
+     1
+    ]
+   },
+   "timestamp": {
+    "dtype": "float32",
+    "names": null,
+    "shape": [
+     1
+    ]
+   }
+  },
+  "fps": 30,
+  "robot_type": "so100",
+  "splits": {
+   "train": "0:1302"
+  },
+  "total_episodes": 1302,
+  "total_frames": 121262,
+  "total_tasks": 1,
+  "video_files_size_in_mb": 200,
+  "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+ },
+ "num_hashed_files": 7,
+ "num_videos": 11,
+ "root": "/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1302_occlusion",
+ "video_bytes_total": 1988270928,
+ "videos_manifest_sha256": "879c305e56cb1d536bc64d438c7d6d81db8aad42232b46f1fdf530c8487f1352"
+}
