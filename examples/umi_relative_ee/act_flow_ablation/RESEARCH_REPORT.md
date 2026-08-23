@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, accuracy@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -88,14 +88,16 @@ distinguish:
   uses the same time direction: training interpolates
   `x_t = t * noise + (1-t) * action`, predicts `noise-action`, and inference
   integrates from `t=1` to `t=0` with negative steps.
-- [π0.5](https://arxiv.org/abs/2504.16054) reports scaling-law results on a
-  metric quartet designed to be robust to metric choice: MSE and L1 averaged
-  over action dimensions and the chunk horizon, plus thresholded accuracies
-  accuracy@τ — the fraction of action dimensions within τ of ground truth in
-  normalized action units — at τ=0.5 (motion-intent level, suited to
-  human-to-robot transfer) and τ=0.1 (movement-precision level, informative
-  in-domain). The 2026-08-16/17 evaluator extensions mirror exactly this
-  quartet on decoded physical poses.
+- [Dyna-2](https://www.dyna.co/dyna-2) reports scaling-law results on a metric
+  quartet designed to be robust to metric choice: MSE and L1 averaged over
+  action dimensions and the chunk horizon, plus a per-coordinate normalized
+  within-threshold rate, **Acc@ε** — the fraction of action dimensions within
+  ε of ground truth in normalized action units — evaluated at ε=0.5
+  (motion-intent level, suited to human-to-robot transfer) and ε=0.1
+  (movement-precision level, informative in-domain). The 2026-08-16/17
+  evaluator extensions adapt this quartet to decoded physical poses and use
+  [OpenPI's q01/q99 normalization](https://github.com/Physical-Intelligence/openpi/blob/main/src/openpi/transforms.py)
+  to define the normalized per-coordinate error scale.
 
 These papers establish plausibility and implementation conventions; none can
 answer the dataset-specific questions without controlled local experiments.
@@ -342,21 +344,24 @@ objectives optimize, implemented as `per_component_l1_mse` in
 `eval_open_loop_dataset.py` and mirrored in `eval_openpi_open_loop.py` (whose
 summary registry previously computed but omitted the chunk-MSE keys — fixed in
 the same change; both evaluators now emit the identical metric set, and the
-openpi one takes `--action_horizon` for the h30 arm). A π0.5-style thresholded
-**accuracy@τ** (added 2026-08-17; τ = 0.5 "motion-intent level" and τ = 0.1
-"movement-precision level" — see the π0.5 reference in §2) completes the set:
-the fraction of action
-dimensions (over steps × dims, inclusive ≤) whose error falls within τ in
+openpi one takes `--action_horizon` for the h30 arm). A **Dyna-2-style
+per-coordinate normalized within-threshold rate, Acc@ε**, using OpenPI-style
+q01/q99 normalization (added 2026-08-17; ε = 0.5 "motion-intent level" and
+ε = 0.1 "movement-precision level" — see the Dyna-2 reference in §2),
+completes the set: the fraction of action
+dimensions (over steps × dims, inclusive ≤) whose error falls within ε in
 normalized action units. The normalization is protocol-fixed, not per-model:
 per-dim errors are divided by (q99 − q01)/2 half-ranges pooled over this
-evaluation's own GT chunks (q01 → −1, q99 → +1, the π0.5 quantile convention),
-so the metric stays comparable across the MIN_MAX-trained ACT matrix and the
-quantile-trained flow models; the scales are recorded in every report JSON.
+evaluation's own GT chunks (q01 → −1, q99 → +1, the OpenPI quantile
+normalization convention), so the metric stays comparable across the
+MIN_MAX-trained ACT matrix and the quantile-trained flow models; the scales
+are recorded in every report JSON.
 Overall (`action_`) accuracy spans all seven decoded dims; `xyz_` and
 `rotvec_` views follow the L1/MSE component split. Evaluations produced
-before 2026-08-16 predate the L1/per-dim-MSE keys and before 2026-08-17 the
-accuracy@τ keys (their JSONs already contain
-the norm-based chunk MSE/RMSE); the kiwi/openpi checkpoints retain weights and
+before 2026-08-16 predate the L1/per-dim-MSE keys, and those produced before
+2026-08-17 predate the Acc@ε fields (serialized under the existing
+`*_acc_at_0p5` and `*_acc_at_0p1` JSON keys). Their JSONs already contain the
+norm-based chunk MSE/RMSE; the kiwi/openpi checkpoints retain weights and
 can be re-scored on demand, whereas the ACT seed-1000 matrix proved
 unrecoverable after the disk failures (§9.2.6), so its tables keep the
 norm-based metrics as the surviving record. ACT-flow and Diffusion Policy are additionally evaluated
@@ -1286,7 +1291,7 @@ openpi's serving is inference-seed-invariant (endpoint spread 0.002 mm across
 seeds) while the port shows ±0.35 mm (h30) / ±0.10 mm (t+10) sampler spread.
 All rows: episode-balanced means, 95% bootstrap CIs, 500 queries, PyAV.
 
-| Arm (training) | Scoring | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | acc@0.5 | acc@0.1 | Rot jerk (°) |
+| Arm (training) | Scoring | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Acc@0.5 | Acc@0.1 | Rot jerk (°) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | A: openpi h30-trained | t+30 | 23.83 [22.11, 25.62] | 4.93 [4.58, 5.30] | 7.40 | 134.7 | 1.428 | 0.973 | 0.702 [0.689, 0.715] | 0.181 |
 | A: openpi h30-trained | t+10 | 10.89 [10.25, 11.53] | 1.96 [1.85, 2.06] | 3.10 | 22.3 | 0.567 | 0.991 | 0.905 [0.898, 0.912] | 0.163 |
@@ -1298,17 +1303,17 @@ All rows: episode-balanced means, 95% bootstrap CIs, 500 queries, PyAV.
 Read-outs, following the preregistered decomposition:
 
 1. **Scoring horizon, quantized on identical weights.** The same Arm A
-   checkpoint scores 23.83 mm / 4.93° / acc@0.1 0.702 at t+30 but
+   checkpoint scores 23.83 mm / 4.93° / Acc@0.1 0.702 at t+30 but
    10.89 mm / 1.96° / 0.905 at t+10 — a 2.2× endpoint factor from scoring
    window alone, with zero model change. This converts §9.2.4's cross-model
-   horizon correction into a within-model measurement. (The acc@τ scales pool
-   each eval's own GT chunks, so cross-horizon acc@τ comparisons carry a small
+   horizon correction into a within-model measurement. (The Acc@ε scales pool
+   each eval's own GT chunks, so cross-horizon Acc@ε comparisons carry a small
    normalization shift; the millimeter endpoint comparison does not, and shows
    the same 2.2×.)
 2. **Training horizon at matched scoring: h10 training is more precise at
    t+10.** A0 (h10-trained) beats A (h30-trained) at t+10 with disjoint
    intervals on XYZ endpoint (9.94 vs 10.25 mm), rotation endpoint
-   (1.78 vs 1.85°), and acc@0.1 (0.939 vs 0.912) at the identical 20k-step /
+   (1.78 vs 1.85°), and Acc@0.1 (0.939 vs 0.912) at the identical 20k-step /
    320k-sample budget. Spreading the same capacity over a 3× longer chunk
    costs ~15% near-horizon precision and buys no smoothness (rot-jerk 0.161
    vs 0.163). Practical corollary: train at the horizon you will execute, not
@@ -1316,9 +1321,9 @@ Read-outs, following the preregistered decomposition:
 3. **JAX vs PyTorch at matched recipe: no accuracy gap; the port is ~2×
    smoother.** At t+30, XYZ endpoint is statistically tied (A's point estimate
    1.2 mm better, intervals overlapping heavily), rotation tied (B's point
-   estimate better), acc@0.1 borderline-tied (B 0.721 vs A 0.702, intervals
+   estimate better), Acc@0.1 borderline-tied (B 0.721 vs A 0.702, intervals
    touching). At t+10 B is better on XYZ endpoint (9.57 vs 10.89, disjoint)
-   and acc@0.1 (0.920 vs 0.905, disjoint). The one horizon-consistent,
+   and Acc@0.1 (0.920 vs 0.905, disjoint). The one horizon-consistent,
    recipe-independent difference is smoothness: B's rot-jerk is 0.094°/0.086°
    versus A's 0.181°/0.163° — half the jerk at both scoring windows (and
    below GT ≈ 0.155°), with XYZ jerk 0.53 vs 1.10 mm. This replicates the
@@ -1332,10 +1337,10 @@ Read-outs, following the preregistered decomposition:
    700K reference (8.98 [8.40, 9.57], 2.8M samples): the same accuracy point
    at ~1/9 the samples, now inside a single stack. The §9.2.4 ~9×
    sample-efficiency finding is therefore recipe-driven, not JAX-driven.
-   (acc@0.1 for the 700K reference and the full 1M-vs-20k recipe comparison
+   (Acc@0.1 for the 700K reference and the full 1M-vs-20k recipe comparison
    land with the kiwi re-evals; §9.2.2.)
 5. **At full 30-step lookahead, stacks and model classes collapse together.**
-   At matched t+30 scoring the h30-trained 3B flow-VLMs (acc@0.1 0.702 A /
+   At matched t+30 scoring the h30-trained 3B flow-VLMs (Acc@0.1 0.702 A /
    0.721 B) sit inside the ACT family's 100k–3M band (0.681–0.744,
    §9.2.6–9.2.7) — indistinguishable on precision — while at t+10 the same
    VLMs reach 0.92–0.93 with no measurable ACT counterpart (seed-1000 weights
@@ -1371,14 +1376,14 @@ before the multi-seed phase was dropped — did retain real checkpoints: ACT-L1
 seeds 2000/3000 at the full 100k budget, ACT R50-VAE seeds 2000/3000 stopped at
 80k, and matched ACT-flow seeds 2000/3000 stopped at 50k. All six were evaluated
 on 2026-08-17 with the updated evaluator (per-component L1 / per-dim MSE /
-accuracy@τ, commits 51ff19f5 + this change) under the identical fixed
+Acc@ε, commits 51ff19f5 + this change) under the identical fixed
 100-episode / 500-query protocol;
 deterministic ACT at inference seed 1000, ACT-flow at inference seeds
 1000/2000/3000 (inference-seed spread ≤0.7 mm endpoint, similar to π0.5's
 ±0.17 mm). Outputs live under `reeval_v2metrics/eval_common_h32/` (a shadow
 artifact root that symlinks `train/`; the legacy tree was left untouched).
 
-| Training seed | Budget | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Rotvec MSE/dim (°²) | acc@0.5 | acc@0.1 |
+| Training seed | Budget | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (°) | Rotvec MSE/dim (°²) | Acc@0.5 | Acc@0.1 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT-L1 s2000 | 100k | 24.33 | 4.833 | 7.10 | 144.5 | 1.387 | 4.62 | 0.975 | 0.719 |
 | ACT-L1 s3000 | 100k | 23.73 | 4.868 | 7.11 | 141.1 | 1.424 | 4.84 | 0.972 | 0.719 |
@@ -1415,17 +1420,19 @@ where noted):
    identically on both translation and rotation. The MSE:L1 ratio separates the
    families (flow 24–27 vs L1 ≈ 20 vs R50 ≈ 18.4 µm/mm), i.e. flow's errors
    have a heavier tail, consistent with its measured roughness (§9.2).
-6. **accuracy@τ sharpens the same picture**: at τ=0.5 (motion intent) all
+6. **Acc@ε sharpens the same picture**: at ε=0.5 (motion intent) all
    six runs cluster within 1.7 pp (0.961–0.978) — every variant captures the
-   coarse motion — while at τ=0.1 (movement precision) the families separate by
+   coarse motion — while at ε=0.1 (movement precision) the families separate by
    up to 11 pp (flow 0.634–0.654 vs ACT-L1 0.719 vs R50-VAE 0.736–0.744).
    Precision, not motion intent, is where the objectives differ — mirroring
-   how π0.5 uses the two thresholds for transfer vs in-domain scaling trends.
+   Dyna-2's interpretation of the two thresholds for transfer vs in-domain
+   scaling trends.
 
 Driver: `reeval_seed23k_v2metrics.sh` (idempotent, husk-guarded, VRAM-gated at
 ≥4 GiB free so it ran concurrently with the in-flight h30 chain); per-eval logs
-under `reeval_v2metrics/logs/`. Pre-accuracy@τ copies of the same ten reports
-are preserved under `reeval_v2metrics/eval_common_h32_pre_tau/`. The compact
+under `reeval_v2metrics/logs/`. Copies of the same ten reports from before
+Acc@ε was added are preserved under
+`reeval_v2metrics/eval_common_h32_pre_tau/`. The compact
 CSV evidence for this section and §9.2.7, plus both figures, are regenerable
 via the collector's dedicated v2 pass (`collect_results.py --v2_eval_roots`)
 and `plot_v2metrics.py` (§11): the shadow tree needs its own pass because its
@@ -1436,7 +1443,7 @@ pre-convention naming.
 
 ### 9.2.7 Historical production ACT: 30-point budget curve on the v2 metrics
 
-A follow-up question — why accuracy@τ covered only three ACT variants — led to
+A follow-up question — why Acc@ε covered only three ACT variants — led to
 a fresh weights-level audit on 2026-08-17 that re-confirmed the §9.2.6 husk
 inventory (27 of 33 `train/` directories empty; exactly six real runs, all
 already scored) but found that the **original production run**
@@ -1452,7 +1459,7 @@ This is the only ACT-family budget curve on the new metrics and the only
 surviving model trained past 100k; at 3M steps × batch 8 it has seen 24M
 samples (≈171 epochs of the 140,522-frame train set).
 
-| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | acc@0.5 | acc@0.1 |
+| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | Acc@0.5 | Acc@0.1 |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | 100k | 25.57 [23.64, 27.56] | 5.019 | 8.47 | 0.969 | 0.681 [0.667, 0.695] |
 | 200k | 24.35 [22.60, 26.19] | 4.977 | 8.06 | 0.972 | 0.693 [0.679, 0.707] |
@@ -1473,17 +1480,17 @@ Rotvec L1/dim declines 1.469 → 1.320° over the same range; XYZ MSE/dim
 
 Read-outs:
 
-1. **acc@0.5 is budget-blind; acc@0.1 is the budget-sensitive metric.** Across
-   a 30× step range acc@0.5 moves only 0.969 → 0.975 — less than its own
-   interval half-width — while acc@0.1 rises 0.681 → 0.718 with the 100k and
+1. **Acc@0.5 is budget-blind; Acc@0.1 is the budget-sensitive metric.** Across
+   a 30× step range Acc@0.5 moves only 0.969 → 0.975 — less than its own
+   interval half-width — while Acc@0.1 rises 0.681 → 0.718 with the 100k and
    ≥1.4M intervals fully disjoint. This is a local, within-recipe confirmation
-   of exactly the π0.5 doctrine (§2): τ=0.5 saturates at the motion-intent
-   level, τ=0.1 resolves in-domain precision trends.
+   of the Dyna-2 threshold interpretation (§2): ε=0.5 saturates at the
+   motion-intent level, while ε=0.1 resolves in-domain precision trends.
 2. **Precision gains are front-loaded and bounded.** Roughly half of the total
-   +3.4pp acc@0.1 gain arrives by 400k; from 1M on the curve is flat within
+   +3.4pp Acc@0.1 gain arrives by 400k; from 1M on the curve is flat within
    its intervals (0.707–0.718). XYZ endpoint error plateaus at 23.3–23.9 mm
    from 400k — the 100k-vs-3M endpoint intervals even overlap slightly,
-   whereas acc@0.1 separates them cleanly, making accuracy@0.1 the more
+   whereas Acc@0.1 separates them cleanly, making Acc@0.1 the more
    sensitive early budget indicator in this family.
 3. **Late training trades smoothness for marginal precision.** Within-chunk
    rotation jerk improves to a 0.7M minimum of 0.037° and then degrades ~45%
@@ -1494,7 +1501,7 @@ Read-outs:
    the §3 audit within 0.3–0.6 mm (25.57 vs 25.1 mm at 100k; 23.2 vs 22.9 mm
    at 2.3M), tying the v2-metric series to the historical record.
 5. **Capacity beats a 30× budget on precision.** At 100k the historical
-   R18-VAE scores acc@0.1 = 0.681, and even at 3M it never exceeds 0.718 —
+   R18-VAE scores Acc@0.1 = 0.681, and even at 3M it never exceeds 0.718 —
    below the R50-VAE seed-2000/3000 companions at only 80k (0.736–0.744) and
    the ACT-L1 companions at 100k (0.719). A backbone/objective change at
    ≤1× the common budget outperforms a 30× budget range of the original
@@ -1505,7 +1512,7 @@ Read-outs:
 
 That capacity-vs-budget conclusion is cross-budget (R50 companions at 80k vs
 an R18 curve). The direct question — does R50 capacity keep compounding with
-budget, or does it hit the same ~23 mm / flat-acc@0.1 plateau the R18 curve
+budget, or does it hit the same ~23 mm / flat-Acc@0.1 plateau the R18 curve
 shows from 400k? — needs an R50 budget curve, and every seed-1000 R50
 checkpoint was stranded by the disk failures (§9.2.6). A fresh
 **`act_r50_v1_vae` seed-1000 run at 1M steps** was therefore launched on the
@@ -1522,7 +1529,7 @@ production run, so the two budget curves are directly comparable.
 protocol with the full v2 metric set, mirroring §9.2.7 exactly (driver
 patterned on `eval_historical_act_curve.sh`; outputs under
 `reeval_v2metrics/eval_common_h32/` in collector-compatible run names).
-Comparisons: (a) R50-vs-R18 budget curves on acc@0.1 and XYZ endpoint — does
+Comparisons: (a) R50-vs-R18 budget curves on Acc@0.1 and XYZ endpoint — does
 the capacity gap persist, shrink, or invert as budget grows; (b) the 100k
 point against the stranded seed-1000 R50-V1 100k evaluation (22.33 mm / 4.58°,
 §9.1.2) as a fresh-run replication check; (c) rot-jerk — whether R50 shows the
@@ -1538,7 +1545,7 @@ full v2 metric set under the identical 500-query protocol
 act_r50_v1_vae_1m_seed1000_<step>steps/`, deliberately outside the unified
 t+10 tree). Milestones:
 
-| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | acc@0.5 | acc@0.1 | Rot jerk (°) |
+| Steps | XYZ end (mm) | Rot end (°) | XYZ L1/dim (mm) | Acc@0.5 | Acc@0.1 | Rot jerk (°) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 100k | 23.24 [21.5, 25.1] | 4.581 | 6.80 | 0.972 | 0.735 [0.722, 0.749] | 0.057 |
 | 200k | 22.14 [20.6, 23.7] | 4.445 | 6.84 | 0.972 | 0.738 | 0.043 |
@@ -1560,7 +1567,7 @@ Read-outs, following the preregistered decomposition:
    checkpoint (23.24 mm) is already at the historical R18's 3M plateau
    (23.31 mm), and by 600k–1M it reaches 21.2–21.5 mm — about 2 mm below the
    R18 plateau with CIs only marginally touching (R50@1M [19.7, 22.9] vs
-   R18@3M [21.45, 25.20]). On acc@0.1 the separation is cleaner: R50@1M
+   R18@3M [21.45, 25.20]). On Acc@0.1 the separation is cleaner: R50@1M
    0.742 [0.727, 0.757] vs R18@3M 0.715 [0.700, 0.731] — effectively
    disjoint. The §9.2.6 cross-budget observation (R50-VAE companions at 80k
    matching R18@3M) is now confirmed by a same-seed, same-protocol budget
@@ -1592,22 +1599,22 @@ Read-outs, following the preregistered decomposition:
    pick the checkpoint at the horizon you will execute; for this task the
    executed chunk is 30 steps, and the final 1M checkpoint is the right
    deployment choice on both accuracy (best t+30 endpoint) and smoothness.
-5. **acc@0.1 remains the budget-sensitive metric here too** (0.735 → 0.744,
-   noisy but flat after 200k; acc@0.5 flat at 0.972–0.974) — but note the
+5. **Acc@0.1 remains the budget-sensitive metric here too** (0.735 → 0.744,
+   noisy but flat after 200k; Acc@0.5 flat at 0.972–0.974) — but note the
    R50 curve's precision saturates at ~0.74 where the R18's saturates at
    ~0.71: the ceiling itself is recipe-limited, echoing §9.2.7 read-out 5.
 
 ### 9.2.9 Unified horizon-10 re-evaluation of every surviving model
 
 The metric set grew during the investigation — per-component L1 / per-dim MSE
-were added on 2026-08-16 and accuracy@τ on 2026-08-17 — so different tables
+were added on 2026-08-16 and Acc@ε on 2026-08-17 — so different tables
 carry different columns, several rows predate the additions, and a few re-scores
 ran with policy-derived query windows (`[-1,29]`) or the openpi evaluator's own
 window instead of the canonical explicit bounds. On top of that, §9.2.4/§9.2.5
 established that cross-horizon endpoint numbers are invalid (a 2.2× artifact).
 This section therefore re-scores **every model with surviving weights under one
 protocol and the full metric set**, with **endpoint pose, L1/MSE, and
-accuracy@0.5/0.1 treated as co-primary metrics**. Scoring horizon is fixed at
+Acc@0.5/0.1 treated as co-primary metrics**. Scoring horizon is fixed at
 **t+10** — the deepest horizon every surviving model supports (the official
 openpi h10 arms predict 10 steps) — so no model is excluded on horizon grounds
 and no cross-horizon comparison ever arises. No model is retrained.
@@ -1655,14 +1662,15 @@ at chunk step t):
 - **Per-dim MSE (µm² / deg²)** — mean squared error per dimension over steps
   × dims, same component split. Weight errors quadratically, exposing
   heavy-tailed behavior that L1 hides (§9.2.6 read-out 5).
-- **accuracy@τ (τ = 0.5, 0.1)** — π0.5-style thresholded accuracy: the
-  fraction of (step, dim) entries whose absolute per-dim error is ≤ τ in
-  *normalized action units*, where each dim is normalized by the
-  protocol-fixed half-range `s_d = (q99 − q01)/2` pooled over **this
-  evaluation's own GT chunks** (q01 → −1, q99 → +1). τ=0.5 is the
-  motion-intent level, τ=0.1 the movement-precision level (§2). Because the
+- **Per-coordinate normalized within-threshold rate, Acc@ε, evaluated at
+  ε = 0.1 and 0.5** — Dyna-2-style thresholded accuracy using OpenPI-style
+  q01/q99 normalization: the fraction of (step, dim) entries whose absolute
+  per-dim error is ≤ ε in *normalized action units*, where each dim is
+  normalized by the protocol-fixed half-range `s_d = (q99 − q01)/2` pooled
+  over **this evaluation's own GT chunks** (q01 → −1, q99 → +1). ε=0.5 is the
+  motion-intent level, ε=0.1 the movement-precision level (§2). Because the
   query set, horizon, and GT are identical for every row of this section, the
-  pooled scales — and therefore acc@τ — are strictly comparable across all
+  pooled scales — and therefore Acc@ε — are strictly comparable across all
   models regardless of their training normalization (MIN_MAX vs quantile).
   Views: `action` (all 7 dims), `xyz` (dims 0–2), `rotvec` (dims 3–5).
 - **Within-chunk rotational jerk (deg)** — mean geodesic angle of the second
@@ -1705,7 +1713,7 @@ window. The host sweep evaluated the full inventory as a
 VRAM-gated backfill alongside the R50 trainer (the final two rows — R50-V1
 900k/1M — landed when training exited at 16:16); every report passed the
 protocol assertions programmatically — canonical bounds `[-1,31]`, horizon 10,
-500 queries / 100 episodes, identical accuracy@τ normalization scales across
+500 queries / 100 episodes, identical Acc@ε normalization scales across
 every row (LeRobot and openpi evaluators agree to 5 decimals), and identical
 ground-truth jerk (0.152° / 0.70 mm) in every row. Compilation:
 `compile_unified_h10.py` (cross-schema merge of the two evaluators' reports
@@ -1723,7 +1731,7 @@ rows). Run names are the artifact-tree names under
 evaluated checkpoint). CIs are 95% episode bootstrap; the MSE columns are
 per-dimension (µm² / deg²):
 
-| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | Acc@0.5 | Acc@0.1 | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | act_r18_flow_u_lr1e5_seed2000_100000steps | 50000 | 15.00 [14.41, 15.63] | 2.53 [2.42, 2.64] | 4.55 | 43.5 | 0.830 | 1.29 | 0.992 | 0.840 [0.833, 0.846] | 0.744 |
 | act_r18_flow_u_lr1e5_seed3000_100000steps | 50000 | 15.63 [14.78, 16.50] | 2.30 [2.20, 2.41] | 4.72 | 53.2 | 0.805 | 1.19 | 0.991 | 0.843 [0.836, 0.850] | 0.763 |
@@ -1827,28 +1835,28 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
 
 1. **Protocol integrity is machine-checked, not assumed.** Every admitted
    row carries bounds `[-1,31]`, horizon 10, 500 queries, and — because the
-   query set, horizon, and GT are common — identical acc@τ normalization
+   query set, horizon, and GT are common — identical Acc@ε normalization
    scales and identical GT jerk. Cross-evaluator comparability (LeRobot
    PyTorch vs openpi JAX decoding paths) is asserted at compile time to 5
-   decimals on the τ scales and 1e-6 on GT jerk.
+   decimals on the ε scales and 1e-6 on GT jerk.
 2. **At matched horizon the ACT capacity/objective family ties the 3B
-   flow-VLMs.** R50-V1 @100k (9.20 mm, acc@0.1 0.921), the R50-VAE
+   flow-VLMs.** R50-V1 @100k (9.20 mm, Acc@0.1 0.921), the R50-VAE
    companions @80k (9.15–9.18 mm, 0.926–0.929), and ACT-L1 @100k
    (9.59–9.88 mm, 0.916–0.920) and SmolVLA @100k (9.08–9.18 mm, 0.931)
    all land inside or at the edge of the openpi/Arm-B interval band
    (9.57–11.00 mm, 0.918–0.920) — the §9.2.4/§9.2.5 tie now extends to
    both the ACT side and the 450M SmolVLA: what separates models at t+10 is
    capacity and objective recipe, not parameter count or stack. SmolVLA's
-   acc@0.1 point estimate (0.931) is nominally the table's best, but its
+   Acc@0.1 point estimate (0.931) is nominally the table's best, but its
    interval overlaps the R50-VAE companions' (0.929) — tied, not ahead. The historical R18
    production model sits visibly above the pack (12.0–13.1 mm, 0.88–0.90)
    even at 30× budget.
 3. **Near-horizon budget behavior differs by family — and the π0.5 port
    shows no overfitting at all.** The historical R18
-   improves slowly and monotonically (13.10 → 11.99 mm, acc@0.1
+   improves slowly and monotonically (13.10 → 11.99 mm, Acc@0.1
    0.880 → 0.901 over 100k→3M); the fresh R50-V1 *degrades* from its 100k
    point (9.20 → 10.61 mm, 0.921 → 0.912 by 1M; the loss saturates after
-   ~500k and the 100k-vs-1M acc@0.1 intervals are disjoint) — near-horizon
+   ~500k and the 100k-vs-1M Acc@0.1 intervals are disjoint) — near-horizon
    overfitting — while its smoothness keeps improving (rot-jerk
    0.043 → 0.033). The h30 companion evaluation (§9.2.8 read-out 4) answers
    the flip: on the same checkpoints, budget *improves* t+30 endpoint
@@ -1856,7 +1864,7 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    horizon-dependent. The 18-point π0.5-port curve adds the third regime:
    fast then **flat** — 9.61 mm @50k, 9.12 @100k, and a 8.82–9.07 mm
    plateau from 200k through 900k with every interval overlapping its
-   neighbors; acc@0.1 rises 0.920 → 0.931 by 350k and then stops. The port
+   neighbors; Acc@0.1 rises 0.920 → 0.931 by 350k and then stops. The port
    is fully converged on t+10 metrics by ~1/5 of its 1M schedule (matching
    §9.2.5's Arm-B sample-efficiency result), shows none of the ACT families'
    late-training drift, and the 2026-08-16 700K resume segment (650K→900K)
@@ -1864,7 +1872,7 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    perturb the operating point.
 4. **The matched-ACT-flow deficit is horizon-independent.** ACT-flow
    @50k is worst on every co-primary metric at t+10 too (15.0–15.6 mm,
-   acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
+   Acc@0.1 0.840–0.843, MSE:L1 tail ratio 9.6–11.3 µm/mm vs ≈6 for the
    others), and its rot-jerk (0.74–0.76°) is 5–25× rougher than every other
    family. SmolVLA is the second-roughest (0.49–0.55° ≈ 3.3× GT) — the only
    surviving families above ground-truth jerk are SmolVLA, the openpi arms
@@ -1873,21 +1881,22 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    its smoothness is established early and budget-stable, like its accuracy.
    The Q2 conclusion (ACT-transformer denoiser/conditioning recipe,
    not flow matching itself) survives the horizon change unaltered.
-5. **acc@0.5 is saturated for every surviving model** (0.991–0.994, spread
+5. **Acc@0.5 is saturated for every surviving model** (0.991–0.994, spread
    below the interval half-widths): motion-intent precision is solved
-   across the board; only acc@0.1 separates families — the τ-doctrine
+   across the board; only Acc@0.1 separates families — the Dyna-2 threshold
+   interpretation
    finding of §9.2.7 generalized to every stack in the inventory.
 6. **The rotation-notation tie holds under the canonical protocol in both
    stacks**: SmolVLA axis-angle vs rot6d tie on endpoint (9.18 vs 9.08 mm,
-   overlapping intervals) and acc@0.1 (0.931 both), with axis-angle again
+   overlapping intervals) and Acc@0.1 (0.931 both), with axis-angle again
    smoother in rotation (0.49° vs 0.55° — the §9.2.3 direction); openpi
-   rotvec vs rot6d tie on acc@0.1 (0.920 vs 0.919) and rotvec is even
+   rotvec vs rot6d tie on Acc@0.1 (0.920 vs 0.919) and rotvec is even
    better on rotation endpoint (1.65° vs 1.80°, disjoint), while rot6d is
    better on XYZ endpoint — no notation lever in either stack.
 7. **The SmolVLA 1M full-width curve (§9.2.10) reaches the top of the h10
    pack only at full budget.** At 100k it sits above every mature family
    (10.51 mm vs port 9.12, R50-V1 9.20); by 1M it ties the port plateau
-   (9.06 [8.56, 9.56] vs 9.00) and passes R50-V1@1M (10.61), with acc@0.1
+   (9.06 [8.56, 9.56] vs 9.00) and passes R50-V1@1M (10.61), with Acc@0.1
    0.933 — the table's best point estimate — and rot-jerk halved to 0.43°.
    SmolVLA needs ~7× the port's steps to reach the same t+10 operating
    point (sample-efficiency gap), and unlike the ACT families its t+10
@@ -1920,7 +1929,7 @@ masking buys only a small late-budget smoothness edge.**
 
 Unified horizon-10 rows (§9.2.9 protocol):
 
-| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | Acc@0.5 | Acc@0.1 | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | smolvla_rot6d_seed1000_0100000steps | 100000 | 10.51 [9.95, 11.06] | 1.74 [1.66, 1.81] | 3.13 | 20.1 | 0.531 | 0.54 | 0.992 | 0.919 [0.914, 0.923] | 1.042 |
 | smolvla_rot6d_seed1000_0200000steps | 200000 | 10.30 [9.79, 10.82] | 1.86 [1.78, 1.94] | 3.10 | 18.4 | 0.676 | 0.76 | 0.992 | 0.909 [0.904, 0.913] | 0.870 |
@@ -1935,7 +1944,7 @@ Unified horizon-10 rows (§9.2.9 protocol):
 
 Native-h30 milestones (full 10-row table in §9.2.11):
 
-| step | XYZ end h10 (mm) | XYZ end h30 (mm) | acc@0.1 h10 | acc@0.1 h30 | Rot jerk h10 (deg) | Rot jerk h30 (deg) |
+| step | XYZ end h10 (mm) | XYZ end h30 (mm) | Acc@0.1 h10 | Acc@0.1 h30 | Rot jerk h10 (deg) | Rot jerk h30 (deg) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 100k (notation run §9.2.3) | 9.08 | 27.29 | 0.931 | 0.714 | 0.552 | 0.924 |
 | 100k | 10.51 | 28.50 | 0.919 | 0.695 | 1.042 | 1.391 |
@@ -1958,7 +1967,7 @@ Read-outs (Option A):
    mid-curve checkpoints must not be read as budget-matched replicates.
 2. **Budget improves BOTH horizons — no ACT-style flip.** t+10 10.51 →
    9.06 mm (plateau from ~700k) and t+30 28.50 → 26.26 mm (still creeping
-   down at 1M); acc@0.1 0.919 → 0.933 and 0.695 → 0.729. Contrast
+   down at 1M); Acc@0.1 0.919 → 0.933 and 0.695 → 0.729. Contrast
    §9.2.8 read-out 4, where R50-V1's t+10 *degrades* with budget while t+30
    improves: the horizon trade is a property of the ACT-VAE family, not of
    training long per se — both flow families here (SmolVLA, π0.5 port)
@@ -1986,7 +1995,7 @@ curves — full-width as the fourth line, masked as the fifth.
 
 Option B (masked-subspace) unified horizon-10 rows (§9.2.9 protocol):
 
-| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | Acc@0.5 | Acc@0.1 | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | smolvla_masked_seed1000_0100000steps | 100000 | 10.71 [10.15, 11.26] | 1.75 [1.67, 1.83] | 3.40 | 22.8 | 0.545 | 0.58 | 0.992 | 0.909 [0.903, 0.914] | 1.289 |
 | smolvla_masked_seed1000_0200000steps | 200000 | 10.43 [9.94, 10.92] | 1.70 [1.62, 1.78] | 3.59 | 22.3 | 0.578 | 0.59 | 0.992 | 0.911 [0.906, 0.916] | 0.762 |
@@ -2001,7 +2010,7 @@ Option B (masked-subspace) unified horizon-10 rows (§9.2.9 protocol):
 
 Option B native-h30 milestones (full 10-row table in §9.2.11):
 
-| step | XYZ end h10 (mm) | XYZ end h30 (mm) | acc@0.1 h10 | acc@0.1 h30 | Rot jerk h10 (deg) | Rot jerk h30 (deg) |
+| step | XYZ end h10 (mm) | XYZ end h30 (mm) | Acc@0.1 h10 | Acc@0.1 h30 | Rot jerk h10 (deg) | Rot jerk h30 (deg) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 100k | 10.71 | 29.07 | 0.909 | 0.699 | 1.289 | 1.582 |
 | 300k | 9.38 | 26.45 | 0.930 | 0.723 | 0.831 | 1.093 |
@@ -2018,7 +2027,7 @@ Option B native-h30 milestones (full 10-row table in §9.2.11):
    point 25.84 @500k sits inside A's CI). Neither the plateau level
    (~9.1 mm t+10 / ~26.2 mm t+30, from ~400k) nor the plateau onset
    moves.
-2. **Near-horizon accuracy: tie.** acc@0.1 t+10 identical to the third
+2. **Near-horizon accuracy: tie.** Acc@0.1 t+10 identical to the third
    decimal at 1M (0.933 both); t+30 masked edges ahead 0.736 vs 0.729 —
    inside the ±0.011 CI overlap.
 3. **Smoothness: the one real (small) difference — masking is ~7–9%
@@ -2053,7 +2062,7 @@ averaged within episode, 95% episode bootstrap). Openpi's h10-trained arms
 (chunk 10) are out of scope by construction; the h30-trained openpi arm
 (rot6d, 20k steps) is included as an optional row — its canonical-window
 native-h30 score was re-run on the freed host GPU on 2026-08-19 (23.20
-[21.56, 24.91] mm / acc@0.1 0.725 / rot-jerk 0.178°, single inference seed
+[21.56, 24.91] mm / Acc@0.1 0.725 / rot-jerk 0.178°, single inference seed
 like its §9.2.9 siblings, consistent with the old-window §9.2.5 Arm-A
 value 23.83 / 0.702 / 0.181). The tree is the shared `reeval_v2metrics/eval_common_h32/`
 holding the §9.2.7 historical curve, the §9.2.8 R50-V1 curve, the §9.2.6
@@ -2066,11 +2075,11 @@ curve (19 points, 50k–1M), the SmolVLA notation h30 pair, the SmolVLA 1M
 full-width h30 curve (10 points, §9.2.10), the openpi h30-trained arm, and
 the kiwi masked-subspace 1M h30 curve (10 points, §9.2.10) are in.** Every
 admitted row passed the compiler's assertions — canonical bounds,
-full-chunk scoring, 500 queries/100 episodes, identical acc@τ scales
+full-chunk scoring, 500 queries/100 episodes, identical Acc@ε scales
 (within-tree), and identical GT jerk (0.158° / 0.67 mm — the full-chunk
 GT invariants, slightly different from the t+10 values as expected).
 
-| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | acc@0.5 | acc@0.1 | Rot jerk (deg) |
+| Run | step | XYZ end (mm) | Rot end (deg) | XYZ L1/dim (mm) | XYZ MSE/dim (µm²) | Rotvec L1/dim (deg) | Rotvec MSE/dim (deg²) | Acc@0.5 | Acc@0.1 | Rot jerk (deg) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | act_r18_flow_u_lr1e5_seed2000_100000steps | 50000 | 31.41 [29.70, 33.18] | 5.70 [5.39, 6.02] | 9.97 | 236.6 | 1.743 | 6.49 | 0.963 | 0.634 [0.623, 0.644] | 0.772 |
 | act_r18_flow_u_lr1e5_seed3000_100000steps | 50000 | 31.97 [29.88, 34.09] | 5.45 [5.14, 5.80] | 10.21 | 273.6 | 1.620 | 5.81 | 0.961 | 0.654 [0.643, 0.665] | 0.818 |
@@ -2182,12 +2191,12 @@ Read-outs (extended as the pending rows land):
    9.6–9.9), and the family ordering changes: the fresh R50-V1 curve is
    clearly the best ACT family at full chunk (21.2–23.2 mm vs the
    historical R18's 23.2–25.6 over the same budgets), consistent with the
-   §9.2.8 budget-flip finding. acc@0.1 drops from the 0.88–0.93 t+10 range
+   §9.2.8 budget-flip finding. Acc@0.1 drops from the 0.88–0.93 t+10 range
    to 0.63–0.75 — t+30 accuracy is the hard, unsolved regime.
 2. **The two ACT budget regimes now have full-chunk curves.** R18 improves
-   slowly and monotonically (25.57 → 23.31 mm, acc@0.1 0.681 → 0.715 over
+   slowly and monotonically (25.57 → 23.31 mm, Acc@0.1 0.681 → 0.715 over
    100k→3M); R50-V1 improves faster and plateaus (23.24 → 21.32 mm by 1M,
-   best 21.22 @600k, acc@0.1 0.735 → 0.742) — at t+30 the fresh run is
+   best 21.22 @600k, Acc@0.1 0.735 → 0.742) — at t+30 the fresh run is
    better at EVERY budget, not just early (contrast §9.2.9 read-out 3
    where R50-V1 *degrades* at t+10: the budget optimum is horizon-dependent
    in the opposite direction — more budget helps the far horizon).
@@ -2206,10 +2215,10 @@ Read-outs (extended as the pending rows land):
    matching the §9.2.6 diagnosis.
 5. **The π0.5-port full-chunk curve ties R50-V1 at every mature budget**
    (19 points, 50k–1M; kiwi owns 650k/700k/1M). The port reaches its
-   21.7–21.9 mm / acc@0.1 0.741–0.744 plateau by ~350k and stays flat
+   21.7–21.9 mm / Acc@0.1 0.741–0.744 plateau by ~350k and stays flat
    through 1M (21.75 mm) — no overfitting, mirroring its h10 curve
    (§9.2.9). Against R50-V1 over the same budgets the endpoint CIs overlap
-   everywhere (port 21.70–21.84 vs R50-V1 21.22–21.74 mm at ≥600k; acc@0.1
+   everywhere (port 21.70–21.84 vs R50-V1 21.22–21.74 mm at ≥600k; Acc@0.1
    0.743 vs 0.742–0.743), so the h10 ACT-vs-port tie carries to t+30.
    What does NOT carry is the early-budget sample-efficiency edge: at h30
    port@100k is only 23.05 vs R50-V1's 23.24 mm — a 0.2 mm gap versus the
@@ -2227,14 +2236,14 @@ Read-outs (extended as the pending rows land):
    0.85–0.92° vs GT 0.158°) — its §9.2.9 h10 "ties everything" profile is
    a near-horizon artifact of the same kind as the port's early edge.
 7. **Budget moves the SmolVLA far-horizon deficit but does not close it.**
-   The full-width 1M curve improves 28.50 → 26.26 mm / acc@0.1
+   The full-width 1M curve improves 28.50 → 26.26 mm / Acc@0.1
    0.695 → 0.729 over 100k→1M — yet at every budget it remains above every
    other chunk-30 family's *same-budget* point, and its 1M endpoint still
    trails ACT-L1's 100k budget (23.31 mm). Read with §9.2.10 read-out 3:
    near-horizon parity at full budget, far-horizon deficit that survives
    10× budget — the only family for which this is true.
 8. **The openpi h30-trained arm lands mid-pack at 2% of the port's
-   budget.** 23.20 [21.56, 24.91] mm / acc@0.1 0.725 at just 20k steps —
+   budget.** 23.20 [21.56, 24.91] mm / Acc@0.1 0.725 at just 20k steps —
    already at the ACT-L1@100k level (23.7) and ~1.7 mm from the mature
    port/R50-V1 plateau, with GT-level smoothness (rot-jerk 0.178° vs GT
    0.158°). The §9.2.5 sample-efficiency conclusion (the openpi recipe
@@ -3064,7 +3073,7 @@ t+10 evals). All three drivers are idempotent and write
 RUN_RE-compatible report trees under `reeval_v2metrics/eval_unified_h10/`.
 Because the tree mixes the two evaluators' report schemas, collection is done
 by the dedicated cross-schema compiler, which enforces the §9.2.9 protocol
-assertions (bounds, horizon, 500 queries, cross-row acc@τ-scale and GT-jerk
+assertions (bounds, horizon, 500 queries, cross-row Acc@ε normalization-scale and GT-jerk
 identity) before emitting one summary:
 
 ```bash
