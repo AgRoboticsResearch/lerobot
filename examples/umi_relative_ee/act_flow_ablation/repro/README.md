@@ -104,11 +104,14 @@ inference-inert). The archive is untouched; the shadow lives at
   (+ its `manifest.tsv` of run → final-checkpoint mappings, incl. the
   s3000@20k torn-ckpt substitution), `eval_common_h32/` §9.2.11, results
   CSVs incl. `results_salvage_h10/`).
-- Checkpoint archive (only copy): kiwi `/mnt/data/zfei/report_ckpts/`
+- Checkpoint archive (only copy): kiwi `/mnt/data/zfei/archive/report_ckpts/`
   (ssh port 2203) — 119 G / 92 runs at §9.2.13 time, since grown to ~208 G by
   the 2026-08-24 Glowat512 salvage (28 recovered runs folded into the same
   layout; their sha256 manifest + the non-train evidence live in the adjacent
-  `disk_salvage_glowat512_20260824/`).
+  `disk_salvage_glowat512_20260824/`). Kiwi `/mnt/data/zfei/` layout since
+  2026-08-24: `archive/` (report_ckpts + salvage evidence), `eval/`
+  (jerk_reeval + salvage_eval sweep trees), `lingbot/` (assets + smoke +
+  run_one), `viz/`, `scripts/`.
 - Datasets: validation + training roots under `/mnt/data1/sroi/…` (host)
   and `/home/zfei/data/…` (kiwi); hashes in `datasets/`.
 - The §9.2.14 openpi h30 bs4 1M training run:
