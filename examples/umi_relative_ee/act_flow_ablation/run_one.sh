@@ -107,6 +107,16 @@ case "$VARIANT" in
       --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
     )
     ;;
+  act_r50_v1_vae_2frame)
+    # Q3 multi-frame input: identical recipe to act_r50_v1_vae plus a 2-frame
+    # (t-1, t) channel-stacked observation window. See RESEARCH_REPORT.md Q3.
+    POLICY+=(
+      --policy.use_vae=true
+      --policy.vision_backbone=resnet50
+      --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
+      --policy.consecutive_frames=2
+    )
+    ;;
   act_r50_large)
     POLICY+=(
       --policy.use_vae=true

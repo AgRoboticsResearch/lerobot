@@ -84,6 +84,13 @@ class ACTConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 100
     n_action_steps: int = 100
+    # Number of consecutive camera frames (t-k+1 .. t) fetched per sample and
+    # stacked on the channel axis before the vision backbone (see
+    # `ACT._widen_backbone_conv1`). 1 (default) keeps the historical
+    # single-frame behavior bit-identical. Unlike `n_obs_steps`, this does not
+    # create extra observation tokens: the frames are channel-stacked into one
+    # image, so the transformer input length is unchanged.
+    consecutive_frames: int = 1
 
     # UMI-style relative end-effector training. The raw dataset action is an
     # absolute 7D [xyz, axis-angle, gripper] pose; processors derive a 20D
@@ -239,6 +246,10 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
+        if self.consecutive_frames < 1:
+            raise ValueError(
+                f"`consecutive_frames` must be >= 1. Got {self.consecutive_frames}."
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -254,7 +265,12 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
-    def observation_delta_indices(self) -> None:
+    def observation_delta_indices(self) -> list | None:
+        if self.consecutive_frames > 1:
+            # Oldest-first window ending at the current frame (same convention
+            # as Diffusion Policy's `n_obs_steps`); the dataset clamps to the
+            # episode start and marks clamped frames with `*_is_pad`.
+            return list(range(1 - self.consecutive_frames, 1))
         return None
 
     @property

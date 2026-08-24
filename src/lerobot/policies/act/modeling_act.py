@@ -139,6 +139,21 @@ class ACTPolicy(PreTrainedPolicy):
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
+    def _stack_consecutive_frames(self, batch: dict[str, Tensor]) -> None:
+        """Merge per-camera `(B, T, C, H, W)` frame histories into `(B, T*C, H, W)`.
+
+        With `consecutive_frames > 1` the dataset delivers a window of frames per camera
+        (oldest first, per `ACTConfig.observation_delta_indices`). They are stacked on
+        the channel axis into a single image for the (widened) backbone conv1. This runs
+        after the preprocessing pipeline, so per-frame `(C, 1, 1)` normalization stats
+        have already broadcast over the time dimension. No-op at `consecutive_frames == 1`.
+        """
+        if self.config.consecutive_frames > 1:
+            batch[OBS_IMAGES] = [
+                img.reshape(img.shape[0], -1, *img.shape[3:]) if img.ndim == 5 else img
+                for img in batch[OBS_IMAGES]
+            ]
+
     @torch.no_grad()
     def predict_action_chunk(
         self,
@@ -152,6 +167,7 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+            self._stack_consecutive_frames(batch)
 
         if self.config.action_objective == "l1":
             return self.model(batch)[0]
@@ -203,6 +219,7 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+            self._stack_consecutive_frames(batch)
 
         if self.config.action_objective == "flow_matching":
             actions = batch[ACTION]
@@ -437,6 +454,27 @@ class ACT(nn.Module):
             # feature map).
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            if config.consecutive_frames > 1:
+                # Widen conv1 for channel-stacked frame histories. `IntermediateLayerGetter`
+                # holds module references, so the swap must go through `self.backbone`
+                # itself (reassigning `backbone_model.conv1` here would be a silent no-op).
+                # Inflate the pretrained filters by tiling x (1 / consecutive_frames) so
+                # that with identical frames the pre-BN activation exactly matches the
+                # pretrained statistics (FrozenBatchNorm2d running stats are frozen).
+                old_conv1 = self.backbone["conv1"]
+                wide_conv1 = nn.Conv2d(
+                    old_conv1.in_channels * config.consecutive_frames,
+                    old_conv1.out_channels,
+                    kernel_size=old_conv1.kernel_size,
+                    stride=old_conv1.stride,
+                    padding=old_conv1.padding,
+                    bias=old_conv1.bias is not None,
+                )
+                with torch.no_grad():
+                    wide_conv1.weight.copy_(
+                        old_conv1.weight.repeat(1, config.consecutive_frames, 1, 1) / config.consecutive_frames
+                    )
+                self.backbone["conv1"] = wide_conv1
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
