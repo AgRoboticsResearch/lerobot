@@ -2421,11 +2421,35 @@ legacy "jerk" columns are unnormalized within-chunk second differences
 (renamed in place; §9.2.9 definition note), and the report's earlier "10 Hz"
 statement was wrong — the dataset is 30 fps (dt = 1/30 s; h10 ≈ 0.33 s,
 full 30-step chunk ≈ 1.0 s). This section re-scores every torch row of the
-§9.2.9 inventory with **physical-unit derivatives at dt = 1/30 s**:
-velocity = first difference/dt, acceleration = second/dt², jerk =
-third/dt³; rotation uses inter-step SO(3) angle magnitudes (angular speed)
-then finite differences of that scalar with absolute-value means (no signed
-cancellation); XYZ uses vector norms of the differenced translation.
+§9.2.9 inventory with **physical-unit derivatives at dt = 1/30 s**.
+
+**Definition (true jerk and its ladder).** For one chunk of absolute poses
+(x_t, R_t), t = 0…9 — the 10 predicted (or ground-truth) poses of the h10
+window, x_t ∈ ℝ³ translation, R_t ∈ SO(3) rotation — with dt = 1/30 s:
+
+- **Translation.** v_t = (x_{t+1} − x_t)/dt (9 samples); a_t = (v_{t+1} −
+  v_t)/dt = (x_{t+2} − 2x_{t+1} + x_t)/dt² (8 samples); **j_t = (a_{t+1} −
+  a_t)/dt = (x_{t+3} − 3x_{t+2} + 3x_{t+1} − x_t)/dt³ (7 samples) — the
+  jerk, i.e. the rate of change of acceleration (third time-derivative of
+  position), estimated by the third finite difference.** Reported: mean ‖v‖
+  (mm/s), mean ‖a‖ (mm/s²), mean ‖j‖ (mm/s³) over the chunk.
+- **Rotation.** S_t = R_tᵀ R_{t+1} is the inter-step relative rotation with
+  geodesic angle θ(S) = arccos((tr S − 1)/2)·180/π; the scalar angular
+  speed is ω_t = θ(S_t)/dt (9 samples), α_t = (ω_{t+1} − ω_t)/dt (8), and
+  the **angular jerk j_t = (α_{t+1} − α_t)/dt (7)**. Reported: mean ω
+  (deg/s), mean |α| (deg/s²), mean |j| (deg/s³). The chain is scalar —
+  angular-speed magnitude only, so axis-direction changes are not detected;
+  |·| at acceleration and jerk means adjacent samples cannot cancel.
+- **Aggregation.** Per-chunk mean → per-episode mean (5 queries) →
+  episode-balanced mean over 100 episodes, with a 95% bootstrap CI (10k
+  resamples, seed 0). The GT reference row applies the identical
+  computation to the ground-truth future chunk (identical across all rows
+  by protocol invariance).
+- **Contrast with the legacy columns.** The renamed §9.2.9 columns are the
+  same idea *without* dt normalization: XYZ 2nd-diff = mean ‖x_{t+2} −
+  2x_{t+1} + x_t‖ (mm); rot 2nd-diff = mean θ(S_tᵀ S_{t+1}) (deg) — a
+  curvature proxy in mm/step² and deg/step², an unnormalized acceleration
+  stand-in, not a jerk.
 
 **Status: complete (2026-08-23).** All 88 torch rows (ACT curves, flow/L1/
 VAE companions, π0.5 port budget curve, SmolVLA arms) were re-evaluated on
@@ -2478,6 +2502,10 @@ Figures (this section):
 
 *Fig. 9.2.13-3: Physical jerk vs training steps — the two budget curves plus single-budget families, dashed = GT.*
 
+![Physical jerk every run](figures/physical_jerk_all.png)
+
+*Fig. 9.2.13-4: True jerk for EVERY run of the sweep (log scale, 95% episode bootstrap CIs, dashed = GT) — the physical-unit counterpart of the §9.2.9 within-chunk second-difference figure. Rows grouped by family: the historical R18-VAE deepens below GT as budget grows, R50-V1 sits deepest under GT, the π0.5 port converges toward GT from above, SmolVLA amplifies at every budget, and under-trained ACT-flow anchors the top of the range.*
+
 Read-outs:
 
 1. **Every §9.2.9 over/under-GT smoothness call survives in true physical
@@ -2518,9 +2546,10 @@ Read-outs:
    endpoint while being far from GT motion, and none of the over-smoothed
    ACT rows buys endpoint accuracy with its smoothness (R50-V1's endpoint
    lead over hist ACT comes with the deepest under-GT jerk instead).
-6. **Caveats.** (a) The h10 window is 0.33 s — the third derivative uses
-   ≤8 finite differences per 10-step chunk, so jerk estimates are
-   noisier than endpoint/velocity (CIs in the table absorb this).
+6. **Caveats.** (a) The h10 window is 0.33 s — the third derivative has
+   only 7 samples per 10-pose chunk (9 velocity / 8 acceleration / 7
+   jerk; see the definition above), so jerk estimates are noisier than
+   endpoint/velocity (CIs in the table absorb this).
    (b) Rotation is a scalar angular-speed chain (magnitude only — no
    axis-direction change detection). (c) The four JAX openpi rows are
    pending (host GPU occupied by the §9.2.14 h30 run); their legacy
@@ -3492,7 +3521,7 @@ uv run python examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.p
 ```
 
 outputs `results_physical_jerk/physical_jerk_h10.{csv,md}` +
-`validation.txt` and `figures/physical_jerk_{h10,ratio,budget}.png`; the
+`validation.txt` and `figures/physical_jerk_{h10,all,ratio,budget}.png`; the
 same compile pass writes the 88 compact per-episode files that the
 repository-tracked repro bundle serves (below). The four JAX openpi rows
 are re-scored on the host by the openpi-side evaluator

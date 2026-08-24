@@ -8,6 +8,10 @@ cross-validated there against the archived §9.2.9 numbers) and renders:
   figures/physical_jerk_h10.png       — representative bars of true rot
     jerk (deg/s³) and XYZ jerk (mm/s³) at dt = 1/30 s, 95% episode
     bootstrap CIs, GT reference lines.
+  figures/physical_jerk_all.png       — true jerk for EVERY run of the
+    sweep (log-scale horizontal bars, family-grouped, bootstrap CIs,
+    dashed GT) — the physical-unit counterpart of §9.2.9's within-chunk
+    second-difference figure (unified_h10_jitter.png).
   figures/physical_jerk_ratio.png      — pred/GT ratio ladder across
     velocity → acceleration → jerk (rot and XYZ): where in the derivative
     stack each family's smoothing/jitter signature appears.
@@ -24,6 +28,7 @@ from __future__ import annotations
 import csv
 import math
 import os
+import re
 
 import matplotlib
 
@@ -84,11 +89,26 @@ FAMILY_PREFIXES = [
 ]
 
 
-def family_of(run: str) -> tuple[str, str]:
+def family_of(run: str) -> tuple[str, str] | None:
     for prefix, fam, label in FAMILY_PREFIXES:
         if run.startswith(prefix):
             return fam, label
-    return "hist", run
+    return None
+
+
+FAMILY_ORDER = [fam for _, fam, _ in FAMILY_PREFIXES]
+
+
+def _seed_of(run: str) -> str:
+    m = re.search(r"_seed(\d+)_", run)
+    return m.group(1) if m else "1000"
+
+
+def all_runs_label(run: str, row: dict) -> str:
+    _, base = family_of(run) or ("hist", run)
+    seed = _seed_of(run)
+    s = f" s{seed}" if seed != "1000" else ""
+    return f"{base}{s} {fmt_step(int(row['steps']))}"
 
 
 def fmt_step(step: int) -> str:
@@ -203,11 +223,75 @@ def fig_budget(rows: dict[str, dict]) -> None:
     print(out)
 
 
+def fig_jerk_all(rows: dict[str, dict]) -> None:
+    """True jerk for EVERY run of the sweep, log-x bars (jitter-figure style).
+
+    Mirrors §9.2.9's within-chunk second-difference figure
+    (unified_h10_jitter.png): one row per run, grouped by family (budget
+    curves first, single-budget references after), 95% episode bootstrap
+    CIs, dashed GT line per panel — but in physical units at dt = 1/30 s.
+    """
+    entries = []
+    for run, r in rows.items():
+        fam = family_of(run)
+        if fam is None:
+            print(f"WARN: no family prefix matches {run}; skipped in all-runs figure")
+            continue
+        entries.append((FAMILY_ORDER.index(fam[0]), int(r["steps"]), run, r))
+    if not entries:
+        return
+    entries.sort(key=lambda e: (e[0], e[1], e[2]))
+
+    ref = next(iter(rows.values()))
+    gt_rot = float(ref["gt_rot_jerk_deg_s3"])
+    gt_xyz = float(ref["gt_xyz_jerk_mm_s3"])
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 0.22 * len(entries) + 2.4), sharey=True)
+    fig.suptitle(
+        "Physical-unit jerk — every run of the §9.2.13 sweep "
+        "(dt = 1/30 s; log scale; 95% episode bootstrap CI; dashed = ground truth)",
+        fontsize=12,
+    )
+    labels = [all_runs_label(run, r) for _, _, run, r in entries]
+    for ax, (m, title, gt) in zip(
+        axes,
+        (
+            ("rot_jerk_deg_s3", "Rotational jerk (deg/s³)", gt_rot),
+            ("xyz_jerk_mm_s3", "XYZ jerk (mm/s³)", gt_xyz),
+        ),
+    ):
+        means, lows, highs, colors = [], [], [], []
+        for _, _, run, r in entries:
+            v = float(r[m])
+            means.append(v)
+            lows.append(v - float(r[f"{m}_lo"]))
+            highs.append(float(r[f"{m}_hi"]) - v)
+            colors.append(COLORS[family_of(run)[0]])
+        y = range(len(labels))
+        ax.barh(y, means, xerr=[lows, highs], color=colors, alpha=0.85,
+                error_kw=dict(lw=1, capsize=2, ecolor="#333333"))
+        ax.set_xscale("log")
+        ax.set_xlim(min(means) * 0.45, max(m + h for m, h in zip(means, highs)) * 1.6)
+        ax.axvline(gt, color="#000000", ls="--", lw=1.3)
+        ax.text(gt * 1.06, -0.6, f"GT {gt:,.0f}", fontsize=8, color="#000000")
+        ax.set_title(title, fontsize=10)
+        ax.grid(axis="x", alpha=0.3, which="both")
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+    axes[0].set_yticks(list(range(len(labels))), labels=[f"{l}  " for l in labels], fontsize=7)
+    axes[0].invert_yaxis()
+    fig.tight_layout(rect=(0, 0, 1, 0.965))
+    out = os.path.join(FIG_DIR, "physical_jerk_all.png")
+    fig.savefig(out, dpi=200)
+    print(f"wrote {out} ({len(entries)} runs)")
+
+
 def main() -> int:
     os.makedirs(FIG_DIR, exist_ok=True)
     rows = load_rows()
     print(f"{len(rows)} runs with physical metrics")
     fig_jerk_bars(rows)
+    fig_jerk_all(rows)
     fig_ratio_ladder(rows)
     fig_budget(rows)
     return 0
