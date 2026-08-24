@@ -739,6 +739,8 @@ physical errors from the common queries remain the cross-objective endpoint.
 
 ![Validation learning curves](figures/validation_learning_curves.png)
 
+*Fig. 9-1: Validation learning curves for the 30k variant matrix.*
+
 ### 9.1 Decoded physical metrics at 30k
 
 All rows below use the corrected common 500-query set. Generative rows average
@@ -747,6 +749,8 @@ Latency is synchronized policy-only median latency; memory is peak allocated
 CUDA memory. Lower is better throughout.
 
 ![Decoded endpoint errors](figures/decoded_endpoint_errors.png)
+
+*Fig. 9.1-1: Decoded endpoint errors on the corrected common 500-query set at 30k (lower is better; generative rows average inference seeds 1000/2000/3000 within each episode).*
 
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -772,6 +776,8 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
   intervals exclude zero.
 
 ![Paired endpoint improvements](figures/paired_endpoint_improvements.png)
+
+*Fig. 9.1-2: Paired endpoint improvements versus the ACT-L1 baseline with 95% bootstrap intervals — all four intervals exclude zero.*
 - R50-large versus standard-width R50 V2 is tied on all four pose metrics: for
   endpoint XYZ its improvement is -0.8% (CI -6.0–4.2%), and for endpoint
   rotation -1.6% (-8.0–4.2%). It adds 80.3M parameters, 16% inference latency,
@@ -946,6 +952,8 @@ online peak allocation is only about 203 MiB.
 
 ![Accuracy and latency trade-off](figures/accuracy_latency_tradeoff.png)
 
+*Fig. 9.2-1: Accuracy–latency trade-off at 30k — ACT-L1 is the latency floor; standard DP is 3.5×, flow 4.5×, and ACT-DP 20.4× slower.*
+
 ### 9.2.1 100k vanilla flow and Diffusion Policy follow-up
 
 The matched ACT-flow run then completed its fixed 100k budget. Its validation
@@ -1069,6 +1077,8 @@ were open-loop evaluated on the fixed 100-episode / 500-query validation protoco
 ![Rotation notation across both stacks — endpoint accuracy ties, jitter effects
 flip sign](figures/notation_cross_stack.png)
 
+*Fig. 9.2.3-1: Rotation notation across both stacks (SmolVLA rot6d vs axis-angle) — endpoint accuracy ties, jitter effects flip sign.*
+
 Endpoint accuracy is **statistically tied**: the 95% bootstrap intervals overlap
 heavily on both XYZ (±1.6 mm around ~27 mm) and rotation (±0.25° around ~4.7°), so
 rot6d is not measurably more accurate than axis-angle for SmolVLA here. The one
@@ -1140,7 +1150,12 @@ units.
 
 ![Notation comparison across both stacks](figures/notation_cross_stack.png)
 
+*Fig. 9.2.4-1: Notation comparison across both stacks (official-openpi rot6d vs rotvec replication; §9.2.3 cross-stack reference).*
+
+
 ![Horizon-matched (10-step) endpoint vs samples seen — all stacks tied; openpi ~9× more sample-efficient](figures/openpi_budget_context.png)
+
+*Fig. 9.2.4-2: Horizon-matched (10-step) endpoint vs samples seen — all stacks statistically tied at 9–10 mm; openpi reaches the tie band with ~9× fewer samples.*
 
 **Notation read-out (preregistered).** Endpoint accuracy is again
 **statistically tied** — the position intervals overlap heavily (rot6d's point
@@ -1394,6 +1409,8 @@ artifact root that symlinks `train/`; the legacy tree was left untouched).
 
 ![Seed-23k companions on the v2 metrics](figures/seed23k_v2metrics.png)
 
+*Fig. 9.2.6-1: Seed-23k salvage companions on the v2 metrics — variant rank order replicates across training seeds at matched partial budgets.*
+
 Read-outs, restricted to matched-step comparisons (budgets differ across the
 set, so these rows are not comparable with the seed-1000 100k tables except
 where noted):
@@ -1472,11 +1489,13 @@ samples (≈171 epochs of the 140,522-frame train set).
 | 2.5M | 23.40 [21.52, 25.30] | 4.511 | 7.71 | 0.974 | 0.715 [0.700, 0.729] |
 | 3M | 23.31 [21.45, 25.20] | 4.498 | 7.66 | 0.974 | 0.715 [0.700, 0.731] |
 
-(The table shows ten milestones; the figure below plots all thirty points.
+(The table shows ten milestones; Fig. 9.2.7-1 plots all thirty points.
 Rotvec L1/dim declines 1.469 → 1.320° over the same range; XYZ MSE/dim
 189 → 160 µm².)
 
 ![Historical ACT 30-point budget curve](figures/historical_act_budget_curve.png)
+
+*Fig. 9.2.7-1: Historical production ACT 30-point budget curve on the v2 metrics — all thirty milestones plotted; the §9.2.7 table shows ten.*
 
 Read-outs:
 
@@ -1559,6 +1578,8 @@ t+10 tree). Milestones:
 | 1M | **21.32** [19.7, 22.9] | **4.159** | 6.88 | 0.974 | 0.742 [0.727, 0.757] | 0.032 |
 
 ![R50-V1 vs historical R18 budget curves](figures/r50_vs_r18_budget_curve.png)
+
+*Fig. 9.2.8-1: ACT R50-V1 vs historical R18 budget curves — R50@100k already matches the R18@3M plateau and stays ~2 mm ahead through 1M.*
 
 Read-outs, following the preregistered decomposition:
 
@@ -1838,20 +1859,28 @@ per-dimension (µm² / deg²):
 
 ![Unified horizon-10 metrics across all surviving models](figures/unified_h10_metrics.png)
 
+*Fig. 9.2.9-1: Unified horizon-10 metrics across all surviving models — one representative per family on the six co-primary metrics, 95% episode-bootstrap CIs.*
+
 ![Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh
 R50-V1 points, and the 18-point π0.5-port curve as the third line: fast to
 a 8.82–9.07 mm plateau (~200k) then flat through 900k, in contrast to
 R50-V1's t+10 drift; the §9.2.12 openpi 100k star sits at the tie-band top
 (10.77 mm, flat vs its 20k arm)](figures/unified_h10_budget.png)
 
+*Fig. 9.2.9-2: Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh R50-V1 points, and the 18-point π0.5-port curve (fast to a 8.82–9.07 mm plateau ~200k, then flat through 900k); the §9.2.12 openpi 100k star sits at the tie-band top (10.77 mm, flat vs its 20k arm).*
+
 ![Unified horizon-10 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.152° / 0.70 mm)](figures/unified_h10_jitter.png)
+
+*Fig. 9.2.9-3: Unified horizon-10 within-chunk 2nd-diff — every run of the sweep, log scale, dashed = ground truth (0.152° / 0.70 mm).*
 
 ![Unified horizon-10 jitter vs training steps — the R18 curve degrades
 0.043° → 0.063° from 100k to 3M while R50-V1 improves to 0.027–0.036°;
 ACT-flow sits 5–25× above every other family; the π0.5-port curve holds
 0.073–0.09° (≈half of GT) from 200k onward — flat where the ACT curves
 move](figures/unified_h10_jitter_budget.png)
+
+*Fig. 9.2.9-4: Unified horizon-10 2nd-diff vs training steps — R18 degrades 0.043°→0.063° (100k→3M) while R50-V1 improves to 0.027–0.036°; ACT-flow sits 5–25× above every other family; the π0.5-port curve holds 0.073–0.09° (≈half of GT) from 200k onward.*
 
 Host-side read-outs (kiwi rows will extend, not re-rank, these):
 
@@ -2194,16 +2223,24 @@ GT invariants, slightly different from the t+10 values as expected).
 
 ![Unified native-h30 metrics across chunk-30 models](figures/unified_h30_metrics.png)
 
+*Fig. 9.2.11-1: Unified native-h30 (full-chunk) metrics across chunk-30 models — six co-primary metrics, 95% CIs.*
+
 ![Unified native-h30 budget curves — historical R18-VAE (30 ckpts),
 fresh R50-V1 (10 ckpts), the π0.5-port h30 curve (19 points, plateau
 ≈21.7–21.9 mm from 350k through 1M), the SmolVLA 1M full-width curve
 (10 points, 28.5 → 26.3 mm), and the SmolVLA masked 1M curve
 (10 points, 29.1 → 26.2 mm; ties full-width, §9.2.10)](figures/unified_h30_budget.png)
 
+*Fig. 9.2.11-2: Unified native-h30 budget curves — historical R18-VAE (30 ckpts), fresh R50-V1 (10 ckpts), the π0.5-port h30 curve (plateau ≈21.7–21.9 mm from 350k through 1M), SmolVLA 1M full-width (28.5→26.3 mm), and SmolVLA masked (29.1→26.2 mm, ties full-width; §9.2.10).*
+
 ![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
 
+*Fig. 9.2.11-3: Unified native-h30 within-chunk 2nd-diff — every run of the sweep, log scale, dashed = ground truth (0.158° / 0.67 mm).*
+
 ![Unified native-h30 jitter vs training steps](figures/unified_h30_jitter_budget.png)
+
+*Fig. 9.2.11-4: Unified native-h30 2nd-diff vs training steps — the h10 budget-jitter dynamics carried to the native chunk horizon.*
 
 Read-outs (extended as the pending rows land):
 
@@ -2386,13 +2423,17 @@ Ground-truth reference over the same 500-query window (episode-balanced):
 
 Figures (this section):
 
-- `figures/physical_jerk_h10.png` — physical rot/XYZ jerk for every
-  representative, 95% episode-bootstrap CIs, GT lines.
-- `figures/physical_jerk_ratio.png` — pred/GT **ratio ladder** across
-  velocity → acceleration → jerk: where in the derivative stack each
-  family's signature appears.
-- `figures/physical_jerk_budget.png` — physical jerk vs training steps for
-  the two budget curves + single-budget families, GT reference.
+![Physical jerk h10](figures/physical_jerk_h10.png)
+
+*Fig. 9.2.13-1: Physical rot/XYZ jerk (deg/s³, mm/s³) at dt = 1/30 s for every representative — 95% episode-bootstrap CIs, dashed = GT (2,793 deg/s³ / 29,521 mm/s³).*
+
+![Physical jerk ratio ladder](figures/physical_jerk_ratio.png)
+
+*Fig. 9.2.13-2: Pred/GT ratio ladder across velocity → acceleration → jerk (<1 over-smooths, >1 jitters) — where in the derivative stack each family's signature appears.*
+
+![Physical jerk budget](figures/physical_jerk_budget.png)
+
+*Fig. 9.2.13-3: Physical jerk vs training steps — the two budget curves plus single-budget families, dashed = GT.*
 
 Read-outs:
 
