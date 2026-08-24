@@ -122,6 +122,9 @@ def main() -> int:
                     default="/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/results_physical_jerk")
     ap.add_argument("--per_episode_dir",
                     default=os.path.join(os.path.dirname(__file__), "repro", "per_episode"))
+    ap.add_argument("--no_openpi_carry", action="store_true",
+                    help="skip carrying the 4 JAX openpi rows (use for the salvage "
+                         "tree compile, which has its own row set)")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.per_episode_dir, exist_ok=True)
@@ -171,7 +174,7 @@ def main() -> int:
 
     # --- openpi rows carried from the archived tree (physical pending) --------
     carried = {}
-    for run in sorted(OPENPI_RUNS):
+    for run in [] if args.no_openpi_carry else sorted(OPENPI_RUNS):
         arch = sorted(glob.glob(os.path.join(args.unified_root, run, "seed1000", "*_open_loop_metrics.json")))
         if not arch:
             print(f"WARN: openpi row {run} missing from archived tree", file=sys.stderr)

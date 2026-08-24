@@ -18,6 +18,12 @@ re-run the numbers — is here.
   balanced means, 95% bootstrap CIs (10k resamples, seed 0), per-episode
   values for every metric (legacy + physical), checkpoint path, and the
   protocol block. Written by `../compile_physical_jerk.py`.
+- `per_episode_salvage/` — same format for the 28 recovered runs
+  re-scored 2026-08-24 (§9.2.15), from the salvage eval tree
+  `eval_salvage_h10/` (listed under external roots). One row's checkpoint
+  differs from its run-name budget: `act_r50_v1_vae_seed3000` was scored
+  at 20k because its 30k `model.safetensors` is a torn write from the
+  disk failure.
 - `configs/` — per-run training configuration (`<RUN>.config.json`) copied
   verbatim from each archived checkpoint (draccus-saved). The 88 names map
   1:1 to the §9.2.9 tree runs; `per_episode/*.json.gz` record the exact
@@ -66,6 +72,17 @@ uv run examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.py
 # 3. figures:
 /home/zfei/anaconda3/envs/py312/bin/python \
   examples/umi_relative_ee/act_flow_ablation/plot_physical_jerk.py
+
+# 4. §9.2.15 (recovered runs) — same compiler over the salvage tree
+#    (--no_openpi_carry: those 4 rows are not part of this row set):
+uv run examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.py \
+  --jerk_root /mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/eval_salvage_h10 \
+  --unified_root /mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/eval_unified_h10 \
+  --out_dir /mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/results_salvage_h10 \
+  --per_episode_dir examples/umi_relative_ee/act_flow_ablation/repro/per_episode_salvage \
+  --no_openpi_carry
+/home/zfei/anaconda3/envs/py312/bin/python \
+  examples/umi_relative_ee/act_flow_ablation/plot_salvage_h10.py
 ```
 
 Protocol invariants enforced at compile time: query bounds exactly
@@ -83,7 +100,10 @@ inference-inert). The archive is untouched; the shadow lives at
 
 - Eval trees: `/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/`
   (`eval_unified_h10/` archived §9.2.9 tree, `eval_unified_h10_jerk/`
-  §9.2.13 re-eval tree, `eval_common_h32/` §9.2.11, results CSVs).
+  §9.2.13 re-eval tree, `eval_salvage_h10/` §9.2.15 recovered-runs tree
+  (+ its `manifest.tsv` of run → final-checkpoint mappings, incl. the
+  s3000@20k torn-ckpt substitution), `eval_common_h32/` §9.2.11, results
+  CSVs incl. `results_salvage_h10/`).
 - Checkpoint archive (only copy): kiwi `/mnt/data/zfei/report_ckpts/`
   (ssh port 2203) — 119 G / 92 runs at §9.2.13 time, since grown to ~208 G by
   the 2026-08-24 Glowat512 salvage (28 recovered runs folded into the same

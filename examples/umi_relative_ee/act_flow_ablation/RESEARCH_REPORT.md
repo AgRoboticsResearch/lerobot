@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-V1 (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum) — the seed-1000 weights are re-scoreable again, though no evaluation has been redone.
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-V1 (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum); all 28 were re-scored the same day under the unified protocol with physical metrics (§9.2.15) — R50-V1 seed-1000 at 100k closes the old horizon-10 gap at 9.46 mm (pack-tied, 0.26 mm from the fresh 1M run's 100k), family signatures (deterministic over-smoothing 0.42–0.55× GT; stochastic ACT-stack jitter 2.3–4.0×) replicate across training seeds, and the recovered seed trios bound single-seed endpoint noise at ~0.3–0.4 mm except R18-VAE (3.1 mm).
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -1423,7 +1423,8 @@ copy is a husk, so this was the only real copy). The per-eval metric JSONs and
 query-level eval data were *not* on that disk and remain lost; the seed-1000
 tables above are still the surviving evaluation record, but the weights are
 now re-scoreable on demand (e.g. R50-V1 seed-1000 at horizon 10, or the ACT
-matrix under the L1/per-dim-MSE metric set) — not yet re-scored; the §9.2.6
+matrix under the L1/per-dim-MSE metric set) — and were re-scored the same
+day under the unified protocol with physical metrics (§9.2.15); the §9.2.6
 partial-budget conclusions are unaffected.
 
 Six seed-2000/3000 companion retrains — started on the healthy internal root
@@ -2527,6 +2528,115 @@ Read-outs:
    window — per-episode distributions are preserved in
    `repro/per_episode/` (88 compact files, §11).
 
+### 9.2.15 Recovered seed-1000 matrix re-scored under the unified protocol — complete
+
+(§9.2.14 is reserved for the in-flight openpi h30 bs4 1M run.) After the
+2026-08-24 salvage (§8 incident 12 addendum, §9.2.6 recovery addendum) put
+the recovered weights back on kiwi, all 28 salvaged training runs were
+scored on 2026-08-24 under the §9.2.9 protocol with the §9.2.13 physical
+metric set: 500 queries (100 episodes × 5, bounds [-1, 31]), eval horizon
+10, inference seed 1000, episode-balanced means + 95% bootstrap CIs, on the
+kiwi RTX 5080 (three parallel workers; ~20 min wall for the whole set).
+The evaluator is the same extended `eval_open_loop_dataset.py`; protocol
+invariants are enforced at compile time. These rows have no §9.2.9-tree
+counterpart to cross-validate against (that tree predates the recovery), so
+the compile checks protocol constants only; per-episode evidence is in
+`repro/per_episode_salvage/` (28 compact files) and the eval tree is synced
+to `reeval_v2metrics/eval_salvage_h10/`.
+
+Checkpoint caveats, all from the disk-death moment: `act_r50_v1_vae`
+s3000's 30k `model.safetensors` is a torn write (truncated at exactly
+60 MiB of 259 MiB) — scored at its newest intact checkpoint (20k);
+`act_r50_v1_vae` s2000 scored at its last complete checkpoint (70k);
+`diffusion_r18` s3000 is budget-stopped at 30k; the ACT-flow s2000/s3000
+retrains (§9.2.6, scored at 50k) are not budget-matched to the recovered
+s1000 100k row. Environment deltas vs the §9.2.13 sweep, all
+inference-side: `diffusers==0.35.2` and `timm==1.0.27` (host-matched) were
+installed into the kiwi eval venv for the diffusion-head/DP rows, and the
+`vit_base_patch16_clip_224.openai` timm backbone was seeded from the host
+HF cache for the two released-UMI rows.
+
+| Run | step | XYZ end (mm) | rot jerk (deg/s³) [95% CI] | ×GT | xyz jerk (mm/s³) | ×GT |
+|---|---|---|---|---|---|---|
+| act_r18_l1_seed1000 | 100k | 9.85 | 1421 [1332, 1512] | 0.51 | 14 664 | 0.50 |
+| act_r18_l1_seed1000 | 30k | 13.19 | 1743 [1660, 1829] | 0.62 | 22 302 | 0.76 |
+| act_r18_vae_seed1000 | 100k | 12.65 | 1375 [1298, 1453] | 0.49 | 21 075 | 0.71 |
+| act_r18_vae_seed1000 | 30k | 14.15 | 2640 [2456, 2822] | 0.95 | 30 473 | 1.03 |
+| act_r18_vae_seed2000 | 100k | 9.56 | 1247 [1172, 1324] | 0.45 | 15 525 | 0.53 |
+| act_r18_vae_seed3000 | 100k | 9.99 | 1539 [1435, 1648] | 0.55 | 15 873 | 0.54 |
+| act_r34_vae_seed1000 | 30k | 13.45 | 2901 [2659, 3163] | 1.04 | 31 666 | 1.07 |
+| act_r50_large_seed1000 | 30k | 10.16 | 2507 [2353, 2671] | 0.90 | 24 628 | 0.83 |
+| act_r50_vae_seed1000 | 100k | 9.39 | 1495 [1402, 1591] | 0.54 | 19 902 | 0.67 |
+| act_r50_vae_seed1000 | 30k | 10.70 | 2474 [2338, 2614] | 0.89 | 32 108 | 1.09 |
+| **act_r50_v1_vae_seed1000** | **100k** | **9.46** | 1185 [1118, 1251] | 0.42 | 14 045 | 0.48 |
+| act_r50_v1_vae_seed1000 | 30k | 10.17 | 2597 [2419, 2786] | 0.93 | 29 936 | 1.01 |
+| act_r50_v1_vae_seed2000 | 70k | 9.71 | 1791 [1700, 1883] | 0.64 | 19 066 | 0.65 |
+| act_r50_v1_vae_seed3000 | 20k† | 11.95 | 2228 [2098, 2361] | 0.80 | 28 402 | 0.96 |
+| act_r18_flow_u_lr1e5_seed1000 | 100k | 10.86 | 8788 [8464, 9115] | 3.15 | 131 539 | 4.46 |
+| act_r18_flow_u_lr1e5_seed1000 | 30k | 13.36 | 14 564 [13 984, 15 188] | 5.21 | 227 142 | 7.69 |
+| act_r18_flow_u_lr1e4_seed1000 | 30k | 26.16 | 17 315 [16 442, 18 190] | 6.20 | 267 380 | 9.06 |
+| act_r18_flow_beta_lr1e4_seed1000 | 30k | 22.71 | 16 748 [16 031, 17 521] | 6.00 | 282 658 | 9.57 |
+| act_r18_diffusion_lr1e5_seed1000 | 100k | 14.17 | 6387 [6142, 6643] | 2.29 | 73 453 | 2.49 |
+| act_r18_diffusion_lr1e5_seed1000 | 30k | 17.90 | 14 268 [13 541, 15 024] | 5.11 | 187 889 | 6.36 |
+| act_r18_diffusion_lr1e5_seed2000 | 100k | 14.56 | 11 023 [10 530, 11 504] | 3.95 | 155 608 | 5.27 |
+| act_r18_diffusion_lr1e5_seed3000 | 100k | 14.12 | 6606 [6330, 6884] | 2.37 | 67 906 | 2.30 |
+| diffusion_r18_seed1000 | 100k | 9.23 | 4038 [3828, 4255] | 1.45 | 36 784 | 1.25 |
+| diffusion_r18_seed1000 | 30k | 10.33 | 8316 [7714, 8950] | 2.98 | 97 130 | 3.29 |
+| diffusion_r18_seed2000 | 100k | 9.05 | 4109 [3906, 4324] | 1.47 | 40 187 | 1.36 |
+| diffusion_r18_seed3000 | 30k | 14.11 | 16 738 [15 167, 18 445] | 5.99 | 220 834 | 7.48 |
+| umi_official_dp_seed1000 | 30k | 10.01 | 5664 [5368, 5983] | 2.03 | 58 346 | 1.98 |
+| umi_official_transformer_dp_seed1000 | 30k | 9.58 | 3917 [3679, 4195] | 1.40 | 35 117 | 1.19 |
+
+GT references (§9.2.13): rot 2 793 deg/s³, XYZ 29 521 mm/s³. † = torn 30k
+checkpoint, scored at the newest intact one.
+
+![Salvage scores](figures/salvage_h10_scores.png)
+
+*Fig. 9.2.15-1: All 28 recovered runs — endpoint XYZ (left, dotted = the §9.2.9 9–11 mm pack) and true rotational jerk (right, log scale, dashed = GT 2,793 deg/s³), colored by head type.*
+
+![Salvage seed trios](figures/salvage_seed_trios.png)
+
+*Fig. 9.2.15-2: Training-seed trios of the recovered matrix at (near-)matched budget — recovered seed-1000 rows combined with the §9.2.6/§9.2.13 retrain rows; triangles mark partial budgets († = torn 30k checkpoint, scored at 20k).*
+
+![Salvage budget](figures/salvage_budget.png)
+
+*Fig. 9.2.15-3: 30k→100k budget pairs at seed 1000 — endpoint (left) and rotational jerk (right, log scale, dashed = GT).*
+
+Read-outs:
+
+1. **The §9.2.4/§9.2.6 horizon-10 gap is closed: ACT R50-V1 seed-1000 at
+   100k scores 9.46 mm** — inside the §9.2.9 pack (9–11 mm), and 0.26 mm
+   from the fresh 1M-run's 100k checkpoint (9.20 mm, §9.2.8) across two
+   independent trainings of the same recipe. The original screen's R50-V1
+   promotion is confirmed at matched scoring rather than inferred.
+2. **Seed trios at matched 100k budget**: ACT-L1 9.59/9.85/9.88 (spread
+   0.30 mm), ACT-diff 14.12/14.17/14.56 (0.44), DP-r18 9.05/9.23, and
+   R18-VAE 9.56/9.99/12.65 (**3.09 mm**). Family rank order replicates
+   within every trio, but the R18-VAE spread shows single-seed 100k
+   endpoint comparisons *near the pack boundary* are seed-noise-limited:
+   the original s1000 VAE sits above the pack its retrain siblings land
+   in (and next to the historical 3M production R18-VAE, §9.2.7, which
+   trained on from the same lineage). §9.2.6's "unlikely to reverse rank
+   order" holds for head-type gaps (deterministic vs stochastic, 3–5×)
+   but not for adjacent-deterministic-family gaps at this budget.
+3. **Budget 30k→100k (seed 1000, seven families)**: endpoint improves in
+   every family and rotational jerk tightens ~2× in every family; the
+   deterministic families move from ≈GT-level jerk (0.89–1.04×) at 30k to
+   clearly over-smoothed (0.42–0.55×) at 100k — budget buys smoothness in
+   the deterministic head, extending §9.2.8's late-budget observation to
+   the original matrix.
+4. **The §9.2.13 family signatures reproduce on independent trainings.**
+   Deterministic heads over-smooth at 100k (rot 0.42–0.55× GT, XYZ as low
+   as 0.48×); the stochastic ACT-stack heads jitter (ACT-flow 3.15×, ACT-
+   diffusion 2.29–3.95× rot at 100k); DP-r18 (1.45–1.47×) and the
+   released-UMI transformer recipe (1.40×) are the closest-to-GT
+   stochastic rows.
+5. **The released-UMI recipes reach the pack at 30k** (U-Net 10.01,
+   transformer 9.58 mm) — consistent with the ~9× sample-efficiency
+   advantage of the UMI-openpi recipe family (§9.2.5) and the o-recipe
+   20k row (10.77 mm, §9.2.12), here replicated in the original ACT-era
+   DP implementations.
+
 ### 9.3 Answers and promotion decision after stage one
 
 **Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
@@ -3385,6 +3495,12 @@ same compile pass writes the 88 compact per-episode files that the
 repository-tracked repro bundle serves (below). The four JAX openpi rows
 are re-scored on the host by the openpi-side evaluator
 (`eval_openpi_open_loop.py`) once the §9.2.14 training exits the GPU.
+The §9.2.15 recovered-runs table/figures use the same compiler over the
+salvage tree (`--jerk_root …/eval_salvage_h10 --out_dir
+…/results_salvage_h10 --per_episode_dir …/repro/per_episode_salvage
+--no_openpi_carry`) plus `plot_salvage_h10.py`; its sweep driver
+(`salvage_sweep_kiwi.sh`, 3 parallel workers) and run→checkpoint manifest
+are archived next to the eval tree.
 
 **Repro bundle (`examples/umi_relative_ee/act_flow_ablation/repro/`,
 repository-tracked).** Closes the raw-evidence gap: compact per-episode
