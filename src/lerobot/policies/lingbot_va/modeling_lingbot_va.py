@@ -180,6 +180,10 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt: str | None = None
         self._prompt_embeds = None
         self._negative_prompt_embeds = None
+        # Memoized per-task T5 embeddings (frozen encoder => pure function of
+        # the prompt text); training batches usually repeat one task string
+        # every step, and the CPU-resident UMT5-XXL forward is slow.
+        self._t5_embed_cache: dict[str, Tensor] = {}
         self.last_predicted_frames = None
         self.last_predicted_latents = None
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
@@ -502,27 +506,35 @@ class LingBotVAPolicy(PreTrainedPolicy):
         prompt = [prompt] if isinstance(prompt, str) else prompt
         prompt = [clean_prompt(u) for u in prompt]
 
-        text_inputs = tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=max_sequence_length,
-            truncation=True,
-            add_special_tokens=True,
-            return_attention_mask=True,
-            return_tensors="pt",
-        )
-        text_input_ids, mask = text_inputs.input_ids, text_inputs.attention_mask
-        seq_lens = mask.gt(0).sum(dim=1).long()
+        # The frozen UMT5 embedding is a pure function of the prompt text, and
+        # training batches typically repeat one task string every step -- so
+        # encode each unique prompt once and reuse it. Without this the
+        # CPU-resident UMT5-XXL forward dominated every training step and the
+        # GPU sat idle in between. ``torch.stack`` copies, so cached rows are
+        # never aliased into the returned tensor.
+        missing = [p for p in dict.fromkeys(prompt) if p not in self._t5_embed_cache]
+        if missing:
+            text_inputs = tokenizer(
+                missing,
+                padding="max_length",
+                max_length=max_sequence_length,
+                truncation=True,
+                add_special_tokens=True,
+                return_attention_mask=True,
+                return_tensors="pt",
+            )
+            text_input_ids, mask = text_inputs.input_ids, text_inputs.attention_mask
+            seq_lens = mask.gt(0).sum(dim=1).long()
 
-        te_device = next(text_encoder.parameters()).device
-        prompt_embeds = text_encoder(text_input_ids.to(te_device), mask.to(te_device)).last_hidden_state
-        prompt_embeds = prompt_embeds.to(dtype=self.dtype, device=device)
-        prompt_embeds = [u[:v] for u, v in zip(prompt_embeds, seq_lens, strict=False)]
-        prompt_embeds = torch.stack(
-            [torch.cat([u, u.new_zeros(max_sequence_length - u.size(0), u.size(1))]) for u in prompt_embeds],
-            dim=0,
-        )
-        return prompt_embeds.to(device)
+            te_device = next(text_encoder.parameters()).device
+            embeds = text_encoder(text_input_ids.to(te_device), mask.to(te_device)).last_hidden_state
+            embeds = embeds.to(dtype=self.dtype, device=device)
+            for text, row, seq_len in zip(missing, embeds, seq_lens, strict=False):
+                row = row[:seq_len]
+                self._t5_embed_cache[text] = torch.cat(
+                    [row, row.new_zeros(max_sequence_length - row.size(0), row.size(1))]
+                )
+        return torch.stack([self._t5_embed_cache[p] for p in prompt], dim=0).to(device)
 
     def _encode_prompt(self, prompt):
         max_len = self.config.max_sequence_length
