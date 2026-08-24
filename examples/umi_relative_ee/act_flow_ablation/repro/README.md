@@ -42,7 +42,10 @@ re-run the numbers — is here.
   host commit. Kiwi's openpi checkout was deleted after §9.2.5; its
   checkpoints live in the archive below.
 - `report_ckpts_sha256_manifest.txt` — full sha256 manifest of the kiwi
-  checkpoint archive (119 G, 92 runs incl. the 4 JAX openpi runs): one
+  checkpoint archive at the time of §9.2.13 (119 G, 92 runs incl. the 4 JAX
+  openpi runs; the manifest predates the 2026-08-24 Glowat512 salvage, which
+  added 28 more runs / ~89 G + a separate
+  `disk_salvage_glowat512_20260824/manifest_salvage_glowat512.txt`): one
   `<sha256>  <size>  <relpath>` line per file; the file's own sha256 pins
   the manifest.
 
@@ -81,8 +84,11 @@ inference-inert). The archive is untouched; the shadow lives at
 - Eval trees: `/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/`
   (`eval_unified_h10/` archived §9.2.9 tree, `eval_unified_h10_jerk/`
   §9.2.13 re-eval tree, `eval_common_h32/` §9.2.11, results CSVs).
-- Checkpoint archive (only copy, 119 G): kiwi
-  `/mnt/data/zfei/report_ckpts/` (ssh port 2203).
+- Checkpoint archive (only copy): kiwi `/mnt/data/zfei/report_ckpts/`
+  (ssh port 2203) — 119 G / 92 runs at §9.2.13 time, since grown to ~208 G by
+  the 2026-08-24 Glowat512 salvage (28 recovered runs folded into the same
+  layout; their sha256 manifest + the non-train evidence live in the adjacent
+  `disk_salvage_glowat512_20260824/`).
 - Datasets: validation + training roots under `/mnt/data1/sroi/…` (host)
   and `/home/zfei/data/…` (kiwi); hashes in `datasets/`.
 - The §9.2.14 openpi h30 bs4 1M training run:
