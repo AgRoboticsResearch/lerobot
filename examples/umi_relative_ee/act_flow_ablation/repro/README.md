@@ -50,8 +50,8 @@ re-run the numbers — is here.
 - `report_ckpts_sha256_manifest.txt` — full sha256 manifest of the kiwi
   checkpoint archive at the time of §9.2.13 (119 G, 92 runs incl. the 4 JAX
   openpi runs; the manifest predates the 2026-08-24 Glowat512 salvage, which
-  added 28 more runs / ~89 G + a separate
-  `disk_salvage_glowat512_20260824/manifest_salvage_glowat512.txt`): one
+  added 28 more runs / ~89 G + a separate salvage manifest, now at
+  `archive/old-disk-evidence/manifest_salvage_glowat512.txt` on kiwi): one
   `<sha256>  <size>  <relpath>` line per file; the file's own sha256 pins
   the manifest.
 
@@ -104,14 +104,17 @@ inference-inert). The archive is untouched; the shadow lives at
   (+ its `manifest.tsv` of run → final-checkpoint mappings, incl. the
   s3000@20k torn-ckpt substitution), `eval_common_h32/` §9.2.11, results
   CSVs incl. `results_salvage_h10/`).
-- Checkpoint archive (only copy): kiwi `/mnt/data/zfei/archive/report_ckpts/`
+- Checkpoint archive (only copy): kiwi
+  `/mnt/data/zfei/lerobot-act-flow-ablation/archive/report_ckpts/`
   (ssh port 2203) — 119 G / 92 runs at §9.2.13 time, since grown to ~208 G by
   the 2026-08-24 Glowat512 salvage (28 recovered runs folded into the same
-  layout; their sha256 manifest + the non-train evidence live in the adjacent
-  `disk_salvage_glowat512_20260824/`). Kiwi `/mnt/data/zfei/` layout since
-  2026-08-24: `archive/` (report_ckpts + salvage evidence), `eval/`
-  (jerk_reeval + salvage_eval sweep trees), `lingbot/` (assets + smoke +
-  run_one), `viz/`, `scripts/`.
+  layout). Kiwi layout since the 2026-08-24 reorganization (everything under
+  one parent): `lerobot-act-flow-ablation/archive/` (report_ckpts +
+  `old-disk-evidence/` — the salvaged eval/results/logs evidence and the
+  salvage sha256 manifest `manifest_salvage_glowat512.txt`),
+  `lerobot-act-flow-ablation/eval/` (jerk_reeval + salvage_eval sweep trees),
+  `lingbot/` (assets incl. the lingbot_va pretrained bases + smoke + run_one),
+  `viz/`, `scripts/`.
 - Datasets: validation + training roots under `/mnt/data1/sroi/…` (host)
   and `/home/zfei/data/…` (kiwi); hashes in `datasets/`.
 - The §9.2.14 openpi h30 bs4 1M training run:

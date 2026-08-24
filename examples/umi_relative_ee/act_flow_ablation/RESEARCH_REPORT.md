@@ -625,8 +625,10 @@ This resource contention does not alter previous checkpoints or configs.
     checkpoints, the umi_official DP runs, r34_vae/r50_large, and early-step
     companions) folded into the archive's `<family>/<run>/` layout with
     `.archive_full_done` markers, plus `lingbot_va` pretrained bases (22.7 GB)
-    and the eval/results/logs evidence under
-    `kiwi:/mnt/data/zfei/archive/disk_salvage_glowat512_20260824/`. Per-run
+    and the eval/results/logs evidence (now under
+    `kiwi:/mnt/data/zfei/lerobot-act-flow-ablation/archive/old-disk-evidence/`
+    after the 2026-08-24 archive reorganization; the pretrained bases moved to
+    `lingbot/assets/`). Per-run
     file-count/byte-exact verification and a sha256 manifest
     (`manifest_salvage_glowat512.txt`) record the salvage. The canonical-root
     move to `/mnt/data1` stands (the disk remains untrusted for writes); the
@@ -3518,7 +3520,9 @@ OpenPI commit identities on both machines (`git_commits.json` — the kiwi
 lerobot checkout is an rsync copy without `.git`, so its identity is pinned
 by full-checksum equivalence to a host commit, with the single
 training-schedule-only divergence documented). The checkpoint archive
-itself (119 G, kiwi `/mnt/data/zfei/archive/report_ckpts`, the only copy) is
+itself (119 G at §9.2.13, since grown to ~208 G; kiwi
+`/mnt/data/zfei/lerobot-act-flow-ablation/archive/report_ckpts`, the only
+copy) is
 content-addressed by a full sha256 manifest (`report_ckpts_sha256_manifest.
 txt` in the bundle). `repro/README.md` documents the layout, the external
 artifact roots, and the exact re-run commands.
