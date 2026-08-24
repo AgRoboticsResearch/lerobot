@@ -237,7 +237,7 @@ def fig_jerk_all(rows: dict[str, dict]) -> None:
         if fam is None:
             print(f"WARN: no family prefix matches {run}; skipped in all-runs figure")
             continue
-        entries.append((FAMILY_ORDER.index(fam[0]), int(r["steps"]), run, r))
+        entries.append((FAMILY_ORDER.index(fam[0]), int(r["steps"]), run, r, fam[0]))
     if not entries:
         return
     entries.sort(key=lambda e: (e[0], e[1], e[2]))
@@ -252,7 +252,7 @@ def fig_jerk_all(rows: dict[str, dict]) -> None:
         "(dt = 1/30 s; log scale; 95% episode bootstrap CI; dashed = ground truth)",
         fontsize=12,
     )
-    labels = [all_runs_label(run, r) for _, _, run, r in entries]
+    labels = [all_runs_label(run, r) for _, _, run, r, _ in entries]
     for ax, (m, title, gt) in zip(
         axes,
         (
@@ -261,12 +261,12 @@ def fig_jerk_all(rows: dict[str, dict]) -> None:
         ),
     ):
         means, lows, highs, colors = [], [], [], []
-        for _, _, run, r in entries:
+        for _, _, run, r, fam in entries:
             v = float(r[m])
             means.append(v)
             lows.append(v - float(r[f"{m}_lo"]))
             highs.append(float(r[f"{m}_hi"]) - v)
-            colors.append(COLORS[family_of(run)[0]])
+            colors.append(COLORS[fam])
         y = range(len(labels))
         ax.barh(y, means, xerr=[lows, highs], color=colors, alpha=0.85,
                 error_kw=dict(lw=1, capsize=2, ecolor="#333333"))
