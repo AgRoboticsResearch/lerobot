@@ -552,6 +552,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
     def _camera_frame(self, raw_obs, key, size=None) -> Tensor:
         """Return a single-frame camera tensor [1, C, 1, H, W] resized + scaled to [-1, 1]."""
         img = raw_obs[key]
+        if img.dim() == 5:  # [B, T, C, H, W] — offline dataset window (observation_delta_indices);
+            img = img[:, 0]  # index 0 is the CURRENT frame; later indices are future (targets, not inputs)
         if img.dim() == 3:  # [C, H, W]
             img = img.unsqueeze(0)
         # LeRobot images arrive as float in [0, 1], shape [B, C, H, W].
