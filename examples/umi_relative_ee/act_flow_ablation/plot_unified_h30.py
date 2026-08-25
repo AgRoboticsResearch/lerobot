@@ -178,23 +178,27 @@ def budget_series(rows: dict[str, dict]) -> dict[str, list]:
 
 def fig_budget(rows: dict[str, dict]) -> None:
     s = budget_series(rows)
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     fig.suptitle(
-        "Unified native-h30 budget curves — accuracy@0.1 and XYZ endpoint vs training steps",
+        "Unified native-h30 budget curves — six co-primary metrics vs training steps",
         fontsize=12,
     )
-    specs = [
-        (axes[0], "action_acc_at_0p1", "accuracy@0.1 (action, normalized)", 1),
-        (axes[1], "xyz_end_m", "XYZ endpoint error (mm)", 1000),
+    curves = [
+        (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
+        (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1), fresh 1M run", "s"),
+        (s["port"], COLORS["port"], "π0.5 port h30", "^"),
+        (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M, full-width", "D"),
+        (s["smolmask"], COLORS["smolmask"], "SmolVLA rot6d 1M, masked", "v"),
     ]
-    for ax, met, ylab, scale in specs:
-        for series, color, label, marker in (
-            (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
-            (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
-            (s["port"], COLORS["port"], "π0.5 port h30 (curve)", "^"),
-            (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M (full-width)", "D"),
-            (s["smolmask"], COLORS["smolmask"], "SmolVLA masked 1M", "v"),
-        ):
+    references = [
+        ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow", "*"),
+        ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1", "*"),
+        ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae", "*"),
+        ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d short 100k", "smol", "*"),
+        ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-angle short 100k", "smol", "P"),
+    ]
+    for ax, (met, ylab, scale, _) in zip(axes.flat, PANELS, strict=True):
+        for series, color, label, marker in curves:
             if not series:
                 continue
             xs = [x for x, _ in series]
@@ -208,29 +212,21 @@ def fig_budget(rows: dict[str, dict]) -> None:
                     [float(r[f"{met}__ci_high"]) * scale for _, r in series],
                     color=color, alpha=0.12, lw=0,
                 )
-        # single-budget references; per-panel label offsets (points) — the
-        # acc@0.1 panel clusters several references and needs a wider stack.
-        dy0, dy_step = (14, 9) if met == "action_acc_at_0p1" else (8, 6)
-        for i, (run, label, fam) in enumerate((
-            ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
-            ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
-            ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae"),
-            ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d", "smol"),
-            ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-ang", "smol"),
-        )):
+        for run, label, fam, marker in references:
             if run not in rows:
                 continue
             r = rows[run]
             x, y = int(r["step"]), float(r[met]) * scale
-            ax.scatter([x], [y], color=COLORS[fam], marker="*", s=110, zorder=5)
-            ax.annotate(label, (x, y), textcoords="offset points",
-                        xytext=(4, dy0 + i * dy_step), fontsize=7, color=COLORS[fam])
+            ax.scatter([x], [y], color=COLORS[fam], marker=marker, s=85,
+                       label=label, zorder=5)
         ax.set_xscale("log")
         ax.set_xlabel("training steps")
         ax.set_ylabel(ylab)
         ax.grid(alpha=0.3)
-        ax.legend(fontsize=8, loc="upper right")
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=5, fontsize=8,
+               bbox_to_anchor=(0.5, 0.01))
+    fig.tight_layout(rect=(0, 0.10, 1, 0.95))
     out = os.path.join(FIG_DIR, "unified_h30_budget.png")
     fig.savefig(out, dpi=200)
     print(

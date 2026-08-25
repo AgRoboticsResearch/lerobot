@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-VAE (ImageNet-V1) 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-VAE (ImageNet-V1) (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum); all 28 were re-scored the same day under the unified protocol with physical metrics (§9.2.15) — R50-VAE (ImageNet-V1) seed-1000 at 100k closes the old horizon-10 gap at 9.46 mm (pack-tied, 0.26 mm from the fresh 1M run's 100k), family signatures (deterministic over-smoothing 0.42–0.55× GT; stochastic ACT-stack jitter 2.3–4.0×) replicate across training seeds, and the recovered seed trios bound single-seed endpoint noise at ~0.3–0.4 mm except R18-VAE (3.1 mm).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-VAE (ImageNet-V1) 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-VAE (ImageNet-V1) (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum); all 28 were re-scored the same day under the unified protocol with physical metrics (§9.2.15) — R50-VAE (ImageNet-V1) seed-1000 at 100k closes the old horizon-10 gap at 9.46 mm (pack-tied, 0.26 mm from the fresh 1M run's 100k), family signatures (deterministic over-smoothing 0.42–0.55× GT; stochastic ACT-stack jitter 2.3–4.0×) replicate across training seeds, and the recovered seed trios bound single-seed endpoint noise at ~0.3–0.4 mm except R18-VAE (3.1 mm). A cross-query prediction-stability metric (overlap disagreement between chunks re-queried at k ∈ {1, 5, 10} frames, shared sampler seed) was added the same day over a 17-row representative set (§9.2.19): SmolVLA is the only re-query-unstable family (6.3–7.1 mm at k=1, ~2× the pack, unaffected by 1M budget — and not sampler noise by construction), the π0.5 port at 1M is among the most stable (3.66 mm — its deployed shakiness is not plan inconsistency), and budget improves stability in every ACT/port family.
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -2276,13 +2276,11 @@ GT invariants, slightly different from the t+10 values as expected).
 
 *Fig. 9.2.11-1: Unified native-h30 (full-chunk) metrics across chunk-30 models — six co-primary metrics, 95% CIs.*
 
-![Unified native-h30 budget curves — historical R18-VAE (30 ckpts),
-fresh R50-VAE (ImageNet-V1) (10 ckpts), the π0.5-port h30 curve (19 points, plateau
-≈21.7–21.9 mm from 350k through 1M), the SmolVLA 1M full-width curve
-(10 points, 28.5 → 26.3 mm), and the SmolVLA masked 1M curve
-(10 points, 29.1 → 26.2 mm; ties full-width, §9.2.10)](figures/unified_h30_budget.png)
+![Unified native-h30 six-metric budget curves for historical R18-VAE,
+fresh R50-VAE (ImageNet-V1), the π0.5 port, and both SmolVLA padding
+modes](figures/unified_h30_budget.png)
 
-*Fig. 9.2.11-2: Unified native-h30 budget curves — historical R18-VAE (30 ckpts), fresh R50-VAE (ImageNet-V1) (10 ckpts), the π0.5-port h30 curve (plateau ≈21.7–21.9 mm from 350k through 1M), SmolVLA 1M full-width (28.5→26.3 mm), and SmolVLA masked (29.1→26.2 mm, ties full-width; §9.2.10).*
+*Fig. 9.2.11-2: Unified native-h30 budget curves for historical R18-VAE (30 checkpoints), fresh R50-VAE (ImageNet-V1) (10), the π0.5-port h30 curve (19), and the two SmolVLA padding curves (10 each), across the same six co-primary metrics as Fig. 9.2.11-1: XYZ/rotation endpoint error, XYZ/rotation L1 per dimension, Acc@0.5, and Acc@0.1. Stars are single-budget reference models.*
 
 ![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
@@ -2530,17 +2528,21 @@ Figures (this section):
 
 *Fig. 9.2.13-7: True jerk for EVERY run — the physical-unit counterpart of the §9.2.9 within-chunk second-difference figure.*
 
+![Physical motion dynamics budget overview](figures/physical_dynamics_budget.png)
+
+*Fig. 9.2.13-8: All canonical-h10 physical motion dynamics in one matched 2×3 budget view: rotational velocity/acceleration/jerk across the top and translational XYZ velocity/acceleration/jerk across the bottom. Lines and confidence bands connect checkpoints from the same training trajectory, dashed lines are demonstrated references, and stars are single-budget or independent companion runs.*
+
 ![Physical velocity budget](figures/physical_velocity_budget.png)
 
-*Fig. 9.2.13-8: Physical velocity vs training steps, with demonstrated references. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+*Fig. 9.2.13-9: Physical velocity vs training steps, with demonstrated references. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 ![Physical acceleration budget](figures/physical_acceleration_budget.png)
 
-*Fig. 9.2.13-9: Physical acceleration vs training steps, in the same budget-curve format. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+*Fig. 9.2.13-10: Physical acceleration vs training steps, in the same budget-curve format. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 ![Physical jerk budget](figures/physical_jerk_budget.png)
 
-*Fig. 9.2.13-10: Physical jerk vs training steps, completing the matched derivative-order budget suite. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs. Across Figs. 8–10, historical R18-VAE becomes smoother with budget, R50-VAE (ImageNet-V1) remains deepest below GT, the π0.5 port approaches GT from above, SmolVLA remains high-frequency, and under-trained ACT-flow bounds the rough failure mode.*
+*Fig. 9.2.13-11: Physical jerk vs training steps, completing the matched derivative-order budget suite. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs. Across Figs. 8–11, historical R18-VAE becomes smoother with budget, R50-VAE (ImageNet-V1) remains deepest below GT, the π0.5 port approaches GT from above, SmolVLA remains high-frequency, and under-trained ACT-flow bounds the rough failure mode.*
 
 Read-outs:
 
@@ -2703,6 +2705,119 @@ Read-outs:
    advantage of the UMI-openpi recipe family (§9.2.5) and the o-recipe
    20k row (10.77 mm, §9.2.12), here replicated in the original ACT-era
    DP implementations.
+
+### 9.2.19 Cross-query prediction stability: overlap disagreement between re-queried chunks — complete
+
+(§9.2.14 remains reserved for the openpi h30 bs4 1M run; §9.2.16–§9.2.18
+are reserved for the in-flight LingBot-VA 200k, Q3 two-frame 500k, and Q4
+no-proprioception 500k sections.) This section closes a blind spot of the
+canonical §9.2.9 protocol: its 500 queries are **sparsely spaced and each
+prediction is scored in isolation**, so it cannot see whether a policy
+*changes its plan* when re-queried about a future it has already predicted —
+the consistency an async-replanning deployment actually executes (the
+within-chunk smoothness of §9.2.13 and this cross-query stability are
+orthogonal: a policy can be smooth inside each chunk yet flip its plan on
+every re-query, and vice versa).
+
+**Definition.** For each anchor t and re-query interval k ∈ {1, 5, 10}
+frames (30 fps; k=1 is the async-replan regime, k≈10 one full
+execution-chunk replan), the policy is queried at t and at t+k with the
+**same inference seed** — so stochastic heads share their sampler
+realization and the disagreement isolates the conditioning change, not
+noise luck. The two decoded chunks are aligned on their overlapping future
+timestamps (predicted[i] is the pose for t+1+i, so chunk_a[k:] aligns with
+chunk_b[:30−k]) and scored by mean and endpoint XYZ distance (mm) and SO(3)
+geodesic disagreement (deg). 5 anchors/episode × 100 episodes = 500 pairs
+per interval; episode-balanced means + 95% bootstrap CIs (10k resamples,
+seed 0); full processor/policy reset per query (independent queries, no
+cross-chunk state). Evaluator: `eval_open_loop_dataset.py --stability_eval`
+(commit e0520535; the canonical protocol and its output files are
+untouched).
+
+**Status: complete (2026-08-25).** 17 representative rows covering every
+family — the historical ACT 3M, R50-V1 100k/1M, the fresh Q3 two-frame 500k,
+ACT-L1/R50-VAE/ACT-flow/ACT-diffusion, DP-r18, the released UMI-DP 30k, the
+π0.5 port (o-recipe 20k, 100k, 1M), and four SmolVLA arms — evaluated on
+the kiwi GPU against the archived checkpoints over the bit-identical
+validation set. The π0.5-port rows required a serial retry (the 2-worker
+sweep OOM'd exactly when the ~4G VLM loaded) and the o-recipe shadow needed
+its post-reorg symlinks repointed; all 17 rows passed the compile-time
+protocol assertions (mode, intervals, 500 anchors/interval, bounds
+[-1, 31], fps 30). XYZ disagreement (episode-balanced, 95% CI; rotation in
+deg — full table `results_stability_h10/stability_h10.csv`):
+
+| Run | k=1 XYZ (mm) | k=1 rot (deg) | k=10 XYZ (mm) | k=10 rot (deg) |
+| --- | ---: | ---: | ---: | ---: |
+| ACT R18-VAE 3M (hist) | 2.93 [2.78, 3.10] | 0.55 | 15.29 | 2.49 |
+| ACT R50-V1 100k | 4.21 [3.92, 4.52] | 0.72 | 15.38 | 2.63 |
+| ACT R50-V1 1M | 3.08 [2.91, 3.26] | 0.56 | 14.67 | 2.37 |
+| ACT R50-V1 2-frame 500k (Q3) | 3.31 [3.14, 3.48] | 0.60 | 14.96 | 2.47 |
+| ACT-L1 100k s2000 | 4.28 [4.05, 4.51] | 0.77 | 15.98 | 2.79 |
+| ACT R50-VAE 80k s2000 | 4.53 [4.26, 4.81] | 0.80 | 15.66 | 2.63 |
+| ACT-flow 50k s2000 | 4.68 [4.49, 4.88] | 0.85 | 18.95 | 3.26 |
+| ACT-diffusion 100k | 4.17 [3.95, 4.40] | 0.71 | 17.60 | 2.95 |
+| Diffusion Policy r18 100k | 4.19 [3.90, 4.52] | 0.69 | 16.03 | 2.94 |
+| released UMI-DP 30k | 5.03 [4.69, 5.40] | 0.89 | 18.24 | 3.36 |
+| π0.5 port o-recipe 20k | 5.21 [4.87, 5.57] | 0.94 | 16.90 | 2.93 |
+| π0.5 port 100k | 4.49 [4.24, 4.76] | 0.80 | 15.73 | 2.68 |
+| π0.5 port 1M | 3.66 [3.48, 3.85] | 0.59 | 14.53 | 2.42 |
+| SmolVLA rot6d 100k | 6.94 [6.58, 7.34] | 1.24 | 18.38 | 3.11 |
+| SmolVLA rot6d 1M | 6.75 [6.44, 7.07] | 1.35 | 17.33 | 2.95 |
+| SmolVLA axis-angle 100k | 7.05 [6.66, 7.48] | 1.28 | 18.89 | 3.16 |
+| SmolVLA masked 1M | 6.34 [6.07, 6.62] | 1.26 | 17.18 | 2.91 |
+
+Figures (this section):
+
+![Stability scores](figures/stability_h10_scores.png)
+
+*Fig. 9.2.19-1: Cross-query disagreement at k=1 (async-replan regime) and k=10 — all 17 representative runs, episode-balanced, 95% bootstrap CIs. SmolVLA (all four arms) separates cleanly from the pack at k=1; the historical ACT and the mature R50-V1/port rows are the most re-query-consistent.*
+
+![Stability growth](figures/stability_growth.png)
+
+*Fig. 9.2.19-2: Disagreement vs re-query interval with CI bands — every family drifts ~5× from k=1 to k=10 (re-planning a nearly-executed future is genuinely different), but the ordering set at k=1 persists.*
+
+Read-outs:
+
+1. **SmolVLA is the only family that is re-query-unstable, and it is not
+   sampler noise.** All four SmolVLA arms sit at 6.3–7.1 mm at k=1 —
+   ~2× every other family (pack 2.9–5.2 mm) — with non-overlapping CIs
+   against every non-SmolVLA row. Because both members of a pair share one
+   inference seed, the sampler realization is held fixed: this is the
+   policy genuinely producing a different plan from a nearly identical
+   observation. The §9.2.13 jitter signature (2.5–3.3× GT within-chunk
+   jerk) and this plan-flipping are two views of the same input
+   hypersensitivity, and 1M steps of training do not fix it (6.9 → 6.8 mm).
+2. **The π0.5 port is NOT plan-unstable** — 3.66 mm at k=1 (1M), better
+   than most ACT rows and second only to the historical 3M ACT and R50-V1
+   1M. The perceived shakiness of the deployed port is therefore not
+   prediction inconsistency; the async-inference evidence (latency vs
+   control rate, Part II of the low-level-control analysis) remains the
+   supported explanation.
+3. **Budget buys stability in every ACT/port family** — R50-V1
+   4.21 → 3.08 mm from 100k → 1M, port 4.49 → 3.66, historical ACT best
+   overall at 2.93 (3M) — while SmolVLA stays flat. Stability improves in
+   lock-step with the §9.2.8 capacity story, and the under-trained rows
+   (ACT-flow 50k 4.68, UMI-DP 30k 5.03, o-recipe 20k 5.21) are the weakest
+   of their stacks, as expected for early-budget checkpoints.
+4. **The Q3 two-frame arm ties 1-frame here too** (3.31 mm @500k vs 3.08 @
+   1M on the same curve) — a second independent metric where temporal-frame
+   stacking changes nothing (endpoint §9.2.15-era ties, dynamics ties,
+   stability ties).
+5. **k=1 is small for every mature policy relative to execution error** —
+   the best rows re-plan within ~3 mm, an order below the k=10 drift
+   (~15 mm) and comparable to the endpoint-error pack (9–11 mm): in the
+   async-replan regime a mature policy's successive plans mostly agree,
+   and the risk concentrates in under-trained or hypersensitive
+   (SmolVLA) stacks.
+6. **Caveats.** (a) Deterministic policies (ACT-L1/VAE) make the k=1
+   disagreement a pure function of the observation pair; stochastic heads
+   share the sampler draw by construction (see the definition) — the two
+   regimes are comparable but not identical. (b) Rows are representative
+   checkpoints, not full budget curves (the driver is manifest-driven and
+   idempotent; extending to every §9.2.9 row is a re-run away). (c) The
+   JAX openpi rows are outside this sweep (as in §9.2.13). (d) This is
+   open-loop plan consistency — closed-loop, the executed trajectory
+   interleaves these flips with real observations.
 
 ### 9.3 Answers and promotion decision after stage one
 
@@ -3559,7 +3674,7 @@ uv run python examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.p
 outputs `results_physical_jerk/physical_jerk_h10.{csv,md}` +
 `validation.txt`, matched
 `figures/physical_{velocity,acceleration,jerk}_{h10,all,budget}.png` suites,
-and `figures/physical_jerk_ratio.png`; the
+`figures/physical_dynamics_budget.png`, and `figures/physical_jerk_ratio.png`; the
 same compile pass writes the 88 compact per-episode files that the
 repository-tracked repro bundle serves (below). The four JAX openpi rows
 are re-scored on the host by the openpi-side evaluator
@@ -3570,6 +3685,26 @@ salvage tree (`--jerk_root …/eval_salvage_h10 --out_dir
 --no_openpi_carry`) plus `plot_salvage_h10.py`; its sweep driver
 (`salvage_sweep_kiwi.sh`, 3 parallel workers) and run→checkpoint manifest
 are archived next to the eval tree.
+
+The §9.2.19 stability sweep reuses the same evaluator in its
+`--stability_eval` mode (same canonical flags plus
+`--stability_intervals 1,5,10`; separate `*_stability_metrics.json`
+outputs), over a 17-row representative manifest on kiwi:
+
+```bash
+uv run python examples/umi_relative_ee/act_flow_ablation/compile_stability.py
+/home/zfei/anaconda3/envs/py312/bin/python \
+  examples/umi_relative_ee/act_flow_ablation/plot_stability_h10.py
+```
+
+outputs `results_stability_h10/stability_h10.{csv,md}` (episode-balanced
+means + 95% CIs per run × interval, with compile-time protocol assertions:
+mode, intervals {1,5,10}, 500 anchors/interval, bounds [-1, 31], fps 30)
+and `figures/stability_{h10_scores,growth}.png`; the sweep driver
+(`stability_sweep_kiwi.sh`, idempotent; the π0.5 rows serial — the VLM
+policy OOM'd under the 2-worker schedule) and manifest live next to the
+kiwi eval tree, and the per-run snapshots are tracked in
+`repro/per_episode_stability/`.
 
 **Repro bundle (`examples/umi_relative_ee/act_flow_ablation/repro/`,
 repository-tracked).** Closes the raw-evidence gap: compact per-episode

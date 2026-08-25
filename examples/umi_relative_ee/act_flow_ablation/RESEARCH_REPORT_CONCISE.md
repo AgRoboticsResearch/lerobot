@@ -283,7 +283,7 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 
 ![Unified native-h30 budget curves](figures/unified_h30_budget.png)
 
-*Fig. 15. All native-h30 budget points for historical R18, fresh R50, π0.5 port, and both SmolVLA padding modes.*
+*Fig. 15. All native-h30 budget points for historical R18, fresh R50, π0.5 port, and both SmolVLA padding modes across the same six co-primary metrics as Fig. 14: XYZ/rotation endpoint error, XYZ/rotation L1 per dimension, Acc@0.5, and Acc@0.1. Stars are single-budget reference models.*
 
 ![Unified native-h30 second differences](figures/unified_h30_jitter.png)
 
@@ -454,17 +454,21 @@ in `repro/physical_dynamics_h10.{csv,md}`:
 
 *Fig. 27. Predicted-to-demonstrated ratio across velocity, acceleration, and jerk. Each grouped triplet is a fixed checkpoint, not a training trajectory.*
 
+![Physical motion dynamics by training budget](figures/physical_dynamics_budget.png)
+
+*Fig. 28. All canonical-h10 physical motion dynamics in the same 2×3 budget layout as Fig. 15: rotational velocity/acceleration/jerk across the top and translational XYZ velocity/acceleration/jerk across the bottom. Lines and confidence bands connect checkpoints from the same training trajectory, dashed lines are demonstrated references, and stars are single-budget or independent companion runs.*
+
 ![Physical velocity by training budget](figures/physical_velocity_budget.png)
 
-*Fig. 28. Physical velocity versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+*Fig. 29. Physical velocity versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 ![Physical acceleration by training budget](figures/physical_acceleration_budget.png)
 
-*Fig. 29. Physical acceleration versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+*Fig. 30. Physical acceleration versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 ![Physical jerk by training budget](figures/physical_jerk_budget.png)
 
-*Fig. 30. Physical jerk versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+*Fig. 31. Physical jerk versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 The second-difference findings survive in true physical jerk:
 
@@ -517,7 +521,7 @@ The decisive follow-up is a blinded, block-randomized closed-loop evaluation of 
 
 ## 10. Reproducibility and result coverage
 
-All **30 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
+All **31 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
 
 The repository-tracked [`repro/`](repro/) directory contains:
 

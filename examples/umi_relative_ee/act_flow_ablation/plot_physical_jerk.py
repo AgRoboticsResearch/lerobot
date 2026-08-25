@@ -16,6 +16,8 @@ cross-validated there against the archived §9.2.9 numbers) and renders:
     stack each family's smoothing/jitter signature appears.
   figures/physical_{velocity,acceleration,jerk}_budget.png — each physical
     derivative vs training steps for budget curves plus single-budget stars.
+  figures/physical_dynamics_budget.png — the same six budget panels together:
+    rotational velocity/acceleration/jerk above XYZ velocity/acceleration/jerk.
 
 The four JAX openpi rows are physical-pending (host re-eval after the h30
 training frees the GPU) and are skipped here. Run via:
@@ -195,8 +197,7 @@ def fig_ratio_ladder(rows: dict[str, dict]) -> None:
     print(out)
 
 
-def fig_derivative_budget(rows: dict[str, dict], derivative: str) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
+def _budget_series():
     curves = [
         (lambda run: run.startswith("act_umi_identity_rot6d_1459_"), "hist", "R18-VAE hist", "o"),
         (lambda run: run.startswith("act_r50_v1_vae_seed1000_"), "r50v1", "R50-VAE (ImageNet-V1)", "s"),
@@ -214,44 +215,96 @@ def fig_derivative_budget(rows: dict[str, dict], derivative: str) -> None:
         ("smolvla_rot6d_seed1000_100000steps", "smol", "SmolVLA rot6d short"),
         ("smolvla_axis_angle_", "smol", "SmolVLA axis-angle short"),
     ]
-    for ax, (m, _, title) in zip(axes, DYNAMICS[derivative], strict=True):
-        gt = float(next(iter(rows.values()))[f"gt_{m}"])
-        for select, fam, label, marker in curves:
-            pts = sorted((int(r["steps"]), float(r[m])) for run, r in rows.items()
-                         if select(run))
-            if pts:
-                xs = [p[0] for p in pts]
-                ax.plot(xs, [p[1] for p in pts], marker=marker, ms=3, lw=1.5,
-                        color=COLORS[fam], label=label)
-                selected = sorted((int(r["steps"]), r) for run, r in rows.items() if select(run))
-                ax.fill_between(
-                    xs,
-                    [float(r[f"{m}_lo"]) for _, r in selected],
-                    [float(r[f"{m}_hi"]) for _, r in selected],
-                    color=COLORS[fam], alpha=0.10, lw=0,
-                )
-        for prefix, fam, label in singles:
-            pts = [(int(r["steps"]), float(r[m]), float(r[f"{m}_lo"]), float(r[f"{m}_hi"]))
-                   for run, r in rows.items() if run.startswith(prefix)]
-            if pts:
-                xs = [p[0] for p in pts]
-                ys = [p[1] for p in pts]
-                ax.errorbar(
-                    xs, ys,
-                    yerr=[[y - lo for _, y, lo, _ in pts], [hi - y for _, y, _, hi in pts]],
-                    fmt="*", ms=8, capsize=2, lw=0.8, color=COLORS[fam],
-                    label=label, zorder=5,
-                )
-        ax.axhline(gt, color="k", ls="--", lw=1.2, label=f"GT ({gt:,.0f})")
-        ax.set_xscale("log")
-        ax.set_xlabel("training steps")
-        ax.set_title(f"{title} vs training budget")
-        ax.grid(alpha=0.3)
+    return curves, singles
+
+
+def _plot_budget_axis(ax, rows: dict[str, dict], metric: str, title: str) -> None:
+    curves, singles = _budget_series()
+    gt = float(next(iter(rows.values()))[f"gt_{metric}"])
+    for select, fam, label, marker in curves:
+        selected = sorted((int(r["steps"]), r) for run, r in rows.items() if select(run))
+        if selected:
+            xs = [step for step, _ in selected]
+            ax.plot(
+                xs,
+                [float(r[metric]) for _, r in selected],
+                marker=marker,
+                ms=3,
+                lw=1.5,
+                color=COLORS[fam],
+                label=label,
+            )
+            ax.fill_between(
+                xs,
+                [float(r[f"{metric}_lo"]) for _, r in selected],
+                [float(r[f"{metric}_hi"]) for _, r in selected],
+                color=COLORS[fam],
+                alpha=0.10,
+                lw=0,
+            )
+    for prefix, fam, label in singles:
+        pts = [
+            (int(r["steps"]), float(r[metric]), float(r[f"{metric}_lo"]), float(r[f"{metric}_hi"]))
+            for run, r in rows.items()
+            if run.startswith(prefix)
+        ]
+        if pts:
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            ax.errorbar(
+                xs,
+                ys,
+                yerr=[[y - lo for _, y, lo, _ in pts], [hi - y for _, y, _, hi in pts]],
+                fmt="*",
+                ms=8,
+                capsize=2,
+                lw=0.8,
+                color=COLORS[fam],
+                label=label,
+                zorder=5,
+            )
+    ax.axhline(gt, color="k", ls="--", lw=1.2, label=f"GT ({gt:,.0f})")
+    ax.set_xscale("log")
+    ax.set_xlabel("training steps")
+    ax.set_title(title)
+    ax.grid(alpha=0.3)
+
+
+def fig_derivative_budget(rows: dict[str, dict], derivative: str) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
+    for ax, (metric, _, title) in zip(axes, DYNAMICS[derivative], strict=True):
+        _plot_budget_axis(ax, rows, metric, f"{title} vs training budget")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=6, fontsize=8,
                bbox_to_anchor=(0.5, 0.01))
     fig.tight_layout(rect=(0, 0.16, 1, 1))
     out = os.path.join(FIG_DIR, f"physical_{derivative}_budget.png")
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+    print(out)
+
+
+def fig_dynamics_budget(rows: dict[str, dict]) -> None:
+    """Put all six physical budget panels in the same layout as concise Fig. 15."""
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    for col, derivative in enumerate(DYNAMICS):
+        for row, (metric, _, title) in enumerate(DYNAMICS[derivative]):
+            _plot_budget_axis(axes[row, col], rows, metric, title)
+    fig.suptitle(
+        "Canonical-h10 physical motion dynamics vs training budget (dt = 1/30 s)",
+        fontsize=14,
+    )
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=6,
+        fontsize=8,
+        bbox_to_anchor=(0.5, 0.01),
+    )
+    fig.tight_layout(rect=(0, 0.14, 1, 0.96))
+    out = os.path.join(FIG_DIR, "physical_dynamics_budget.png")
     fig.savefig(out, dpi=200)
     plt.close(fig)
     print(out)
@@ -326,6 +379,7 @@ def main() -> int:
         fig_derivative_bars(rows, derivative)
         fig_derivative_all(rows, derivative)
         fig_derivative_budget(rows, derivative)
+    fig_dynamics_budget(rows)
     fig_ratio_ladder(rows)
     return 0
 
