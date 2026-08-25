@@ -8,7 +8,7 @@ compile_unified_h10.py after all protocol assertions passed) and renders:
     model family across the six co-primary metrics, with 95% episode
     bootstrap CIs (openpi rows use the evaluator's own CIs).
   figures/unified_h10_budget.png  — t+10 budget curves: historical R18-VAE
-    (30 checkpoints), fresh R50-V1 (100k-spaced), and single-budget
+    (30 checkpoints), fresh R50-VAE (ImageNet-V1) (100k-spaced), and single-budget
     references (openpi arms, port-recipe Arm B, seed-23k companions) on
     acc@0.1 and XYZ endpoint.
   figures/unified_h10_jitter.png — within-chunk jitter (rotational and XYZ)
@@ -17,7 +17,7 @@ compile_unified_h10.py after all protocol assertions passed) and renders:
     two budget curves with CI bands plus single-budget reference stars,
     GT reference lines (mirrors unified_h10_budget.png for smoothness).
 
-Rows absent from the CSV (R50-V1 900k/1M before the trainer finishes; kiwi
+Rows absent from the CSV (R50-VAE (ImageNet-V1) 900k/1M before the trainer finishes; kiwi
 port/SmolVLA rows before K4) are skipped gracefully and appear on the next
 render. Run via:
   MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
@@ -58,11 +58,11 @@ COLORS = {
 # seeds to display seed spread.
 REPRESENTATIVES = [
     ("act_umi_identity_rot6d_1459_3000000steps", "ACT R18-VAE 3M (historical)", "hist"),
-    ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-V1 800k", "r50v1"),
+    ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
-    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE 80k s2000", "r50vae"),
-    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE 80k s3000", "r50vae"),
+    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
+    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s3000", "r50vae"),
     ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k s2000", "flow"),
     ("act_r18_flow_u_lr1e5_seed3000_100000steps", "ACT-flow 50k s3000", "flow"),
     ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe 20k", "port"),
@@ -93,9 +93,9 @@ PANELS = [
 # reference families after).
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-    ("act_r50_v1_vae_", "r50v1", "R50-V1"),
+    ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
-    ("act_r50_vae_", "r50vae", "R50-VAE"),
+    ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
     ("act_r18_flow_u_lr1e5_", "flow", "ACT-flow"),
     ("pi05_port_openpi_recipe_", "port", "π0.5 port o-recipe"),
     ("pi05_lora_sroi_rot6d_h30_", "openpi", "openpi rot6d-h30"),
@@ -203,7 +203,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     for ax, met, ylab, scale, ylim in specs:
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
-            (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
+            (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
@@ -233,7 +233,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
             ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe", "port"),
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
-            ("act_r50_vae_seed2000_100000steps", "R50-VAE 80k", "r50vae"),
+            ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae"),
             ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d", "smol"),
         )):
             if run not in rows:
@@ -252,7 +252,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
 
 
 def fig_jitter(rows: dict[str, dict]) -> None:
@@ -362,7 +362,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         ymax = 0.0
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
-            (r50, COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
+            (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
@@ -392,7 +392,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
             ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe", "port"),
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
-            ("act_r50_vae_seed2000_100000steps", "R50-VAE 80k", "r50vae"),
+            ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae"),
             ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d", "smol"),
         )):
             if run not in rows:
@@ -412,7 +412,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_jitter_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-V1 + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
 
 
 def main() -> int:

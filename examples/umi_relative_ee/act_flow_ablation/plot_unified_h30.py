@@ -10,7 +10,7 @@ compile_unified_h30.py after all protocol assertions passed) and renders:
     model family across the six co-primary metrics, with 95% episode
     bootstrap CIs.
   figures/unified_h30_budget.png — full-chunk budget curves: historical
-    R18-VAE (30 checkpoints), fresh R50-V1 (100k-spaced), the π0.5-port h30
+    R18-VAE (30 checkpoints), fresh R50-VAE (ImageNet-V1) (100k-spaced), the π0.5-port h30
     curve, and the SmolVLA 1M curves (full-width + masked) as they land,
     on acc@0.1 and XYZ endpoint.
   figures/unified_h30_jitter.png — within-chunk jitter (rotational and XYZ)
@@ -57,11 +57,11 @@ COLORS = {
 # seeds to display seed spread.
 REPRESENTATIVES = [
     ("act_umi_identity_rot6d_1459_3000000steps", "ACT R18-VAE 3M (historical)", "hist"),
-    ("act_r50_v1_vae_1m_seed1000_1000000steps", "ACT R50-V1 1M", "r50v1"),
+    ("act_r50_v1_vae_1m_seed1000_1000000steps", "ACT R50-VAE (ImageNet-V1) 1M", "r50v1"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
-    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE 80k s2000", "r50vae"),
-    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE 80k s3000", "r50vae"),
+    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
+    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s3000", "r50vae"),
     ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k s2000", "flow"),
     ("act_r18_flow_u_lr1e5_seed3000_100000steps", "ACT-flow 50k s3000", "flow"),
     ("pi05_port_0040000_h30_v2", "π0.5 port 400k h30", "port"),
@@ -87,9 +87,9 @@ PANELS = [
 # reference families after).
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-    ("act_r50_v1_vae_", "r50v1", "R50-V1"),
+    ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
-    ("act_r50_vae_", "r50vae", "R50-VAE"),
+    ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
     ("act_r18_flow_u_lr1e5_", "flow", "ACT-flow"),
     ("pi05_port_", "port", "π0.5 port h30"),
     ("pi05_lora_sroi_rot6d_h30_", "openpi", "openpi rot6d-h30"),
@@ -190,7 +190,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     for ax, met, ylab, scale in specs:
         for series, color, label, marker in (
             (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
-            (s["r50v1"], COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
+            (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (s["port"], COLORS["port"], "π0.5 port h30 (curve)", "^"),
             (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M (full-width)", "D"),
             (s["smolmask"], COLORS["smolmask"], "SmolVLA masked 1M", "v"),
@@ -214,7 +214,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
         for i, (run, label, fam) in enumerate((
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
-            ("act_r50_vae_seed2000_100000steps", "R50-VAE 80k", "r50vae"),
+            ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae"),
             ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d", "smol"),
             ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-ang", "smol"),
         )):
@@ -234,7 +234,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     out = os.path.join(FIG_DIR, "unified_h30_budget.png")
     fig.savefig(out, dpi=200)
     print(
-        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-V1 + {len(s['port'])} port"
+        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1) + {len(s['port'])} port"
         f" + {len(s['smol1m'])} smol-1M + {len(s['smolmask'])} masked points)"
     )
 
@@ -317,7 +317,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         ymax = 0.0
         for series, color, label, marker in (
             (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
-            (s["r50v1"], COLORS["r50v1"], "ACT R50-V1 (fresh 1M run)", "s"),
+            (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (s["port"], COLORS["port"], "π0.5 port h30 (curve)", "^"),
             (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M (full-width)", "D"),
             (s["smolmask"], COLORS["smolmask"], "SmolVLA masked 1M", "v"),
@@ -342,7 +342,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         for i, (run, label, fam) in enumerate((
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k", "flow"),
             ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k", "actl1"),
-            ("act_r50_vae_seed2000_100000steps", "R50-VAE 80k", "r50vae"),
+            ("act_r50_vae_seed2000_100000steps", "R50-VAE (ImageNet-V2) 80k", "r50vae"),
             ("smolvla_rot6d_seed1000_100000steps", "SmolVLA rot6d", "smol"),
             ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-ang", "smol"),
         )):
@@ -364,7 +364,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     out = os.path.join(FIG_DIR, "unified_h30_jitter_budget.png")
     fig.savefig(out, dpi=200)
     print(
-        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-V1 + {len(s['port'])} port"
+        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1) + {len(s['port'])} port"
         f" + {len(s['smol1m'])} smol-1M + {len(s['smolmask'])} masked points)"
     )
 

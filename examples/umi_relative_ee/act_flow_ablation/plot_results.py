@@ -20,8 +20,8 @@ DEFAULT_OUTPUT = Path(__file__).resolve().parent / "figures"
 LABELS = {
     "act_r18_vae": "ACT R18",
     "act_r34_vae": "ACT R34",
-    "act_r50_v1_vae": "ACT R50 V1",
-    "act_r50_vae": "ACT R50 V2",
+    "act_r50_v1_vae": "ACT R50-VAE (ImageNet-V1)",
+    "act_r50_vae": "ACT R50-VAE (ImageNet-V2)",
     "act_r50_large": "ACT R50 large",
     "act_r18_l1": "ACT-L1",
     "act_r18_flow_u_lr1e5": "ACT-flow 1e-5",

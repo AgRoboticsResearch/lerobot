@@ -1,6 +1,6 @@
 # ACT capacity and flow-objective investigation
 
-**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-V1 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-V1 (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum); all 28 were re-scored the same day under the unified protocol with physical metrics (§9.2.15) — R50-V1 seed-1000 at 100k closes the old horizon-10 gap at 9.46 mm (pack-tied, 0.26 mm from the fresh 1M run's 100k), family signatures (deterministic over-smoothing 0.42–0.55× GT; stochastic ACT-stack jitter 2.3–4.0×) replicate across training seeds, and the recovered seed trios bound single-seed endpoint noise at ~0.3–0.4 mm except R18-VAE (3.1 mm).
+**Status:** complete — seed-1000 controlled matrix (§9.1–9.2), π0.5 650K/700K flow-VLM reference (§9.2.2), SmolVLA rotation-notation ablation (§9.2.3), and the official-openpi rot6d-vs-rotvec replication (§9.2.4). §9.2.4 includes a horizon-matched correction: at equal 10-step scoring, SmolVLA / π0.5 port / official openpi are all statistically tied at 9–10 mm endpoint — earlier cross-model endpoint spreads were a horizon artifact; the real differentiators are smoothness and sample efficiency. The multi-seed (seed 2000/3000) confirmation was dropped for compute efficiency after two artifact-disk failures stranded the checkpoints (§8, incident 12); a 2026-08-17 salvage audit later found six seed-2000/3000 companion checkpoints alive at partial budgets and evaluated them (§9.2.6) — variant rank order replicates across training seeds — and then scored the fully-intact historical production ACT across its entire 100k–3M budget range on the same metric set (§9.2.7). Conclusions otherwise rest on a single training seed with per-episode bootstrap intervals, supplemented by the well-trained π0.5 references. The π0.5-port 700K→1M continuation completed 2026-08-19 (1M flat at both horizons: 9.00 mm t+10 / 21.75 mm t+30; §9.2.2, §9.2.9, §9.2.11). The horizon-30 openpi arm plus the JAX-vs-PyTorch matched-recipe stack A/B completed on 2026-08-17 (§9.2.5): scoring horizon alone moves the same openpi checkpoint 2.2× in endpoint error; h30 training costs ~15% near-horizon precision versus h10 training at equal budget; JAX-vs-PyTorch at matched recipe shows no accuracy gap but the PyTorch port is ~2× smoother; and the openpi recipe's ~9× sample efficiency transfers into the PyTorch stack. A fresh ACT R50-VAE (ImageNet-V1) 1M-step run (seed 1000) completed on the host on 2026-08-18 (§9.2.8): its budget curve confirms the capacity conclusion — R50@100k already matches the historical R18@3M plateau and stays ~2 mm / ~2.7 pp Acc@0.1 ahead through 1M, with no late smoothness penalty; notably, budget improves t+30 endpoint but *degrades* t+10 endpoint on the same checkpoints, so checkpoint selection must match the executed horizon. A unified horizon-10 re-evaluation of every surviving model under one protocol with the full metric set (endpoint pose, per-component L1 / per-dim MSE, Acc@0.5/0.1 as co-primary metrics; §9.2.9) was launched 2026-08-18 — it re-scores, never retrains, and its metric definitions are normative for the report; its host rows landed the same day (at matched t+10, the ACT R50/L1 family, SmolVLA, and the 3B flow-VLMs statistically tie at 9–11 mm endpoint / Acc@0.1 0.92–0.93, the historical R18 sits above the pack at 12–13 mm even at 30× budget, and matched ACT-flow remains worst on every metric); the kiwi π0.5-port rows and the SmolVLA rot6d 1M full-width curve have since landed (§9.2.10); the §9.2.10 padding-mode A/B closed 2026-08-20 — masked-subspace ties full-width on endpoint at every budget, with only a small (7–9%) late-budget smoothness edge, so the strawberry-dataset padding pathology does not reproduce on this task. The openpi rot6d 1M-budget run was stopped at 111k on 2026-08-23 (user decision; ~2.4 s/it put the full 1M at ~27 days) and its kept 100k checkpoint scored under §9.2.9 (§9.2.12): 10.77 mm endpoint / Acc@0.1 0.915 — flat vs its 20k arm (budget buys no t+10 endpoint), while rot-2nd-diff tightens to 0.143° (GT 0.152°), the closest-to-GT h10 row; at matched 100k steps the π0.5 port (9.12 mm) and R50-VAE (ImageNet-V1) (9.20 mm) lead on endpoint. A metric-naming audit the same day renamed the legacy "jerk" columns to within-chunk second differences everywhere (with an fps correction: the dataset is 30 Hz, not 10) and added a full physical-unit re-evaluation of all 88 torch rows at dt = 1/30 s (§9.2.13): every over/under-GT smoothness call from the proxy survives as true third-derivative jerk — ACT over-smooths (rot jerk 0.15–0.56× GT, XYZ as low as 0.15×), SmolVLA jitters (2.5–3.3×), and the π0.5 port is the closest GT-tracker across the velocity→acceleration→jerk ladder while also leading endpoint; the four JAX openpi rows are physical-pending. On 2026-08-24 the failed external disk was revived and its unique contents salvaged into the kiwi checkpoint archive (28 training runs incl. the entire seed-1000 matrix, `lingbot_va` pretrained; §8 incident 12 addendum, §9.2.6 recovery addendum); all 28 were re-scored the same day under the unified protocol with physical metrics (§9.2.15) — R50-VAE (ImageNet-V1) seed-1000 at 100k closes the old horizon-10 gap at 9.46 mm (pack-tied, 0.26 mm from the fresh 1M run's 100k), family signatures (deterministic over-smoothing 0.42–0.55× GT; stochastic ACT-stack jitter 2.3–4.0×) replicate across training seeds, and the recovered seed trios bound single-seed endpoint noise at ~0.3–0.4 mm except R18-VAE (3.1 mm).
 **Started:** 2026-08-11  
 **Branch:** `research/umi-act-flowmatching-ablation-20260811`  
 **Source baseline:** `3feb3f3e`  
@@ -326,6 +326,12 @@ controlled architecture-and-exposure comparison.
 | `umi_official_dp` | released ViT-B + U-Net recipe port | 160M online / 320M with EMA | implementation/tests complete; supervised 30k retry active |
 | `umi_official_transformer_dp` | released ViT-token + transformer denoiser port | 152M online / 304M with EMA | implementation/tests complete; queued behind U-Net retry |
 
+**Naming convention.** `ACT R50-VAE (ImageNet-V1)` and `ACT R50-VAE (ImageNet-V2)`
+are both VAE-based ACT policies. The parenthetical identifies
+only the torchvision backbone initialization; it is not the ACT architecture
+version. The machine-readable run IDs remain `act_r50_v1_vae` and
+`act_r50_vae`, respectively.
+
 Promotion rules will be based on confidence intervals over decoded physical
 metrics, not the lowest model-specific validation loss. At least the leading
 ACT-capacity model, ACT-L1, and leading ACT-flow configuration should receive
@@ -457,7 +463,7 @@ throughput. Dedicated timed runs are required before latency conclusions.
   diffusion configuration.
 - CPU construction with the exact queued feature geometry (20D derived state,
   10D action, image input, chunk 30) succeeds for both newly queued controls.
-  R50-V1 ACT has exactly 64,654,218 parameters and resolves the cached V1
+  ACT R50-VAE (ImageNet-V1) has exactly 64,654,218 parameters and resolves the cached V1
   weights; ACT-DP has exactly 34,728,266 finite parameters and constructs a
   100-training-step epsilon-prediction `DDIMScheduler`. Both remained on CPU,
   so this launch-fidelity check did not contend with the active host GPU job.
@@ -679,16 +685,18 @@ The first larger-backbone recipe comparison is provisionally favorable to ResNet
 | --- | ---: | ---: | ---: | ---: | ---: |
 | ResNet-18 | 51,579,786 | 0.036 s | 0.054130 | 0.043604 | 0.041139 |
 | ResNet-34 | 61,680,522 | 0.048–0.049 s | 0.051064 | 0.043164 | 0.039170 |
-| ResNet-50 V2 | 64,654,218 | 0.075 s | 0.042517 | 0.037207 | 0.036259 |
+| ACT R50-VAE (ImageNet-V2) | 64,654,218 | 0.075 s | 0.042517 | 0.037207 | 0.036259 |
 
 This completed screen originally changed two coupled choices: R18/R34 use
 torchvision ImageNet-V1 weights, whereas the recommended R50 launcher used
-ImageNet-V2. The decoded gain below therefore supports the larger-R50-V2
+ImageNet-V2. The decoded gain below therefore supports the larger ACT
+R50-VAE (ImageNet-V2)
 **recipe**, but cannot yet allocate the gain entirely to architecture. The
 added `act_r50_v1_vae` control holds the initialization family at V1, runs at
 30k and 100k for seed 1000, and joins the 100k seeds 2000/3000 confirmation.
-R50-V1 versus R18-V1 isolates capacity more strictly; R50-V2 versus R50-V1
-isolates initialization at fixed architecture. Static torchvision resolution
+R50-VAE (ImageNet-V1) versus R18-VAE (ImageNet-V1) isolates capacity more
+strictly; R50-VAE (ImageNet-V2) versus R50-VAE (ImageNet-V1) isolates
+initialization at fixed architecture. Static torchvision resolution
 confirms `ResNet50_Weights.IMAGENET1K_V1` is a valid distinct enum. The official
 97.8 MiB V1 checkpoint was then prefetched without CUDA and verified on CPU
 before the control released: its SHA-256 is
@@ -778,7 +786,7 @@ CUDA memory. Lower is better throughout.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT R18 VAE | 18.30 | 27.50 | 3.249 | 5.516 | 7.13 | 267 |
 | ACT R34 VAE | 17.36 | 25.65 | 3.147 | 4.947 | 8.55 | 305 |
-| ACT R50 V2 VAE | 14.90 | **23.65** | 2.677 | **4.390** | 9.89 | 341 |
+| ACT R50-VAE (ImageNet-V2) | 14.90 | **23.65** | 2.677 | **4.390** | 9.89 | 341 |
 | ACT R50 large | **14.57** | 23.83 | **2.650** | 4.462 | 11.51 | 653 |
 | ACT R18 L1 | 17.91 | 28.18 | 3.143 | 5.117 | **6.70** | 200 |
 | ACT-flow uniform, 1e-5 | 18.75 | 30.86 | 3.767 | 6.290 | 29.90 | 203 |
@@ -800,7 +808,7 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
 ![Paired endpoint improvements](figures/paired_endpoint_improvements.png)
 
 *Fig. 9.1-2: Paired endpoint improvements versus the ACT-L1 baseline with 95% bootstrap intervals — all four intervals exclude zero.*
-- R50-large versus standard-width R50 V2 is tied on all four pose metrics: for
+- R50-large versus standard-width R50-VAE (ImageNet-V2) is tied on all four pose metrics: for
   endpoint XYZ its improvement is -0.8% (CI -6.0–4.2%), and for endpoint
   rotation -1.6% (-8.0–4.2%). It adds 80.3M parameters, 16% inference latency,
   and 312 MiB peak memory without a supported accuracy gain.
@@ -812,11 +820,11 @@ Paired episode bootstrap comparisons (10,000 resamples) establish:
   and rotational 2nd-diff are substantially worse. These figures average its
   three inference seeds; only one training seed exists so far.
 
-The R50-V2 result is therefore not merely a lower training loss: it is a
+The R50-VAE (ImageNet-V2) result is therefore not merely a lower training loss: it is a
 sizable, statistically supported decoded-pose improvement for the combined
 backbone-plus-initialization recipe. Scaling the already-large transformer at
 the same optimizer is not supported. Attribution of the R50 gain specifically
-to backbone capacity remains provisional until the queued R50-V1 control is
+to backbone capacity remains provisional until the queued R50-VAE (ImageNet-V1) control is
 decoded across training seeds.
 
 ### 9.1.1 Fresh 100k deterministic checkpoints
@@ -830,7 +838,7 @@ uncertainty.
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT R18 VAE, 100k | 16.39 | 24.74 | 2.873 | 4.892 | 0.1603 | **8.63** | 267 |
-| ACT R50 V2 VAE, 100k | **14.28** | 24.44 | 2.793 | 4.875 | **0.1366** | 10.79 | 341 |
+| ACT R50-VAE (ImageNet-V2), 100k | **14.28** | 24.44 | 2.793 | 4.875 | **0.1366** | 10.79 | 341 |
 | ACT R18 L1, 100k | 14.34 | **23.69** | **2.769** | **4.850** | 0.1451 | 9.03 | **200** |
 
 Paired episode differences make this a narrower result than the validation-loss
@@ -840,16 +848,16 @@ XYZ improvement is only 1.23% (-4.38--6.64%), endpoint rotation 0.33%
 (-5.53--5.93%), and chunk rotation 2.77% (-2.07--7.62%); none of those three
 intervals excludes no improvement. R50 also raises median inference latency by
 25% and worsens rotational 2nd-diff by 11.56% (7.44--15.68% worse), while XYZ 2nd-diff
-is tied. Thus the larger R50-V2 recipe has a repeatable chunk-translation and
+is tied. Thus the larger R50-VAE (ImageNet-V2) recipe has a repeatable chunk-translation and
 gripper benefit at 100k, but not a demonstrated endpoint-pose benefit at this
-seed. The strict R50-V1 and multi-training-seed controls remain essential before
+seed. The strict R50-VAE (ImageNet-V1) and multi-training-seed controls remain essential before
 attributing the improvement to backbone capacity or recommending R50
 unconditionally.
 
-### 9.1.2 Strict R50-V1 initialization control
+### 9.1.2 Strict R50-VAE (ImageNet-V1) initialization control
 
 The strict control was completed at 30k before its 100k continuation was
-started. R50-V1 uses the same ResNet-50 width as the strong R50-V2 recipe but
+started. R50-VAE (ImageNet-V1) uses the same ResNet-50 width as the strong R50-VAE (ImageNet-V2) recipe but
 keeps the V1/ImageNet initialization and optimizer configuration, isolating the
 initialization-plus-capacity change that was confounded in the first screen.
 The checkpoint has 65.0M learnable parameters and was evaluated on the same
@@ -859,29 +867,29 @@ bookkeeping), providing a useful reproducibility check.
 
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Rot 2nd-diff (deg) | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| ACT R50 V1 VAE, 30k | 14.39 | **23.19** | **2.603** | **4.359** | 0.1671 | **0.122** | **10.77** | 341 |
-| ACT R50 V2 VAE, 30k | 14.90 | 23.65 | 2.677 | 4.390 | 0.1602 | 0.098 | 9.89 | 341 |
+| ACT R50-VAE (ImageNet-V1), 30k | 14.39 | **23.19** | **2.603** | **4.359** | 0.1671 | **0.122** | **10.77** | 341 |
+| ACT R50-VAE (ImageNet-V2), 30k | 14.90 | 23.65 | 2.677 | 4.390 | 0.1602 | 0.098 | 9.89 | 341 |
 | ACT R18 VAE, 30k | 18.30 | 27.50 | 3.249 | 5.516 | 0.1662 | 0.126 | 7.13 | 267 |
 
-Relative to the R18 VAE control, R50-V1 improves chunk XYZ by 21.4% (paired
+Relative to the R18 VAE control, R50-VAE (ImageNet-V1) improves chunk XYZ by 21.4% (paired
 episode bootstrap 95% CI 17.7--24.8%), endpoint XYZ by 15.7% (11.1--19.8%),
 chunk rotation by 19.9% (15.9--23.7%), and endpoint rotation by 21.0%
-(16.4--25.3%). Relative to R50-V2, however, the differences are small and
+(16.4--25.3%). Relative to R50-VAE (ImageNet-V2), however, the differences are small and
 their episode intervals cross zero for endpoint and chunk pose errors. V1 is
 slightly better on all four pose means at this budget, but has higher
 rotational 2nd-diff and a slightly worse gripper endpoint. This means the earlier
-R50-V2 gain cannot yet be credited to width alone: both R50 recipes beat R18,
+R50-VAE (ImageNet-V2) gain cannot yet be credited to width alone: both R50 recipes beat R18,
 while V1 versus V2 is effectively tied at 30k and still mixes initialization,
 VAE details, and finite-budget optimization.
 
-The R50-V1 100k continuation has since completed training and its exact 100k
+The R50-VAE (ImageNet-V1) 100k continuation has since completed training and its exact 100k
 decoded evaluation. It is the strongest deterministic ACT pose accuracy at the
 full seed-1000 budget: 13.72 mm XYZ chunk, **22.33 mm XYZ endpoint**, 2.623°
 rotation chunk, **4.584° rotation endpoint**, 0.1435 gripper endpoint, 0.056°
 rotational 2nd-diff, and 0.441 mm XYZ 2nd-diff. Relative to the R18-VAE 100k control it
 improves endpoint XYZ by **9.8%** (paired episode CI 5.1--14.3%) and endpoint
 rotation by **6.3%** (1.5--11.1%), and chunk XYZ by 16.3%. Crucially it also
-edges the R50-V2 recipe at the same budget (22.33 vs 24.44 mm endpoint XYZ,
+edges the R50-VAE (ImageNet-V2) recipe at the same budget (22.33 vs 24.44 mm endpoint XYZ,
 4.584 vs 4.875° endpoint rotation; chunk XYZ 13.72 vs 14.28 mm). At 30k V1 and
 V2 had been tied (Section 9.1.2); at 100k the V1 initialization is at least as
 good as V2 on every pose metric. Because V1 holds the ImageNet-initialization
@@ -902,7 +910,7 @@ recommendation. Relative to R18 VAE, direct L1 improves chunk XYZ by **12.52%**
 (-0.43--8.82%), and both rotation errors are tied. It is therefore the current
 low-cost default: essentially the best pose accuracy in this 100k deterministic
 set, the smallest online allocation, and smoother trajectories than either VAE
-control. R50-V2 retains only a small chunk-XYZ edge over L1 (14.28 versus
+control. R50-VAE (ImageNet-V2) retains only a small chunk-XYZ edge over L1 (14.28 versus
 14.34 mm) and a better gripper endpoint, insufficient by itself to justify its
 extra inference cost without the strict V1/multi-seed controls.
 
@@ -1061,7 +1069,7 @@ the three budgets: XYZ L1 6.56/6.51/6.49 mm, XYZ MSE 119.6/117.3/116.4
 (650K/700K/1M).
 
 Both π0.5 checkpoints beat every ACT and diffusion-policy variant in the matrix
-on endpoint pose accuracy (next best: ACT R50-V1 100k at 22.33 mm / 4.58°), and
+on endpoint pose accuracy (next best: ACT R50-VAE (ImageNet-V1) 100k at 22.33 mm / 4.58°), and
 both are smoother than the ground-truth trajectory (rotational 2nd-diff 0.07–0.08°
 versus GT 0.158°). The 650K→700K gain is small (0.2 mm, 0.07°) and 700K→1M adds
 nothing (21.77 → 21.75 mm), indicating the flow-VLM has largely plateaued
@@ -1209,7 +1217,7 @@ seeds, SD 0.025 mm):
 | openpi rot6d 20k (bs16, 320k samples) | 9.41 [8.89, 9.94] | 1.70 [1.61, 1.78] | 1.00 | 0.161 |
 | openpi rotvec 20k (bs16, 320k samples) | 10.06 [9.44, 10.70] | 1.66 [1.57, 1.75] | 1.00 | 0.202 |
 
-(ACT R50-V1 could not be re-scored at horizon 10: its weights were stranded by
+(ACT R50-VAE (ImageNet-V1) could not be re-scored at horizon 10: its weights were stranded by
 the second artifact-disk failure — §8, incident 12 — and only its metric JSONs
 survived. All its §9.1 numbers remain horizon-30.)
 
@@ -1400,7 +1408,7 @@ matrix is unrecoverable** — every `train/<run>_seed1000_*/checkpoints/<step>/p
 directory is an empty skeleton (the failed disk's directory tree was copied, the
 file contents were not), and the canonical `eval_common_h32/` metric JSONs for
 the ACT matrix suffered the same fate (only the six kiwi π0.5-port JSONs
-survive). The §9.2.4 statement that ACT R50-V1 "cannot be re-scored at horizon
+survive). The §9.2.4 statement that ACT R50-VAE (ImageNet-V1) "cannot be re-scored at horizon
 10" therefore stood at the time, the seed-1000 tables above are the surviving
 record of those evaluations, and none of them could be extended with the
 L1/per-dim-MSE metrics. (An initial name-level listing had suggested seed-1000
@@ -1424,14 +1432,14 @@ r50_large 30k, and the `lingbot_va` pretrained bases (22.7 GB — the internal
 copy is a husk, so this was the only real copy). The per-eval metric JSONs and
 query-level eval data were *not* on that disk and remain lost; the seed-1000
 tables above are still the surviving evaluation record, but the weights are
-now re-scoreable on demand (e.g. R50-V1 seed-1000 at horizon 10, or the ACT
+now re-scoreable on demand (e.g. R50-VAE (ImageNet-V1) seed-1000 at horizon 10, or the ACT
 matrix under the L1/per-dim-MSE metric set) — and were re-scored the same
 day under the unified protocol with physical metrics (§9.2.15); the §9.2.6
 partial-budget conclusions are unaffected.
 
 Six seed-2000/3000 companion retrains — started on the healthy internal root
 before the multi-seed phase was dropped — did retain real checkpoints: ACT-L1
-seeds 2000/3000 at the full 100k budget, ACT R50-VAE seeds 2000/3000 stopped at
+seeds 2000/3000 at the full 100k budget, ACT R50-VAE (ImageNet-V2) seeds 2000/3000 stopped at
 80k, and matched ACT-flow seeds 2000/3000 stopped at 50k. All six were evaluated
 on 2026-08-17 with the updated evaluator (per-component L1 / per-dim MSE /
 Acc@ε, commits 51ff19f5 + this change) under the identical fixed
@@ -1445,8 +1453,8 @@ artifact root that symlinks `train/`; the legacy tree was left untouched).
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT-L1 s2000 | 100k | 24.33 | 4.833 | 7.10 | 144.5 | 1.387 | 4.62 | 0.975 | 0.719 |
 | ACT-L1 s3000 | 100k | 23.73 | 4.868 | 7.11 | 141.1 | 1.424 | 4.84 | 0.972 | 0.719 |
-| ACT R50-VAE s2000 | 80k | 22.21 | 4.518 | 6.61 | 121.9 | 1.330 | 4.10 | 0.976 | 0.736 |
-| ACT R50-VAE s3000 | 80k | 22.10 | 4.230 | 6.62 | 121.8 | 1.252 | 3.70 | 0.978 | 0.744 |
+| ACT R50-VAE (ImageNet-V2) s2000 | 80k | 22.21 | 4.518 | 6.61 | 121.9 | 1.330 | 4.10 | 0.976 | 0.736 |
+| ACT R50-VAE (ImageNet-V2) s3000 | 80k | 22.10 | 4.230 | 6.62 | 121.8 | 1.252 | 3.70 | 0.978 | 0.744 |
 | ACT-flow s2000 | 50k | 31.42 | 5.70 | 9.96 | 236.6 | 1.74 | 6.49 | 0.963 | 0.634 |
 | ACT-flow s3000 | 50k | 31.97 | 5.45 | 10.21 | 273.6 | 1.62 | 5.81 | 0.961 | 0.654 |
 
@@ -1459,7 +1467,7 @@ set, so these rows are not comparable with the seed-1000 100k tables except
 where noted):
 
 1. **Variant rank order replicates across training seeds.** In both seeds,
-   R50-VAE < ACT-L1 < ACT-flow on every one of the seven columns. The Q1
+   R50-VAE (ImageNet-V2) < ACT-L1 < ACT-flow on every one of the seven columns. The Q1
    capacity conclusion and the Q2 matched-flow deficit are not seed-1000
    artifacts. ACT-L1 at 100k lands at 23.7–24.3 mm across three seeds
    (seed-1000: 23.69 mm) — cross-seed SD ≈ 0.35 mm against between-variant
@@ -1469,8 +1477,8 @@ where noted):
    within pairs) is an order of magnitude smaller than every paired variant gap
    the report rests on — retroactively validating the compute-efficiency
    decision and the use of episode-bootstrap intervals.
-3. **R50-VAE at only 80k (22.1–22.2 mm) already matches the best seed-1000
-   100k ACT endpoints** (R50-V1 22.33 mm, ACT-L1 23.69 mm) — consistent with
+3. **R50-VAE (ImageNet-V2) at only 80k (22.1–22.2 mm) already matches the best seed-1000
+   100k ACT endpoints** (R50-VAE (ImageNet-V1) 22.33 mm, ACT-L1 23.69 mm) — consistent with
    the §9.1.2 capacity attribution, though this is a cross-budget observation.
 4. **ACT-flow at 50k sits at 31.4–32.0 mm in both seeds** versus ≈29.6 mm
    derived for seed-1000 at 50k (from the §9.2.1 paired 12.26% endpoint
@@ -1483,7 +1491,7 @@ where noted):
 6. **Acc@ε sharpens the same picture**: at ε=0.5 (motion intent) all
    six runs cluster within 1.7 pp (0.961–0.978) — every variant captures the
    coarse motion — while at ε=0.1 (movement precision) the families separate by
-   up to 11 pp (flow 0.634–0.654 vs ACT-L1 0.719 vs R50-VAE 0.736–0.744).
+   up to 11 pp (flow 0.634–0.654 vs ACT-L1 0.719 vs R50-VAE (ImageNet-V2) 0.736–0.744).
    Precision, not motion intent, is where the objectives differ — mirroring
    Dyna-2's interpretation of the two thresholds for transfer vs in-domain
    scaling trends.
@@ -1564,13 +1572,13 @@ Read-outs:
    at 2.3M), tying the v2-metric series to the historical record.
 5. **Capacity beats a 30× budget on precision.** At 100k the historical
    R18-VAE scores Acc@0.1 = 0.681, and even at 3M it never exceeds 0.718 —
-   below the R50-VAE seed-2000/3000 companions at only 80k (0.736–0.744) and
+   below the R50-VAE (ImageNet-V2) seed-2000/3000 companions at only 80k (0.736–0.744) and
    the ACT-L1 companions at 100k (0.719). A backbone/objective change at
    ≤1× the common budget outperforms a 30× budget range of the original
    recipe — the sharpest single line of evidence that the §9.1 capacity and
    objective results dominate longer training on this task.
 
-### 9.2.8 ACT R50-V1 long-budget run (1M steps) — complete
+### 9.2.8 ACT R50-VAE (ImageNet-V1) long-budget run (1M steps) — complete
 
 That capacity-vs-budget conclusion is cross-budget (R50 companions at 80k vs
 an R18 curve). The direct question — does R50 capacity keep compounding with
@@ -1593,7 +1601,7 @@ patterned on `eval_historical_act_curve.sh`; outputs under
 `reeval_v2metrics/eval_common_h32/` in collector-compatible run names).
 Comparisons: (a) R50-vs-R18 budget curves on Acc@0.1 and XYZ endpoint — does
 the capacity gap persist, shrink, or invert as budget grows; (b) the 100k
-point against the stranded seed-1000 R50-V1 100k evaluation (22.33 mm / 4.58°,
+point against the stranded seed-1000 R50-VAE (ImageNet-V1) 100k evaluation (22.33 mm / 4.58°,
 §9.1.2) as a fresh-run replication check; (c) rot-2nd-diff — whether R50 shows the
 same late-training smoothness degradation that penalizes the R18 curve from
 700k.
@@ -1620,26 +1628,26 @@ t+10 tree). Milestones:
 | 900k | 21.51 [19.9, 23.2] | 4.224 | 6.95 | 0.973 | 0.743 | 0.032 |
 | 1M | **21.32** [19.7, 22.9] | **4.159** | 6.88 | 0.974 | 0.742 [0.727, 0.757] | 0.032 |
 
-![R50-V1 vs historical R18 budget curves](figures/r50_vs_r18_budget_curve.png)
+![R50-VAE (ImageNet-V1) vs historical R18 budget curves](figures/r50_vs_r18_budget_curve.png)
 
-*Fig. 9.2.8-1: ACT R50-V1 vs historical R18 budget curves — R50@100k already matches the R18@3M plateau and stays ~2 mm ahead through 1M.*
+*Fig. 9.2.8-1: ACT R50-VAE (ImageNet-V1) vs historical R18 budget curves — R50@100k already matches the R18@3M plateau and stays ~2 mm ahead through 1M.*
 
 Read-outs, following the preregistered decomposition:
 
 1. **(a) The capacity gap persists at every budget — and R50@100k already
-   matches R18@3M.** On XYZ endpoint the fresh R50-V1 at its *first*
+   matches R18@3M.** On XYZ endpoint the fresh R50-VAE (ImageNet-V1) at its *first*
    checkpoint (23.24 mm) is already at the historical R18's 3M plateau
    (23.31 mm), and by 600k–1M it reaches 21.2–21.5 mm — about 2 mm below the
    R18 plateau with CIs only marginally touching (R50@1M [19.7, 22.9] vs
    R18@3M [21.45, 25.20]). On Acc@0.1 the separation is cleaner: R50@1M
    0.742 [0.727, 0.757] vs R18@3M 0.715 [0.700, 0.731] — effectively
-   disjoint. The §9.2.6 cross-budget observation (R50-VAE companions at 80k
+   disjoint. The §9.2.6 cross-budget observation (R50-VAE (ImageNet-V2) companions at 80k
    matching R18@3M) is now confirmed by a same-seed, same-protocol budget
    curve: **capacity buys a persistent lead that a 30× budget range cannot
    close**, and the gap neither shrinks meaningfully nor inverts.
 2. **(b) The fresh 100k point replicates the stranded §9.1.2 evaluation.**
-   Fresh R50-V1 @100k: 23.24 mm [21.5, 25.1] / 4.581° endpoint rotation vs the
-   stranded seed-1000 R50-V1 @100k: 22.33 mm / 4.584° — the rotation endpoint
+   Fresh R50-VAE (ImageNet-V1) @100k: 23.24 mm [21.5, 25.1] / 4.581° endpoint rotation vs the
+   stranded seed-1000 R50-VAE (ImageNet-V1) @100k: 22.33 mm / 4.584° — the rotation endpoint
    matches to 0.003° and the 0.9 mm endpoint-XYZ difference is well inside
    the episode CI. Two independent training runs of the same config (the
    stranded one predates the disk failure, this one post-dates it) agree;
@@ -1764,8 +1772,8 @@ at chunk step t):
 
 **Inclusion inventory.** Every surviving checkpoint family is included:
 historical production ACT (30 checkpoints, 100k–3M), the six seed-23k
-companions (ACT-L1 @100k, R50-VAE @80k, ACT-flow @50k ×2 seeds each), the
-fresh ACT R50-V1 1M curve (§9.2.8, 100k-spaced), the π0.5 port (650K/700K/1M),
+companions (ACT-L1 @100k, R50-VAE (ImageNet-V2) @80k, ACT-flow @50k ×2 seeds each), the
+fresh ACT R50-VAE (ImageNet-V1) 1M curve (§9.2.8, 100k-spaced), the π0.5 port (650K/700K/1M),
 Arm B (port h30-trained under the openpi recipe @20k, adopted from its
 conforming t+10 JSONs), SmolVLA both rotation notations @100k, the three
 official openpi arms (rot6d/rotvec h10, rot6d h30 scored at t+10), and the
@@ -1794,7 +1802,7 @@ weights-only copies from the still-training kiwi run (no GPU impact there),
 evaluated on the host under the canonical flags; the 650K/700K re-scores
 here supersede their §9.2.4 t+10 evals, which predate the canonical query
 window. The host sweep evaluated the full inventory as a
-VRAM-gated backfill alongside the R50 trainer (the final two rows — R50-V1
+VRAM-gated backfill alongside the R50 trainer (the final two rows — R50-VAE (ImageNet-V1)
 900k/1M — landed when training exited at 16:16); every report passed the
 protocol assertions programmatically — canonical bounds `[-1,31]`, horizon 10,
 500 queries / 100 episodes, identical Acc@ε normalization scales across
@@ -1905,12 +1913,12 @@ per-dimension (µm² / deg²):
 *Fig. 9.2.9-1: Unified horizon-10 metrics across all surviving models — one representative per family on the six co-primary metrics, 95% episode-bootstrap CIs.*
 
 ![Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh
-R50-V1 points, and the 18-point π0.5-port curve as the third line: fast to
+R50-VAE (ImageNet-V1) points, and the 18-point π0.5-port curve as the third line: fast to
 a 8.82–9.07 mm plateau (~200k) then flat through 900k, in contrast to
-R50-V1's t+10 drift; the §9.2.12 openpi 100k star sits at the tie-band top
+R50-VAE (ImageNet-V1)'s t+10 drift; the §9.2.12 openpi 100k star sits at the tie-band top
 (10.77 mm, flat vs its 20k arm)](figures/unified_h10_budget.png)
 
-*Fig. 9.2.9-2: Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh R50-V1 points, and the 18-point π0.5-port curve (fast to a 8.82–9.07 mm plateau ~200k, then flat through 900k); the §9.2.12 openpi 100k star sits at the tie-band top (10.77 mm, flat vs its 20k arm).*
+*Fig. 9.2.9-2: Unified horizon-10 budget curves — 30 historical R18 points, 10 fresh R50-VAE (ImageNet-V1) points, and the 18-point π0.5-port curve (fast to a 8.82–9.07 mm plateau ~200k, then flat through 900k); the §9.2.12 openpi 100k star sits at the tie-band top (10.77 mm, flat vs its 20k arm).*
 
 ![Unified horizon-10 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.152° / 0.70 mm)](figures/unified_h10_jitter.png)
@@ -1918,12 +1926,12 @@ ground truth (0.152° / 0.70 mm)](figures/unified_h10_jitter.png)
 *Fig. 9.2.9-3: Unified horizon-10 within-chunk 2nd-diff — every run of the sweep, log scale, dashed = ground truth (0.152° / 0.70 mm).*
 
 ![Unified horizon-10 jitter vs training steps — the R18 curve degrades
-0.043° → 0.063° from 100k to 3M while R50-V1 improves to 0.027–0.036°;
+0.043° → 0.063° from 100k to 3M while R50-VAE (ImageNet-V1) improves to 0.027–0.036°;
 ACT-flow sits 5–25× above every other family; the π0.5-port curve holds
 0.073–0.09° (≈half of GT) from 200k onward — flat where the ACT curves
 move](figures/unified_h10_jitter_budget.png)
 
-*Fig. 9.2.9-4: Unified horizon-10 2nd-diff vs training steps — R18 degrades 0.043°→0.063° (100k→3M) while R50-V1 improves to 0.027–0.036°; ACT-flow sits 5–25× above every other family; the π0.5-port curve holds 0.073–0.09° (≈half of GT) from 200k onward.*
+*Fig. 9.2.9-4: Unified horizon-10 2nd-diff vs training steps — R18 degrades 0.043°→0.063° (100k→3M) while R50-VAE (ImageNet-V1) improves to 0.027–0.036°; ACT-flow sits 5–25× above every other family; the π0.5-port curve holds 0.073–0.09° (≈half of GT) from 200k onward.*
 
 Host-side read-outs (kiwi rows will extend, not re-rank, these):
 
@@ -1934,7 +1942,7 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    PyTorch vs openpi JAX decoding paths) is asserted at compile time to 5
    decimals on the ε scales and 1e-6 on GT 2nd-diff.
 2. **At matched horizon the ACT capacity/objective family ties the 3B
-   flow-VLMs.** R50-V1 @100k (9.20 mm, Acc@0.1 0.921), the R50-VAE
+   flow-VLMs.** R50-VAE (ImageNet-V1) @100k (9.20 mm, Acc@0.1 0.921), the R50-VAE (ImageNet-V2)
    companions @80k (9.15–9.18 mm, 0.926–0.929), and ACT-L1 @100k
    (9.59–9.88 mm, 0.916–0.920) and SmolVLA @100k (9.08–9.18 mm, 0.931)
    all land inside or at the edge of the openpi/Arm-B interval band
@@ -1942,13 +1950,13 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    both the ACT side and the 450M SmolVLA: what separates models at t+10 is
    capacity and objective recipe, not parameter count or stack. SmolVLA's
    Acc@0.1 point estimate (0.931) is nominally the table's best, but its
-   interval overlaps the R50-VAE companions' (0.929) — tied, not ahead. The historical R18
+   interval overlaps the R50-VAE (ImageNet-V2) companions' (0.929) — tied, not ahead. The historical R18
    production model sits visibly above the pack (12.0–13.1 mm, 0.88–0.90)
    even at 30× budget.
 3. **Near-horizon budget behavior differs by family — and the π0.5 port
    shows no overfitting at all.** The historical R18
    improves slowly and monotonically (13.10 → 11.99 mm, Acc@0.1
-   0.880 → 0.901 over 100k→3M); the fresh R50-V1 *degrades* from its 100k
+   0.880 → 0.901 over 100k→3M); the fresh R50-VAE (ImageNet-V1) *degrades* from its 100k
    point (9.20 → 10.61 mm, 0.921 → 0.912 by 1M; the loss saturates after
    ~500k and the 100k-vs-1M Acc@0.1 intervals are disjoint) — near-horizon
    overfitting — while its smoothness keeps improving (rot-2nd-diff
@@ -1989,8 +1997,8 @@ Host-side read-outs (kiwi rows will extend, not re-rank, these):
    better on XYZ endpoint — no notation lever in either stack.
 7. **The SmolVLA 1M full-width curve (§9.2.10) reaches the top of the h10
    pack only at full budget.** At 100k it sits above every mature family
-   (10.51 mm vs port 9.12, R50-V1 9.20); by 1M it ties the port plateau
-   (9.06 [8.56, 9.56] vs 9.00) and passes R50-V1@1M (10.61), with Acc@0.1
+   (10.51 mm vs port 9.12, R50-VAE (ImageNet-V1) 9.20); by 1M it ties the port plateau
+   (9.06 [8.56, 9.56] vs 9.00) and passes R50-VAE (ImageNet-V1)@1M (10.61), with Acc@0.1
    0.933 — the table's best point estimate — and rot-2nd-diff halved to 0.43°.
    SmolVLA needs ~7× the port's steps to reach the same t+10 operating
    point (sample-efficiency gap), and unlike the ACT families its t+10
@@ -2062,13 +2070,13 @@ Read-outs (Option A):
 2. **Budget improves BOTH horizons — no ACT-style flip.** t+10 10.51 →
    9.06 mm (plateau from ~700k) and t+30 28.50 → 26.26 mm (still creeping
    down at 1M); Acc@0.1 0.919 → 0.933 and 0.695 → 0.729. Contrast
-   §9.2.8 read-out 4, where R50-V1's t+10 *degrades* with budget while t+30
+   §9.2.8 read-out 4, where R50-VAE (ImageNet-V1)'s t+10 *degrades* with budget while t+30
    improves: the horizon trade is a property of the ACT-VAE family, not of
    training long per se — both flow families here (SmolVLA, π0.5 port)
    improve monotonically or stay flat at both horizons.
 3. **At 1M SmolVLA ties the top of the h10 pack but stays the worst
    chunk-30 family.** 9.06 vs port 9.00 mm at t+10 (both ahead of
-   R50-V1@1M 10.61) versus 26.26 vs port 21.75 / R50-V1 21.32 / ACT-L1
+   R50-VAE (ImageNet-V1)@1M 10.61) versus 26.26 vs port 21.75 / R50-VAE (ImageNet-V1) 21.32 / ACT-L1
    23.31 mm at t+30: ten-fold budget closes the near-horizon gap entirely
    and the far-horizon gap only partly (~1.2 of ~4 mm vs ACT-L1). The
    family's far-horizon deficit is architectural/recipe-level, not a
@@ -2159,7 +2167,7 @@ native-h30 score was re-run on the freed host GPU on 2026-08-19 (23.20
 [21.56, 24.91] mm / Acc@0.1 0.725 / rot-2nd-diff 0.178°, single inference seed
 like its §9.2.9 siblings, consistent with the old-window §9.2.5 Arm-A
 value 23.83 / 0.702 / 0.181). The tree is the shared `reeval_v2metrics/eval_common_h32/`
-holding the §9.2.7 historical curve, the §9.2.8 R50-V1 curve, the §9.2.6
+holding the §9.2.7 historical curve, the §9.2.8 R50-VAE (ImageNet-V1) curve, the §9.2.6
 companions, and — new — the π0.5-port h30 curve (`pi05_port_<STEP>_h30_v2`
 runs; host front-run 50k–900k minus 650k/700k via
 `eval_pi05_curve_h30_host.sh`, kiwi K2 owns 650K/700K/1M).
@@ -2269,12 +2277,12 @@ GT invariants, slightly different from the t+10 values as expected).
 *Fig. 9.2.11-1: Unified native-h30 (full-chunk) metrics across chunk-30 models — six co-primary metrics, 95% CIs.*
 
 ![Unified native-h30 budget curves — historical R18-VAE (30 ckpts),
-fresh R50-V1 (10 ckpts), the π0.5-port h30 curve (19 points, plateau
+fresh R50-VAE (ImageNet-V1) (10 ckpts), the π0.5-port h30 curve (19 points, plateau
 ≈21.7–21.9 mm from 350k through 1M), the SmolVLA 1M full-width curve
 (10 points, 28.5 → 26.3 mm), and the SmolVLA masked 1M curve
 (10 points, 29.1 → 26.2 mm; ties full-width, §9.2.10)](figures/unified_h30_budget.png)
 
-*Fig. 9.2.11-2: Unified native-h30 budget curves — historical R18-VAE (30 ckpts), fresh R50-V1 (10 ckpts), the π0.5-port h30 curve (plateau ≈21.7–21.9 mm from 350k through 1M), SmolVLA 1M full-width (28.5→26.3 mm), and SmolVLA masked (29.1→26.2 mm, ties full-width; §9.2.10).*
+*Fig. 9.2.11-2: Unified native-h30 budget curves — historical R18-VAE (30 ckpts), fresh R50-VAE (ImageNet-V1) (10 ckpts), the π0.5-port h30 curve (plateau ≈21.7–21.9 mm from 350k through 1M), SmolVLA 1M full-width (28.5→26.3 mm), and SmolVLA masked (29.1→26.2 mm, ties full-width; §9.2.10).*
 
 ![Unified native-h30 jitter — every run of the sweep, log scale, dashed =
 ground truth (0.158° / 0.67 mm)](figures/unified_h30_jitter.png)
@@ -2289,18 +2297,18 @@ Read-outs (extended as the pending rows land):
 
 1. **The horizon-10 tie does NOT carry to the native chunk horizon.** At
    t+30 the endpoint errors are ~2.3× the t+10 values across every family
-   (R50-V1 21.3 mm vs 9.4–10.6; R18 23.3 vs 12.0; ACT-L1 23.7–24.3 vs
-   9.6–9.9), and the family ordering changes: the fresh R50-V1 curve is
+   (R50-VAE (ImageNet-V1) 21.3 mm vs 9.4–10.6; R18 23.3 vs 12.0; ACT-L1 23.7–24.3 vs
+   9.6–9.9), and the family ordering changes: the fresh R50-VAE (ImageNet-V1) curve is
    clearly the best ACT family at full chunk (21.2–23.2 mm vs the
    historical R18's 23.2–25.6 over the same budgets), consistent with the
    §9.2.8 budget-flip finding. Acc@0.1 drops from the 0.88–0.93 t+10 range
    to 0.63–0.75 — t+30 accuracy is the hard, unsolved regime.
 2. **The two ACT budget regimes now have full-chunk curves.** R18 improves
    slowly and monotonically (25.57 → 23.31 mm, Acc@0.1 0.681 → 0.715 over
-   100k→3M); R50-V1 improves faster and plateaus (23.24 → 21.32 mm by 1M,
+   100k→3M); R50-VAE (ImageNet-V1) improves faster and plateaus (23.24 → 21.32 mm by 1M,
    best 21.22 @600k, Acc@0.1 0.735 → 0.742) — at t+30 the fresh run is
    better at EVERY budget, not just early (contrast §9.2.9 read-out 3
-   where R50-V1 *degrades* at t+10: the budget optimum is horizon-dependent
+   where R50-VAE (ImageNet-V1) *degrades* at t+10: the budget optimum is horizon-dependent
    in the opposite direction — more budget helps the far horizon).
 3. **Smoothness ordering is horizon-independent.** ACT-flow remains 10–15×
    rougher than every other family (rot-2nd-diff 0.77–0.82° vs 0.03–0.08 for
@@ -2315,15 +2323,15 @@ Read-outs (extended as the pending rows land):
    (ACT-flow ≈ 24–27 µm/mm vs ≈19–20 for the VAE/L1 families) — the
    heavy-tail penalty of the unweighted flow objective grows with horizon,
    matching the §9.2.6 diagnosis.
-5. **The π0.5-port full-chunk curve ties R50-V1 at every mature budget**
+5. **The π0.5-port full-chunk curve ties R50-VAE (ImageNet-V1) at every mature budget**
    (19 points, 50k–1M; kiwi owns 650k/700k/1M). The port reaches its
    21.7–21.9 mm / Acc@0.1 0.741–0.744 plateau by ~350k and stays flat
    through 1M (21.75 mm) — no overfitting, mirroring its h10 curve
-   (§9.2.9). Against R50-V1 over the same budgets the endpoint CIs overlap
-   everywhere (port 21.70–21.84 vs R50-V1 21.22–21.74 mm at ≥600k; Acc@0.1
+   (§9.2.9). Against R50-VAE (ImageNet-V1) over the same budgets the endpoint CIs overlap
+   everywhere (port 21.70–21.84 vs R50-VAE (ImageNet-V1) 21.22–21.74 mm at ≥600k; Acc@0.1
    0.743 vs 0.742–0.743), so the h10 ACT-vs-port tie carries to t+30.
    What does NOT carry is the early-budget sample-efficiency edge: at h30
-   port@100k is only 23.05 vs R50-V1's 23.24 mm — a 0.2 mm gap versus the
+   port@100k is only 23.05 vs R50-VAE (ImageNet-V1)'s 23.24 mm — a 0.2 mm gap versus the
    clear §9.2.5 h10 lead — i.e. most of the port's apparent h10 early
    advantage is a near-horizon artifact; at full chunk the two families
    learn at nearly the same rate. The port remains mid-pack on smoothness
@@ -2333,7 +2341,7 @@ Read-outs (extended as the pending rows land):
    [25.72, 28.87] vs axis_angle 27.57 [26.10, 29.04] mm at 100k: CIs
    overlap, exactly the §9.2.3 h10 result (9.08 vs 9.17 mm). What changes
    with horizon is the family's position: SmolVLA is the WORST chunk-30
-   endpoint family (~27.4 mm vs ACT-L1 23.7, R50-V1 23.2, port 23.05 at
+   endpoint family (~27.4 mm vs ACT-L1 23.7, R50-VAE (ImageNet-V1) 23.2, port 23.05 at
    the same 100k budget) and by far the least smooth at t+30 (rot-2nd-diff
    0.85–0.92° vs GT 0.158°) — its §9.2.9 h10 "ties everything" profile is
    a near-horizon artifact of the same kind as the port's early edge.
@@ -2347,7 +2355,7 @@ Read-outs (extended as the pending rows land):
 8. **The openpi h30-trained arm lands mid-pack at 2% of the port's
    budget.** 23.20 [21.56, 24.91] mm / Acc@0.1 0.725 at just 20k steps —
    already at the ACT-L1@100k level (23.7) and ~1.7 mm from the mature
-   port/R50-V1 plateau, with GT-level smoothness (rot-2nd-diff 0.178° vs GT
+   port/R50-VAE (ImageNet-V1) plateau, with GT-level smoothness (rot-2nd-diff 0.178° vs GT
    0.158°). The §9.2.5 sample-efficiency conclusion (the openpi recipe
    learns ~9× faster than the ACT path) carries to the canonical-window
    full-chunk protocol: the JAX arm is the most budget-efficient chunk-30
@@ -2389,9 +2397,9 @@ Read-outs:
    recipe enters the §9.2.9 tie band by 20k and stays at its top edge
    through 100k — mirroring the §9.2.10 finding that budget stops buying
    endpoint early in every flow family.
-2. **At matched 100k steps the PyTorch port and ACT R50-V1 lead on
+2. **At matched 100k steps the PyTorch port and ACT R50-VAE (ImageNet-V1) lead on
    endpoint.** port@100k 9.12 [8.64, 9.61] mm (bs4, 400k samples) and
-   R50-V1@100k 9.20 [8.67, 9.72] mm both sit below openpi's 10.77 with
+   R50-VAE (ImageNet-V1)@100k 9.20 [8.67, 9.72] mm both sit below openpi's 10.77 with
    disjoint CIs, and the port's 50k row (9.61 [9.10, 10.13] mm, 200k
    samples) already matches openpi's 100k-steps endpoint with 8× fewer
    samples. The openpi recipe's early-budget sample-efficiency edge
@@ -2469,15 +2477,19 @@ by the h30 bs4 1M run until ~09-01; to be appended then.
 Ground-truth reference over the same 500-query window (episode-balanced):
 **rot 8.25 deg/s · 65.9 deg/s² · 2,793 deg/s³; xyz 73.5 mm/s · 628 mm/s² ·
 29,521 mm/s³.** Representative rows (full 88-row table:
-`results_physical_jerk/physical_jerk_h10.csv`; ratios to GT in parens):
+`results_physical_jerk/physical_jerk_h10.csv`; ratios to GT in parens). The
+CSV and companion Markdown now carry matched 95% episode-bootstrap CI columns
+for **velocity, acceleration, and jerk** in both rotation and translation,
+and repository snapshots are tracked as `repro/physical_dynamics_h10.{csv,md}`.
+The compact table below keeps point estimates for readability:
 
 | Run | step | Rot vel (deg/s) | Rot accel (deg/s²) | Rot jerk (deg/s³) | XYZ vel (mm/s) | XYZ accel (mm/s²) | XYZ jerk (mm/s³) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | GT reference | — | 8.25 | 65.9 | 2,793 | 73.5 | 628 | 29,521 |
 | ACT R18-VAE 3M (hist) | 3M | 6.26 (0.76) | 34.0 (0.52) | 903 [846, 962] (0.32) | 57.4 (0.78) | 251 (0.40) | 5,261 [5,065, 5,458] (0.18) |
-| ACT R50-V1 800k | 800k | 5.32 (0.64) | 19.1 (0.29) | 459 [437, 483] (0.16) | 58.9 (0.80) | 194 (0.31) | 4,445 [4,269, 4,624] (0.15) |
+| ACT R50-VAE (ImageNet-V1) 800k | 800k | 5.32 (0.64) | 19.1 (0.29) | 459 [437, 483] (0.16) | 58.9 (0.80) | 194 (0.31) | 4,445 [4,269, 4,624] (0.15) |
 | ACT-L1 100k s2000 | 100k | 4.65 (0.56) | 25.0 (0.38) | 1,272 [1,191, 1,360] (0.46) | 63.2 (0.86) | 313 (0.50) | 15,732 [14,963, 16,546] (0.53) |
-| ACT R50-VAE 80k s2000 | 80k | 5.29 (0.64) | 31.7 (0.48) | 1,553 [1,452, 1,661] (0.56) | 64.8 (0.88) | 352 (0.56) | 16,982 [16,241, 17,745] (0.58) |
+| ACT R50-VAE (ImageNet-V2) 80k s2000 | 80k | 5.29 (0.64) | 31.7 (0.48) | 1,553 [1,452, 1,661] (0.56) | 64.8 (0.88) | 352 (0.56) | 16,982 [16,241, 17,745] (0.58) |
 | ACT-flow 50k s2000 | 50k | 14.59 (1.77) | 212 (3.2) | 11,043 [10,600, 11,494] (3.95) | 83.6 (1.14) | 2,747 (4.4) | 148,903 [145,143, 152,738] (5.04) |
 | π0.5 port o-recipe 20k | 20k | 6.31 (0.76) | 40.2 (0.61) | 1,889 [1,804, 1,979] (0.68) | 63.3 (0.86) | 452 (0.72) | 21,827 [21,283, 22,373] (0.74) |
 | π0.5 port 700K | 700k | 5.61 (0.68) | 34.3 (0.52) | 1,335 [1,282, 1,386] (0.48) | 61.4 (0.84) | 334 (0.53) | 14,423 [14,010, 14,840] (0.49) |
@@ -2490,21 +2502,45 @@ Ground-truth reference over the same 500-query window (episode-balanced):
 
 Figures (this section):
 
+![Physical velocity h10](figures/physical_velocity_h10.png)
+
+*Fig. 9.2.13-1: Physical rot/XYZ velocity (deg/s, mm/s) at dt = 1/30 s for every representative — 95% episode-bootstrap CIs, dashed = demonstrated velocity.*
+
+![Physical acceleration h10](figures/physical_acceleration_h10.png)
+
+*Fig. 9.2.13-2: Physical rot/XYZ acceleration (deg/s², mm/s²), in the same representative/CIs/GT format as velocity and jerk.*
+
 ![Physical jerk h10](figures/physical_jerk_h10.png)
 
-*Fig. 9.2.13-1: Physical rot/XYZ jerk (deg/s³, mm/s³) at dt = 1/30 s for every representative — 95% episode-bootstrap CIs, dashed = GT (2,793 deg/s³ / 29,521 mm/s³).*
+*Fig. 9.2.13-3: Physical rot/XYZ jerk (deg/s³, mm/s³), completing the matched first-/second-/third-derivative representative suite.*
 
 ![Physical jerk ratio ladder](figures/physical_jerk_ratio.png)
 
-*Fig. 9.2.13-2: Pred/GT ratio ladder across velocity → acceleration → jerk (<1 over-smooths, >1 jitters) — where in the derivative stack each family's signature appears.*
+*Fig. 9.2.13-4: Pred/GT ratio ladder across velocity → acceleration → jerk (<1 over-smooths, >1 jitters) — where in the derivative stack each family's signature appears. Each grouped triplet is one fixed checkpoint, not a training trajectory.*
 
-![Physical jerk budget](figures/physical_jerk_budget.png)
+![Physical velocity every run](figures/physical_velocity_all.png)
 
-*Fig. 9.2.13-3: Physical jerk vs training steps — the two budget curves plus single-budget families, dashed = GT.*
+*Fig. 9.2.13-5: True velocity for EVERY run (log scale, 95% episode-bootstrap CIs, dashed = demonstrated), using the same ordering and visual grammar as acceleration and jerk.*
+
+![Physical acceleration every run](figures/physical_acceleration_all.png)
+
+*Fig. 9.2.13-6: True acceleration for EVERY run, matched to the velocity/jerk all-run format.*
 
 ![Physical jerk every run](figures/physical_jerk_all.png)
 
-*Fig. 9.2.13-4: True jerk for EVERY run of the sweep (log scale, 95% episode bootstrap CIs, dashed = GT) — the physical-unit counterpart of the §9.2.9 within-chunk second-difference figure. Rows grouped by family: the historical R18-VAE deepens below GT as budget grows, R50-V1 sits deepest under GT, the π0.5 port converges toward GT from above, SmolVLA amplifies at every budget, and under-trained ACT-flow anchors the top of the range.*
+*Fig. 9.2.13-7: True jerk for EVERY run — the physical-unit counterpart of the §9.2.9 within-chunk second-difference figure.*
+
+![Physical velocity budget](figures/physical_velocity_budget.png)
+
+*Fig. 9.2.13-8: Physical velocity vs training steps, with demonstrated references. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+
+![Physical acceleration budget](figures/physical_acceleration_budget.png)
+
+*Fig. 9.2.13-9: Physical acceleration vs training steps, in the same budget-curve format. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+
+![Physical jerk budget](figures/physical_jerk_budget.png)
+
+*Fig. 9.2.13-10: Physical jerk vs training steps, completing the matched derivative-order budget suite. Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs. Across Figs. 8–10, historical R18-VAE becomes smoother with budget, R50-VAE (ImageNet-V1) remains deepest below GT, the π0.5 port approaches GT from above, SmolVLA remains high-frequency, and under-trained ACT-flow bounds the rough failure mode.*
 
 Read-outs:
 
@@ -2528,7 +2564,7 @@ Read-outs:
    at 0.15–0.18× GT XYZ jerk — 2–3× further below GT than their rotation
    jerk (0.16–0.32×). A near-minimum on the legacy 2nd-diff column is now
    quantitatively confirmed to mean near-stationary translation curvature,
-   not faithful-but-calm motion: R50-V1's 0.15× is the deepest under-GT
+   not faithful-but-calm motion: R50-VAE (ImageNet-V1)'s 0.15× is the deepest under-GT
    row in the table.
 4. **Budget moves the two flow stacks in opposite directions.** The
    historical ACT *departs* from GT dynamics as it trains (rot jerk
@@ -2544,7 +2580,7 @@ Read-outs:
    endpoint family at 8.98 mm — is also the closest torch family to GT
    dynamics across all six physical metrics; no family achieves top
    endpoint while being far from GT motion, and none of the over-smoothed
-   ACT rows buys endpoint accuracy with its smoothness (R50-V1's endpoint
+   ACT rows buys endpoint accuracy with its smoothness (R50-VAE (ImageNet-V1)'s endpoint
    lead over hist ACT comes with the deepest under-GT jerk instead).
 6. **Caveats.** (a) The h10 window is 0.33 s — the third derivative has
    only 7 samples per 10-pose chunk (9 velocity / 8 acceleration / 7
@@ -2635,10 +2671,10 @@ checkpoint, scored at the newest intact one.
 
 Read-outs:
 
-1. **The §9.2.4/§9.2.6 horizon-10 gap is closed: ACT R50-V1 seed-1000 at
+1. **The §9.2.4/§9.2.6 horizon-10 gap is closed: ACT R50-VAE (ImageNet-V1) seed-1000 at
    100k scores 9.46 mm** — inside the §9.2.9 pack (9–11 mm), and 0.26 mm
    from the fresh 1M-run's 100k checkpoint (9.20 mm, §9.2.8) across two
-   independent trainings of the same recipe. The original screen's R50-V1
+   independent trainings of the same recipe. The original screen's R50-VAE (ImageNet-V1)
    promotion is confirmed at matched scoring rather than inferred.
 2. **Seed trios at matched 100k budget**: ACT-L1 9.59/9.85/9.88 (spread
    0.30 mm), ACT-diff 14.12/14.17/14.56 (0.44), DP-r18 9.05/9.23, and
@@ -2670,14 +2706,14 @@ Read-outs:
 
 ### 9.3 Answers and promotion decision after stage one
 
-**Q1:** the completed screen shows that the ResNet-50-V2 recipe is the strongest
+**Q1:** the completed screen shows that the ACT R50-VAE (ImageNet-V2) recipe is the strongest
 tested ACT improvement over the fresh 1459 control. ResNet-34-V1 is a smaller
 positive step; the 145M widened transformer is not worthwhile at the tested
 LR/budget. Because the R50 comparison also changed ImageNet initialization,
 “capacity alone improves ACT” remains a hypothesis rather than a completed
-attribution. R50-V1, R50-V2, and R18-V1 are promoted to the longer/multi-seed
-comparison before recommending replacement of the multi-million-step
-historical checkpoint.
+attribution. R50-VAE (ImageNet-V1), R50-VAE (ImageNet-V2), and R18-VAE
+(ImageNet-V1) are promoted to the longer/multi-seed comparison before
+recommending replacement of the multi-million-step historical checkpoint.
 
 **Q2:** no single explanation fits. Matched ACT-flow and same-architecture
 ACT-DP are both significantly worse than ACT-L1, so simply swapping velocity
@@ -2687,13 +2723,13 @@ on chunk translation, so flow/diffusion itself is not the fundamental problem.
 Denoiser architecture, conditioning, optimizer/sampler design, VLM fine-tuning,
 and trajectory smoothness are separate axes; the existing π0.5 result further
 indicates that the VLM path can work. ACT-L1, uniform flow 1e-5,
-architecture-matched ACT-DP, and standard DP are promoted with R18, R50-V1,
-and R50-V2 to determine whether these conclusions persist at the full 100k
+architecture-matched ACT-DP, and standard DP are promoted with R18, R50-VAE (ImageNet-V1),
+and R50-VAE (ImageNet-V2) to determine whether these conclusions persist at the full 100k
 budget (single training seed; variability quantified by per-episode bootstrap).
 
 Stage two therefore trains fresh 100k runs (not scheduler-incompatible resumes)
-for ACT R18 VAE, ACT R50 V2 VAE, ACT R18 L1, uniform ACT-flow 1e-5, and
-Diffusion R18; the newly identified R50-V1 and architecture-matched ACT-DP
+for ACT R18 VAE, ACT R50-VAE (ImageNet-V2), ACT R18 L1, uniform ACT-flow 1e-5, and
+Diffusion R18; the newly identified R50-VAE (ImageNet-V1) and architecture-matched ACT-DP
 controls are inserted as separate 30k/100k successors before evaluation. Fresh
 runs are required because Diffusion Policy's cosine scheduler was
 constructed for 30k steps and had already reached its floor; extending that
@@ -2711,15 +2747,15 @@ strengthened by the independently-trained π0.5 650K/700K flow-VLM reference
 A future seed-2000/3000 iteration would tighten the intervals but is unlikely to
 reverse the rank order given the size of the seed-1000 gaps and the consistency
 of the π0.5 reference — a prediction the §9.2.6 partial-budget salvage check
-subsequently confirmed directly: two recovered seeds each for ACT-L1, R50-VAE,
+subsequently confirmed directly: two recovered seeds each for ACT-L1, R50-VAE (ImageNet-V2),
 and matched flow replicated the rank order on every metric, with cross-seed
 spreads an order of magnitude smaller than the variant gaps.
 
 **Final recommendation (seed-1000 basis).** Endpoint-pose accuracy at matched
-100k budgets ranks: ACT-L1 ≈ ACT R50-V1 (best of the ACT/diffusion family,
-~22 mm endpoint; R50-V1's gain over R18 survives the strict V1-initialization
+100k budgets ranks: ACT-L1 ≈ ACT R50-VAE (ImageNet-V1) (best of the ACT/diffusion family,
+~22 mm endpoint; R50-VAE (ImageNet-V1)'s gain over R18 survives the strict V1-initialization
 control, so ResNet-50 capacity — not the torchvision V2 weights — is the cause)
-> ACT R50-V2 > standard temporal-U-Net Diffusion Policy > matched ACT-flow >
+> ACT R50-VAE (ImageNet-V2) > standard temporal-U-Net Diffusion Policy > matched ACT-flow >
 ACT-DP (worst). The matched ACT-flow and ACT-DP deficits are attributable to
 the ACT-transformer denoiser/conditioning recipe, **not** to flow/diffusion per
 se: standard DP is competitive with ACT, and a well-trained π0.5 flow-VLM
@@ -2729,7 +2765,7 @@ capable denoiser and sufficient training budget (π0.5 used 6.5–7× the ACT
 budget, so training budget is a first-order variable the matched 100k
 comparison does not control). Practical defaults: **ACT-L1** as the lightweight
 deterministic controller (lowest inference cost, smoothest ACT trajectory);
-**ACT R50-V1** when the extra ~25% latency is acceptable for a small pose
+**ACT R50-VAE (ImageNet-V1)** when the extra ~25% latency is acceptable for a small pose
 gain; and the **flow-VLM path (π0.5 / openpi)** when VLM inference cost is
 justified by its clear accuracy and smoothness lead — with two corrections from
 the horizon-matched re-scoring (§9.2.4): at equal 10-step scoring the π0.5 port,
@@ -2841,12 +2877,12 @@ and ResNet-18 Diffusion Policy 100k runs. Only one foreground child uses the
 host GPU at a time.
 
 A non-contending `supervise_capacity_control.sh` successor first waits for that
-training tmux session, then trains R50-V1 and architecture-matched ACT-DP at
+training tmux session, then trains R50-VAE (ImageNet-V1) and architecture-matched ACT-DP at
 30k and 100k for seed 1000 with the
 same bounded retry/single-process fallback. A refreshed
 `supervise_evaluations.sh` watchdog waits for this capacity-control session
-before touching the GPU. It evaluates completed 100k ACT R18/R50-V2/R50-V1/
-ACT-L1 checkpoints once, evaluates R50-V1 at 30k, and evaluates stochastic
+before touching the GPU. It evaluates completed 100k ACT R18/R50-VAE (ImageNet-V2)/R50-VAE (ImageNet-V1)/
+ACT-L1 checkpoints once, evaluates R50-VAE (ImageNet-V1) at 30k, and evaluates stochastic
 ACT-flow, ACT-DP, and Diffusion Policy checkpoints with seeds 1000/2000/3000.
 It applies the same three-seed
 protocol to both official 30k UMI candidates, and archives/retries interrupted
@@ -2881,7 +2917,7 @@ evaluation waits for confirmation training. The refreshed monitor also saw all
 five workload/dependency sessions on its first heartbeat. Its lifecycle list
 now includes the later extended-candidate session, so telemetry does not stop
 when the core confirmation chain exits while SmolVLA or LingBot is still
-training. R50-V1 and ACT-DP are
+training. R50-VAE (ImageNet-V1) and ACT-DP are
 therefore genuinely in the live queue before evaluation, not merely represented
 in launcher source.
 
@@ -2892,7 +2928,7 @@ variants at seeds 2000 and 3000 with the same 100k budget, preserving and
 retrying incomplete attempts. `supervise_confirmation_evaluations.sh` then
 applies one inference seed to deterministic ACT variants and three inference
 seeds to each generative variant. This yields three independent training seeds
-for the Q1 R18/R50-V1/R50-V2 comparison and for the Q2
+for the Q1 R18/R50-VAE (ImageNet-V1)/R50-VAE (ImageNet-V2) comparison and for the Q2
 ACT-L1/ACT-flow/ACT-DP/standard-DP
 comparison while keeping sampler variability nested inside training runs. A
 first attempt uses the established four-worker path; after any child failure,
@@ -2956,11 +2992,11 @@ changes wall-clock scheduling and must never be used to compare raw per-step
 speed between models.
 
 At 21:02 on 2026-08-12, the same measured-headroom rule was applied to the
-capacity-control queue: R50-V1 100k was using about 4.5 GiB CUDA and the card
+capacity-control queue: R50-VAE (ImageNet-V1) 100k was using about 4.5 GiB CUDA and the card
 had over 19 GiB free, so an independent R18-VAE seed-2000 confirmation was
 started rather than leaving the device mostly idle. After startup the two
 trainers together allocated about 7.6 GiB, reached 100% device utilization at
-about 363 W, and retained more than 16 GiB free. R50-V1 was at 13.4k/100k and
+about 363 W, and retained more than 16 GiB free. R50-VAE (ImageNet-V1) was at 13.4k/100k and
 R18 seed-2000 at 1.8k/100k at the latest check; both had finite losses and no
 CUDA, PyAV, or native-worker errors. R50 slowed from roughly 13 to 7 steps/s
 under contention, while R18 remained near 12--13 steps/s. This is an
@@ -2970,7 +3006,7 @@ from retraining this seed.
 
 At 22:23 on 2026-08-12, the measured-headroom rule was extended to front-run the
 seed-2000 half of the confirmation matrix while the confirmation supervisor
-remains gated hours behind capacity control and evaluation. With R50-V1 100k
+remains gated hours behind capacity control and evaluation. With R50-VAE (ImageNet-V1) 100k
 (the protected primary) at ~46k/100k using ~4.6 GiB, the existing R18-VAE
 seed-2000 companion at ~60k/100k using ~2.7 GiB, and ~14 GiB free, two
 additional companion queues were launched through a new `run_companion.sh`
@@ -2984,13 +3020,13 @@ confirmation supervisor's completion predicate will skip whatever finishes
 first. Combined allocation stabilized near 13.0/24.6 GiB at 100% utilization
 with ~11 GiB free; the four jobs sustained finite losses with no CUDA or
 native-worker errors. Under four-way contention the R18-class companions ran at
-~6--7 step/s (versus ~12--13 solo) and the protected R50-V1 primary slowed from
+~6--7 step/s (versus ~12--13 solo) and the protected R50-VAE (ImageNet-V1) primary slowed from
 ~7 to ~3.9 step/s. This is an acceptable total-throughput trade-off because the
 ~41 GPU-hour confirmation phase is the dominant cost and is now overlapping the
 ~8 GPU-hour seed-1000 finish; the contention also eases naturally once the
 R18-VAE seed-2000 companion completes (~60k/100k at launch). The R50
 Q1 companions (`act_r50_vae`, `act_r50_v1_vae`) were deliberately deferred until
-the R50-V1 primary frees the card, to avoid double-R50 contention on the
+the R50-VAE (ImageNet-V1) primary frees the card, to avoid double-R50 contention on the
 protected seed-1000 milestone. This front-running reorders wall-clock
 scheduling only; it changes no scientific configuration, and the
 ~35-hour confirmation phase now overlaps the seed-1000 completion phase rather
@@ -3311,7 +3347,7 @@ pretty-printed across lines, while the exact-step regular expression assumed
 the closing brace was on the same line. The false negative let the legacy
 wrapper archive a valid run and start a duplicate. Live supervision stopped
 that duplicate after roughly 90 updates and stopped a prematurely released
-R50-V1 successor before useful training. The canonical artifact was restored
+R50-VAE (ImageNet-V1) successor before useful training. The canonical artifact was restored
 and accepted only after independently confirming the 1.28 GB model, 1.28 GB
 optimizer, RNG/scheduler and processor state, exact step 30000, validation
 loss 0.018583, and `End of training`. The checker now resolves either padded or
@@ -3446,7 +3482,7 @@ into compact external CSV/JSON files without creating a second narrative doc.
 `run_official_umi_dp.sh` and `evaluate_official_umi_dp.sh` encode the two
 supplemental released-UMI recipe candidates. `supervise_remaining.sh` is the
 fault-tolerant single-GPU queue used for the remaining long runs;
-`supervise_capacity_control.sh` inserts the strict R50-V1 initialization and
+`supervise_capacity_control.sh` inserts the strict R50-VAE (ImageNet-V1) initialization and
 architecture-matched ACT-DP controls before evaluation; and
 `supervise_evaluations.sh` is its non-contending evaluation successor. Figures
 label the training budget explicitly; when both 30k and 100k results exist,
@@ -3477,7 +3513,7 @@ MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
 
 The unified horizon-10 sweep (§9.2.9) has its own drivers:
 `eval_unified_h10_sweep.sh` (host: historical ACT curve, seed-23k companions,
-R50-V1 curve, official openpi arms under the canonical query window) and
+R50-VAE (ImageNet-V1) curve, official openpi arms under the canonical query window) and
 `kiwi_eval_unified_h10.sh` (π0.5 port 650K/700K/1M, SmolVLA notations; run on
 kiwi after the 1M training exits) — the SmolVLA h10 rows were front-run on
 2026-08-18 by `eval_smolvla_unified_h10_host.sh` (checkpoints copied from
@@ -3521,7 +3557,9 @@ uv run python examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.p
 ```
 
 outputs `results_physical_jerk/physical_jerk_h10.{csv,md}` +
-`validation.txt` and `figures/physical_jerk_{h10,all,ratio,budget}.png`; the
+`validation.txt`, matched
+`figures/physical_{velocity,acceleration,jerk}_{h10,all,budget}.png` suites,
+and `figures/physical_jerk_ratio.png`; the
 same compile pass writes the 88 compact per-episode files that the
 repository-tracked repro bundle serves (below). The four JAX openpi rows
 are re-scored on the host by the openpi-side evaluator
@@ -3559,7 +3597,7 @@ artifact roots, and the exact re-run commands.
 The native-h30 full-chunk evaluation (§9.2.11) shares the mechanics with the
 horizon inverted (no `--eval_horizon` → full 30-step scoring over the same
 canonical window): its tree is the shared
-`reeval_v2metrics/eval_common_h32/` (historical §9.2.7 curve, §9.2.8 R50-V1
+`reeval_v2metrics/eval_common_h32/` (historical §9.2.7 curve, §9.2.8 R50-VAE (ImageNet-V1)
 curve, §9.2.6 companions) plus the π0.5-port h30 front-run
 `eval_pi05_curve_h30_host.sh` (staged kiwi checkpoints, run names
 `pi05_port_<STEP>_h30_v2`; 650K/700K/1M owned by the kiwi K2 pass), the

@@ -39,9 +39,9 @@ GT_ROT_JERK = 2793.0  # deg/s^3  (§9.2.13 GT reference)
 GROUPS = [
     ("act_r18_vae", "ACT R18-VAE (deterministic)", "#1f77b4"),
     ("act_r34_vae", "ACT R34-VAE (deterministic)", "#1f77b4"),
-    ("act_r50_vae", "ACT R50-VAE (deterministic)", "#1f77b4"),
+    ("act_r50_vae", "ACT R50-VAE (ImageNet-V2) (deterministic)", "#1f77b4"),
     ("act_r50_large", "ACT R50-large (deterministic)", "#1f77b4"),
-    ("act_r50_v1_vae", "ACT R50-V1 (deterministic)", "#1f77b4"),
+    ("act_r50_v1_vae", "ACT R50-VAE (ImageNet-V1) (deterministic)", "#1f77b4"),
     ("act_r18_l1", "ACT-L1 (deterministic)", "#2ca02c"),
     ("act_r18_flow", "ACT-flow (stochastic)", "#d62728"),
     ("act_r18_diffusion", "ACT-diffusion head (stochastic)", "#ff7f0e"),
@@ -63,11 +63,11 @@ def group_of(run: str) -> tuple[str, str]:
 
 
 def short(run: str) -> str:
-    # act_r50_v1_vae_seed1000_100000steps -> R50-V1 s1000 100k
+    # act_r50_v1_vae_seed1000_100000steps -> R50-VAE (ImageNet-V1) s1000 100k
     fam = {
         "act_r18_vae": "R18-VAE", "act_r34_vae": "R34-VAE",
-        "act_r50_vae": "R50-VAE", "act_r50_large": "R50L",
-        "act_r50_v1_vae": "R50-V1", "act_r18_l1": "L1",
+        "act_r50_vae": "R50-VAE (ImageNet-V2)", "act_r50_large": "R50L",
+        "act_r50_v1_vae": "R50-VAE (ImageNet-V1)", "act_r18_l1": "L1",
         "act_r18_flow_u_lr1e5": "flow-u 1e-5", "act_r18_flow_u_lr1e4": "flow-u 1e-4",
         "act_r18_flow_beta_lr1e4": "flow-β 1e-4", "act_r18_diffusion_lr1e5": "ACT-diff",
         "diffusion_r18": "DP-r18", "umi_official_dp": "UMI-DP",
@@ -93,7 +93,7 @@ def fig_scores(rows: dict[str, dict]) -> None:
     y = range(len(order))
     axes[0].barh(y, endpoint, color=colors)
     axes[0].set_xlabel("Endpoint XYZ error (mm, episode-balanced)")
-    axes[0].set_title("Recovered runs — endpoint (t+10, unified protocol)")
+    axes[0].set_title("Additional controlled runs — endpoint (t+10, unified protocol)")
     axes[0].axvline(9.0, color="gray", ls=":", lw=1)
     axes[0].axvline(11.0, color="gray", ls=":", lw=1)
     axes[0].text(11.05, 0.2, "§9.2.9 pack\n9–11 mm", fontsize=8, color="gray")
@@ -101,7 +101,7 @@ def fig_scores(rows: dict[str, dict]) -> None:
     axes[1].axvline(GT_ROT_JERK, color="k", ls="--", lw=1.2)
     axes[1].text(GT_ROT_JERK * 1.03, 1.0, "GT 2793", fontsize=9)
     axes[1].set_xlabel("Rotational jerk (deg/s³, dt = 1/30 s)")
-    axes[1].set_title("Recovered runs — true rotational jerk")
+    axes[1].set_title("Additional controlled runs — true rotational jerk")
     axes[1].set_xscale("log")
     for ax in axes:
         ax.set_yticks(list(y))
@@ -139,11 +139,11 @@ def fig_trios(salvage: dict[str, dict], ref: dict[str, dict]) -> None:
             ("act_r18_flow_u_lr1e5_seed1000_100000steps", salvage, ""),
             ("act_r18_flow_u_lr1e5_seed2000_100000steps", ref, "50k"),
             ("act_r18_flow_u_lr1e5_seed3000_100000steps", ref, "50k")]),
-        ("ACT R50-VAE", [
+        ("ACT R50-VAE\n(ImageNet-V2)", [
             ("act_r50_vae_seed1000_100000steps", salvage, ""),
             ("act_r50_vae_seed2000_100000steps", ref, "80k"),
             ("act_r50_vae_seed3000_100000steps", ref, "80k")]),
-        ("ACT R50-V1", [
+        ("ACT R50-VAE\n(ImageNet-V1)", [
             ("act_r50_v1_vae_seed1000_100000steps", salvage, ""),
             ("act_r50_v1_vae_seed2000_100000steps", salvage, "70k"),
             ("act_r50_v1_vae_seed3000_100000steps", salvage, "20k†")]),
@@ -172,7 +172,8 @@ def fig_trios(salvage: dict[str, dict], ref: dict[str, dict]) -> None:
     ax.set_xticks(list(xs))
     ax.set_xticklabels([t[0] for t in trios], fontsize=9)
     ax.set_ylabel("Endpoint XYZ error (mm, episode-balanced)")
-    ax.set_title("Training-seed trios of the recovered matrix (dots = seeds; triangles = partial budget, † = torn 30k ckpt, scored @20k)")
+    ax.set_title("Training-seed trios of the additional controlled matrix "
+                 "(dots = seeds; triangles = partial budget, † = torn 30k ckpt, scored @20k)")
     ax.grid(axis="y", alpha=0.3)
     handles = [plt.Line2D([], [], marker="o", ls="", color=c, label=f"seed {s}")
                for c, s in (("C0", "1000"), ("C1", "2000"), ("C2", "3000"))]
@@ -187,8 +188,8 @@ def fig_budget(rows: dict[str, dict]) -> None:
         ("act_r18_flow_u_lr1e5", "flow-u 1e-5"),
         ("act_r18_l1", "ACT-L1"),
         ("act_r18_vae", "R18-VAE"),
-        ("act_r50_v1_vae", "R50-V1"),
-        ("act_r50_vae", "R50-VAE"),
+        ("act_r50_v1_vae", "R50-VAE (ImageNet-V1)"),
+        ("act_r50_vae", "R50-VAE (ImageNet-V2)"),
         ("act_r18_diffusion_lr1e5", "ACT-diff"),
         ("diffusion_r18", "DP-r18"),
     ]

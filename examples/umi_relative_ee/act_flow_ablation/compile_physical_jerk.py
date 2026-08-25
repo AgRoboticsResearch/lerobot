@@ -18,6 +18,8 @@ Outputs (in --out_dir):
   physical_jerk_h10.csv          per-run episode-balanced metrics + 95% CI
   physical_jerk_h10.md           markdown table for the report
   validation.txt                 max |Δ| vs the archived tree (repro proof)
+The canonical (non-salvage) compile also writes repository-tracked snapshots
+``repro/physical_dynamics_h10.{csv,md}`` with the same contents.
 And per-run compact per-episode files under --per_episode_dir (repo-tracked
 repro evidence): <run>.json.gz with episode_balanced, CI, and per_episode.
 
@@ -122,6 +124,9 @@ def main() -> int:
                     default="/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/results_physical_jerk")
     ap.add_argument("--per_episode_dir",
                     default=os.path.join(os.path.dirname(__file__), "repro", "per_episode"))
+    ap.add_argument("--repo_summary_dir",
+                    default=os.path.join(os.path.dirname(__file__), "repro"),
+                    help="repository snapshot directory; written for the canonical compile")
     ap.add_argument("--no_openpi_carry", action="store_true",
                     help="skip carrying the 4 JAX openpi rows (use for the salvage "
                          "tree compile, which has its own row set)")
@@ -133,7 +138,8 @@ def main() -> int:
     rows = {}
     for path in sorted(glob.glob(os.path.join(args.jerk_root, "*", "seed1000", "*_open_loop_metrics.json"))):
         run = os.path.basename(os.path.dirname(os.path.dirname(path)))
-        report = json.load(open(path))
+        with open(path) as f:
+            report = json.load(f)
         fps = check_protocol(run, report)
         per_ep = episode_means(report)
         eps = sorted(per_ep)
@@ -152,14 +158,15 @@ def main() -> int:
         }
 
     # --- cross-check against the archived §9.2.9 tree -------------------------
-    deltas = {m: 0.0 for m in CROSSCHECK}
+    deltas = dict.fromkeys(CROSSCHECK, 0.0)
     n_checked = 0
     for run, entry in sorted(rows.items()):
         arch = sorted(glob.glob(os.path.join(args.unified_root, run, "seed1000", "*_open_loop_metrics.json")))
         if not arch:
             print(f"WARN: no archived counterpart for {run}", file=sys.stderr)
             continue
-        arch_report = json.load(open(arch[0]))
+        with open(arch[0]) as f:
+            arch_report = json.load(f)
         if "samples" in arch_report:
             arch_ep = episode_means(arch_report)
             eps = sorted(arch_ep)
@@ -179,7 +186,8 @@ def main() -> int:
         if not arch:
             print(f"WARN: openpi row {run} missing from archived tree", file=sys.stderr)
             continue
-        rep = json.load(open(arch[0]))
+        with open(arch[0]) as f:
+            rep = json.load(f)
         carried[run] = {
             "balanced": {m: rep["summary"]["episode_balanced"][m] for m in CROSSCHECK},
             "per_episode": rep["summary"].get("per_episode", {}),
@@ -191,43 +199,97 @@ def main() -> int:
     def fmt(v, scale=1.0, nd=3):
         return f"{v * scale:.{nd}f}"
 
-    md = ["| Run | step | XYZ end (mm) | rot 2nd-diff (deg) | rot vel (deg/s) | rot accel (deg/s²) | rot jerk (deg/s³) | xyz vel (mm/s) | xyz accel (mm/s²) | xyz jerk (mm/s³) | GT rot jerk (deg/s³) | GT xyz jerk (mm/s³) |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    csv = ["run,steps,xyz_end_mm,rot_2nd_diff_deg,rot_vel_deg_s,rot_accel_deg_s2,rot_jerk_deg_s3,rot_jerk_deg_s3_lo,rot_jerk_deg_s3_hi,xyz_vel_mm_s,xyz_accel_mm_s2,xyz_jerk_mm_s3,xyz_jerk_mm_s3_lo,xyz_jerk_mm_s3_hi,gt_rot_vel_deg_s,gt_rot_accel_deg_s2,gt_rot_jerk_deg_s3,gt_xyz_vel_mm_s,gt_xyz_accel_mm_s2,gt_xyz_jerk_mm_s3"]
+    md = [
+        "| Run | step | XYZ end (mm) | rot 2nd-diff (deg) | rot vel (deg/s) [95% CI] | rot accel (deg/s²) [95% CI] | rot jerk (deg/s³) [95% CI] | xyz vel (mm/s) [95% CI] | xyz accel (mm/s²) [95% CI] | xyz jerk (mm/s³) [95% CI] | GT rot vel | GT rot accel | GT rot jerk | GT xyz vel | GT xyz accel | GT xyz jerk |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    csv_columns = ["run", "steps", "xyz_end_mm", "rot_2nd_diff_deg"]
+    for metric in (
+        "rot_vel_deg_s",
+        "rot_accel_deg_s2",
+        "rot_jerk_deg_s3",
+        "xyz_vel_mm_s",
+        "xyz_accel_mm_s2",
+        "xyz_jerk_mm_s3",
+    ):
+        csv_columns.extend((metric, f"{metric}_lo", f"{metric}_hi"))
+    csv_columns.extend(
+        (
+            "gt_rot_vel_deg_s",
+            "gt_rot_accel_deg_s2",
+            "gt_rot_jerk_deg_s3",
+            "gt_xyz_vel_mm_s",
+            "gt_xyz_accel_mm_s2",
+            "gt_xyz_jerk_mm_s3",
+        )
+    )
+    csv = [",".join(csv_columns)]
+
+    def value_ci(balanced, ci, metric, scale=1.0, nd=1):
+        lo, hi = ci[metric]
+        return f"{fmt(balanced[metric], scale, nd)} [{fmt(lo, scale, nd)}, {fmt(hi, scale, nd)}]"
     for run in sorted(set(rows) | set(carried)):
         if run in rows:
             e = rows[run]
             b, c = e["balanced"], e["ci"]
-            rj_lo, rj_hi = c["rot_jerk_deg_s3"]
-            xj_lo, xj_hi = c["xyz_jerk_m_s3"]
             md.append(
                 f"| {run} | {e['steps']} | {fmt(b['xyz_end_m'], 1000)} | {fmt(b['rot_jerk_deg'])} | "
-                f"{fmt(b['rot_vel_deg_s'], 1, 2)} | {fmt(b['rot_accel_deg_s2'], 1, 1)} | "
-                f"{fmt(b['rot_jerk_deg_s3'], 1, 0)} [{fmt(rj_lo, 1, 0)}, {fmt(rj_hi, 1, 0)}] | "
-                f"{fmt(b['xyz_vel_m_s'], 1000, 1)} | {fmt(b['xyz_accel_m_s2'], 1000, 1)} | "
-                f"{fmt(b['xyz_jerk_m_s3'], 1000, 1)} [{fmt(xj_lo, 1000, 1)}, {fmt(xj_hi, 1000, 1)}] | "
-                f"{fmt(b['gt_rot_jerk_deg_s3'], 1, 0)} | {fmt(b['gt_xyz_jerk_m_s3'], 1000, 1)} |")
-            csv.append(
-                f"{run},{e['steps']},{b['xyz_end_m'] * 1000:.3f},{b['rot_jerk_deg']:.4f},"
-                f"{b['rot_vel_deg_s']:.3f},{b['rot_accel_deg_s2']:.2f},{b['rot_jerk_deg_s3']:.1f},{rj_lo:.1f},{rj_hi:.1f},"
-                f"{b['xyz_vel_m_s'] * 1000:.2f},{b['xyz_accel_m_s2'] * 1000:.2f},{b['xyz_jerk_m_s3'] * 1000:.2f},{xj_lo * 1000:.2f},{xj_hi * 1000:.2f},"
-                f"{b['gt_rot_vel_deg_s']:.3f},{b['gt_rot_accel_deg_s2']:.2f},{b['gt_rot_jerk_deg_s3']:.1f},"
-                f"{b['gt_xyz_vel_m_s'] * 1000:.2f},{b['gt_xyz_accel_m_s2'] * 1000:.2f},{b['gt_xyz_jerk_m_s3'] * 1000:.2f}")
+                f"{value_ci(b, c, 'rot_vel_deg_s', 1, 2)} | {value_ci(b, c, 'rot_accel_deg_s2', 1, 1)} | "
+                f"{value_ci(b, c, 'rot_jerk_deg_s3', 1, 0)} | {value_ci(b, c, 'xyz_vel_m_s', 1000, 1)} | "
+                f"{value_ci(b, c, 'xyz_accel_m_s2', 1000, 1)} | "
+                f"{value_ci(b, c, 'xyz_jerk_m_s3', 1000, 1)} | "
+                f"{fmt(b['gt_rot_vel_deg_s'], 1, 2)} | {fmt(b['gt_rot_accel_deg_s2'], 1, 1)} | "
+                f"{fmt(b['gt_rot_jerk_deg_s3'], 1, 0)} | {fmt(b['gt_xyz_vel_m_s'], 1000, 1)} | "
+                f"{fmt(b['gt_xyz_accel_m_s2'], 1000, 1)} | {fmt(b['gt_xyz_jerk_m_s3'], 1000, 1)} |"
+            )
+            values = [run, str(e["steps"]), f"{b['xyz_end_m'] * 1000:.3f}", f"{b['rot_jerk_deg']:.4f}"]
+            for metric, scale, nd in (
+                ("rot_vel_deg_s", 1, 3),
+                ("rot_accel_deg_s2", 1, 2),
+                ("rot_jerk_deg_s3", 1, 1),
+                ("xyz_vel_m_s", 1000, 2),
+                ("xyz_accel_m_s2", 1000, 2),
+                ("xyz_jerk_m_s3", 1000, 2),
+            ):
+                lo, hi = c[metric]
+                values.extend(f"{v * scale:.{nd}f}" for v in (b[metric], lo, hi))
+            values.extend(
+                (
+                    f"{b['gt_rot_vel_deg_s']:.3f}",
+                    f"{b['gt_rot_accel_deg_s2']:.2f}",
+                    f"{b['gt_rot_jerk_deg_s3']:.1f}",
+                    f"{b['gt_xyz_vel_m_s'] * 1000:.2f}",
+                    f"{b['gt_xyz_accel_m_s2'] * 1000:.2f}",
+                    f"{b['gt_xyz_jerk_m_s3'] * 1000:.2f}",
+                )
+            )
+            csv.append(",".join(values))
         else:
             e = carried[run]
             b = e["balanced"]
             md.append(f"| {run} | {e['steps']} | {fmt(b['xyz_end_m'], 1000)} | {fmt(b['rot_jerk_deg'])} | "
-                      f"— | — | host re-eval pending | — | — | host re-eval pending | — | — |")
-            csv.append(f"{run},{e['steps']},{b['xyz_end_m'] * 1000:.3f},{b['rot_jerk_deg']:.4f},"
-                      f"nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan")
+                      f"— | — | host re-eval pending | — | — | host re-eval pending | — | — | — | — | — | — |")
+            csv.append(",".join(
+                [run, str(e["steps"]), f"{b['xyz_end_m'] * 1000:.3f}", f"{b['rot_jerk_deg']:.4f}"]
+                + ["nan"] * (len(csv_columns) - 4)
+            ))
 
-    open(os.path.join(args.out_dir, "physical_jerk_h10.md"), "w").write("\n".join(md) + "\n")
-    open(os.path.join(args.out_dir, "physical_jerk_h10.csv"), "w").write("\n".join(csv) + "\n")
+    with open(os.path.join(args.out_dir, "physical_jerk_h10.md"), "w") as f:
+        f.write("\n".join(md) + "\n")
+    with open(os.path.join(args.out_dir, "physical_jerk_h10.csv"), "w") as f:
+        f.write("\n".join(csv) + "\n")
+    if not args.no_openpi_carry:
+        os.makedirs(args.repo_summary_dir, exist_ok=True)
+        with open(os.path.join(args.repo_summary_dir, "physical_dynamics_h10.md"), "w") as f:
+            f.write("\n".join(md) + "\n")
+        with open(os.path.join(args.repo_summary_dir, "physical_dynamics_h10.csv"), "w") as f:
+            f.write("\n".join(csv) + "\n")
 
     val = [f"cross-checked {n_checked} runs against the archived §9.2.9 tree (episode-balanced, seed 1000):"]
     val += [f"  max |Δ{m}| = {d:.3g}" for m, d in deltas.items()]
     val.append(f"re-eval rows: {len(rows)}, openpi rows carried (physical pending): {len(carried)}")
-    open(os.path.join(args.out_dir, "validation.txt"), "w").write("\n".join(val) + "\n")
+    with open(os.path.join(args.out_dir, "validation.txt"), "w") as f:
+        f.write("\n".join(val) + "\n")
     print("\n".join(val))
 
     # --- per-episode repro files ----------------------------------------------

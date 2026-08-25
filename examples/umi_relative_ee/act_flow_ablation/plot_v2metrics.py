@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 SEED23K_VARIANTS = ("act_r18_l1", "act_r50_vae", "act_r18_flow_u_lr1e5")
 SEED23K_LABELS = {
     "act_r18_l1": "ACT-L1",
-    "act_r50_vae": "ACT R50-VAE",
+    "act_r50_vae": "ACT R50-VAE (ImageNet-V2)",
     "act_r18_flow_u_lr1e5": "ACT-flow (1e-5)",
 }
 HIST_VARIANT = "act_umi_identity_rot6d_1459"
@@ -137,7 +137,7 @@ def plot_historical(rows: list[dict[str, str]], out_path: Path) -> None:
     l1 = [row for row in rows if row["variant"] == "act_r18_l1"]
     if r50:
         r50_acc = sum(f(row, "action_acc_at_0p1") for row in r50) / len(r50)
-        ax.axhline(r50_acc, ls="--", color="#ee854a", label=f"R50-VAE@80k acc@0.1 ({r50_acc:.3f})")
+        ax.axhline(r50_acc, ls="--", color="#ee854a", label=f"R50-VAE (ImageNet-V2)@80k acc@0.1 ({r50_acc:.3f})")
     if l1:
         l1_acc = sum(f(row, "action_acc_at_0p1") for row in l1) / len(l1)
         ax.axhline(l1_acc, ls="--", color="#6acc64", label=f"ACT-L1@100k acc@0.1 ({l1_acc:.3f})")
@@ -178,7 +178,7 @@ def plot_historical(rows: list[dict[str, str]], out_path: Path) -> None:
 
 
 def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
-    """§9.2.8: fresh R50-V1 1M curve vs historical R18 curve at horizon 30."""
+    """§9.2.8: fresh R50-VAE (ImageNet-V1) 1M curve vs historical R18 curve at horizon 30."""
     hist = sorted(
         (row for row in rows if row["variant"] == HIST_VARIANT),
         key=lambda row: int(row["evaluated_step"]),
@@ -196,7 +196,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax = axes[0]
     for series, color, label in (
         (hist, "#4878d0", "R18-VAE (historical, 100k–3M)"),
-        (r50, "#d65f5f", "R50-V1 (fresh, 100k–1M)"),
+        (r50, "#d65f5f", "R50-VAE (ImageNet-V1) (fresh, 100k–1M)"),
     ):
         steps = [int(row["evaluated_step"]) for row in series]
         ax.plot(steps, [f(row, "xyz_end_m") * 1e3 for row in series], "o-", ms=3, color=color, label=label)
@@ -223,7 +223,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.plot(
         [int(row["evaluated_step"]) for row in r50],
         [f(row, "action_acc_at_0p1") for row in r50],
-        "s-", ms=3, color="#d65f5f", label="R50-V1",
+        "s-", ms=3, color="#d65f5f", label="R50-VAE (ImageNet-V1)",
     )
     ax.set_xscale("log")
     ax.set_xlabel("training steps")
@@ -242,7 +242,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.plot(
         [int(row["evaluated_step"]) for row in r50],
         [f(row, "rot_jerk_deg") for row in r50],
-        "s-", ms=3, color="#d65f5f", label="R50-V1",
+        "s-", ms=3, color="#d65f5f", label="R50-VAE (ImageNet-V1)",
     )
     ax.axhline(f(hist[0], "gt_rot_jerk_deg"), color="gray", ls=":", label="ground truth")
     ax.set_xscale("log")
@@ -252,7 +252,7 @@ def plot_r50_vs_r18(rows: list[dict[str, str]], out_path: Path) -> None:
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
 
-    fig.suptitle("ACT R50-V1 (fresh 1M run) vs historical R18-VAE — same protocol, horizon 30", y=1.02)
+    fig.suptitle("ACT R50-VAE (ImageNet-V1) (fresh 1M run) vs historical R18-VAE — same protocol, horizon 30", y=1.02)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

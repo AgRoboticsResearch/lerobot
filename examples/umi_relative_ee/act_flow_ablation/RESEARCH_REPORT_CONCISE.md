@@ -54,6 +54,11 @@ The production ACT's best logged validation objective occurred near 2.48M steps,
 | π0.5 port | LeRobot/PyTorch port with split-rank LoRA |
 | official OpenPI π0.5 | JAX/OpenPI LoRA notation, horizon, and recipe controls |
 
+**Naming convention.** `ACT R50-VAE (ImageNet-V1)` and `ACT R50-VAE (ImageNet-V2)`
+are both VAE-based ACT policies. The parenthetical identifies
+only the torchvision backbone initialization; it is not the ACT architecture
+version. `ACT-L1` is the no-VAE deterministic control.
+
 The closest objective comparison is ACT-L1 versus ACT-flow: the visual encoder, ACT transformer, data, state/action representation, and optimizer LR are held fixed; the direct L1 head is replaced by time-conditioned velocity prediction and iterative sampling. ACT-DP changes the target/path and sampler while retaining that learned architecture.
 
 ### Evaluation protocol
@@ -93,7 +98,7 @@ The matched-flow LR sweep ruled out a simple tenfold-LR rescue.
 
 ![Validation learning curves](figures/validation_learning_curves.png)
 
-*Validation learning curves for the 30k controlled matrix.*
+*Fig. 1. Validation learning curves for the 30k controlled matrix.*
 
 ### Decoded 30k results
 
@@ -101,7 +106,7 @@ The matched-flow LR sweep ruled out a simple tenfold-LR rescue.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT R18 VAE | 18.30 | 27.50 | 3.249 | 5.516 | 7.13 | 267 |
 | ACT R34 VAE | 17.36 | 25.65 | 3.147 | 4.947 | 8.55 | 305 |
-| ACT R50 V2 VAE | 14.90 | 23.65 | 2.677 | 4.390 | 9.89 | 341 |
+| ACT R50-VAE (ImageNet-V2) | 14.90 | 23.65 | 2.677 | 4.390 | 9.89 | 341 |
 | ACT R50 large | 14.57 | 23.83 | 2.650 | 4.462 | 11.51 | 653 |
 | ACT R18 L1 | 17.91 | 28.18 | 3.143 | 5.117 | 6.70 | 200 |
 | ACT-flow uniform, 1e-5 | 18.75 | 30.86 | 3.767 | 6.290 | 29.90 | 203 |
@@ -113,24 +118,24 @@ The matched-flow LR sweep ruled out a simple tenfold-LR rescue.
 
 ![Decoded endpoint errors](figures/decoded_endpoint_errors.png)
 
-*Decoded endpoint errors at 30k on the corrected common query set.*
+*Fig. 2. Decoded endpoint errors at 30k on the corrected common query set.*
 
 ![Paired endpoint improvements](figures/paired_endpoint_improvements.png)
 
-*Paired episode-bootstrap improvements for the principal 30k comparisons.*
+*Fig. 3. Paired episode-bootstrap improvements for the principal 30k comparisons.*
 
 The R50 gain survived decoding, while the 145M widened transformer did not produce a meaningful endpoint gain over standard R50. Matched ACT-flow and ACT-DP were both worse than direct ACT-L1; conventional temporal-U-Net diffusion was competitive.
 
 ![Accuracy and latency trade-off](figures/accuracy_latency_tradeoff.png)
 
-*Accuracy–latency trade-off at 30k. Iterative ACT-DP is especially expensive.*
+*Fig. 4. Accuracy–latency trade-off at 30k. Iterative ACT-DP is especially expensive.*
 
 ### Fresh 100k deterministic checkpoints
 
 | Variant | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Gripper end | Median (ms) | Peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | ACT R18 VAE | 16.39 | 24.74 | 2.873 | 4.892 | 0.1603 | 8.63 | 267 |
-| ACT R50 V2 VAE | 14.28 | 24.44 | 2.793 | 4.875 | 0.1366 | 10.79 | 341 |
+| ACT R50-VAE (ImageNet-V2) | 14.28 | 24.44 | 2.793 | 4.875 | 0.1366 | 10.79 | 341 |
 | ACT R18 L1 | 14.34 | 23.69 | 2.769 | 4.850 | 0.1451 | 9.03 | 200 |
 
 At the same 100k budget, matched ACT-flow ended at 25.995 mm, ACT-DP at 28.08 mm, and conventional Diffusion R18 at 24.598 mm. The result does **not** show that flow or diffusion is intrinsically inferior; it shows that the tested time-conditioned ACT-transformer route is a poor generative denoiser recipe.
@@ -141,28 +146,28 @@ At the same 100k budget, matched ACT-flow ended at 25.995 mm, ACT-DP at 28.08 mm
 
 | Variant, 30k | XYZ chunk (mm) | XYZ end (mm) | Rot chunk (deg) | Rot end (deg) | Rot 2nd-diff (deg) | Median (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| ACT R50 V1 VAE | 14.39 | 23.19 | 2.603 | 4.359 | 0.122 | 10.77 |
-| ACT R50 V2 VAE | 14.90 | 23.65 | 2.677 | 4.390 | 0.098 | 9.89 |
+| ACT R50-VAE (ImageNet-V1) | 14.39 | 23.19 | 2.603 | 4.359 | 0.122 | 10.77 |
+| ACT R50-VAE (ImageNet-V2) | 14.90 | 23.65 | 2.677 | 4.390 | 0.098 | 9.89 |
 | ACT R18 VAE | 18.30 | 27.50 | 3.249 | 5.516 | 0.126 | 7.13 |
 
-R50-V1 outperformed R18-V1, so the capacity conclusion does not depend on ImageNet-V2 initialization.
+R50-VAE (ImageNet-V1) outperformed R18-VAE (ImageNet-V1), so the capacity conclusion does not depend on ImageNet-V2 initialization.
 
 ### Historical R18 and fresh R50 curves at h30
 
 | Model | 100k XYZ end | Best/mature XYZ end | Acc@0.1 trend | Interpretation |
 | --- | ---: | ---: | ---: | --- |
 | historical ACT R18 | 25.57 mm | about 23.2–23.4 mm after 1M | 0.681 → about 0.715 | slow improvement, early plateau |
-| fresh ACT R50-V1 | 23.24 mm | 21.22 mm at 600k; 21.32 at 1M | 0.735 → 0.742 | faster and consistently better |
+| fresh ACT R50-VAE (ImageNet-V1) | 23.24 mm | 21.22 mm at 600k; 21.32 at 1M | 0.735 → 0.742 | faster and consistently better |
 
 ![Historical ACT 30-point budget curve](figures/historical_act_budget_curve.png)
 
-*Historical production ACT from 100k to 3M steps under the native h30 protocol.*
+*Fig. 5. Historical production ACT from 100k to 3M steps under the native h30 protocol.*
 
-![R50-V1 versus R18 budget curves](figures/r50_vs_r18_budget_curve.png)
+![R50-VAE (ImageNet-V1) versus R18 budget curves](figures/r50_vs_r18_budget_curve.png)
 
-*Fresh R50-V1 versus historical R18. R50 reaches the R18 plateau much earlier and remains better at h30.*
+*Fig. 6. Fresh R50-VAE (ImageNet-V1) versus historical R18. R50 reaches the R18 plateau much earlier and remains better at h30.*
 
-Budget affects horizons differently. For R50-V1, h30 endpoint improves from 23.24 to 21.32 mm between 100k and 1M, while h10 endpoint worsens from 9.20 to 10.61 mm in the independent long-schedule run. Checkpoint selection must therefore match the executed horizon.
+Budget affects horizons differently. For R50-VAE (ImageNet-V1), h30 endpoint improves from 23.24 to 21.32 mm between 100k and 1M, while h10 endpoint worsens from 9.20 to 10.61 mm in the independent long-schedule run. Checkpoint selection must therefore match the executed horizon.
 
 ## 4. Canonical horizon-10 results
 
@@ -174,9 +179,9 @@ The canonical h10 sweep re-scored all surviving models on the same query window 
 | ACT-flow s3000 | 50k | 400k | 15.63 [14.78, 16.50] | 2.30 | 0.843 | 0.763 |
 | ACT-L1 s2000 | 100k | 800k | 9.59 [9.03, 10.16] | 1.87 | 0.920 | 0.036 |
 | ACT-L1 s3000 | 100k | 800k | 9.88 [9.32, 10.48] | 1.94 | 0.916 | 0.044 |
-| ACT R50-V1, long run | 100k | 800k | 9.20 [8.67, 9.72] | 1.78 | 0.921 | 0.043 |
-| ACT R50-V2 s2000 | 80k | 640k | 9.15 [8.62, 9.68] | 1.84 | 0.926 | 0.049 |
-| ACT R50-V2 s3000 | 80k | 640k | 9.18 [8.66, 9.72] | 1.74 | 0.929 | 0.059 |
+| ACT R50-VAE (ImageNet-V1), long run | 100k | 800k | 9.20 [8.67, 9.72] | 1.78 | 0.921 | 0.043 |
+| ACT R50-VAE (ImageNet-V2) s2000 | 80k | 640k | 9.15 [8.62, 9.68] | 1.84 | 0.926 | 0.049 |
+| ACT R50-VAE (ImageNet-V2) s3000 | 80k | 640k | 9.18 [8.66, 9.72] | 1.74 | 0.929 | 0.059 |
 | historical ACT R18 | 3M | 24M | 11.99 [11.22, 12.76] | 1.90 | 0.901 | 0.063 |
 | official OpenPI rot6d, h10-trained | 20k | 320k | 10.66 [10.05, 11.28] | 1.80 | 0.919 | 0.157 |
 | official OpenPI rotvec, h10-trained | 20k | 320k | 11.00 [10.31, 11.68] | 1.65 | 0.920 | 0.200 |
@@ -193,21 +198,61 @@ The canonical h10 sweep re-scored all surviving models on the same query window 
 
 ![Unified horizon-10 metrics](figures/unified_h10_metrics.png)
 
-*Representative h10 models on the six co-primary metrics.*
+*Fig. 7. Representative h10 models on the six co-primary metrics.*
 
 ![Unified horizon-10 budget curves](figures/unified_h10_budget.png)
 
-*All h10 budget points. The π0.5 port reaches an approximately 8.8–9.1 mm plateau around 200k; SmolVLA reaches the same region much later.*
+*Fig. 8. All h10 budget points. The π0.5 port reaches an approximately 8.8–9.1 mm plateau around 200k; SmolVLA reaches the same region much later.*
 
 ![Unified horizon-10 second differences](figures/unified_h10_jitter.png)
 
-*Within-chunk second differences for every h10 run; dashed lines show the demonstrated trajectory.*
+*Fig. 9. Within-chunk second differences for every h10 run; dashed lines show the demonstrated trajectory.*
 
 ![Unified horizon-10 second differences by budget](figures/unified_h10_jitter_budget.png)
 
-*Motion-texture proxy versus training steps.*
+*Fig. 10. Motion-texture proxy versus training steps.*
 
 At h10, Acc@0.5 is saturated around 0.99 and provides little discrimination. Acc@0.1, endpoint error, and dynamics are more useful. Marginal intervals put many mature policies in a broad 9–10 mm region, but official OpenPI's canonical 10.7–11.0 mm rows sit at or above its upper edge; this is more precise than the older “all stacks tie at 9–10 mm” summary.
+
+### Additional controlled-family and training-seed evidence
+
+The additional 28-run matrix extends the canonical h10 comparison to architectures and seeds absent from the main sweep. These checkpoints became available after recovery of the failed artifact disk; that is provenance only, not an analytical grouping.
+
+| Run | Step | XYZ end (mm) | Rot jerk / GT | XYZ jerk / GT |
+| --- | ---: | ---: | ---: | ---: |
+| ACT-L1 s1000 | 30k / 100k | 13.19 / 9.85 | 0.62 / 0.51 | 0.76 / 0.50 |
+| ACT R18-VAE s1000 | 30k / 100k | 14.15 / 12.65 | 0.95 / 0.49 | 1.03 / 0.71 |
+| ACT R18-VAE s2000 / s3000 | 100k | 9.56 / 9.99 | 0.45 / 0.55 | 0.53 / 0.54 |
+| ACT R34-VAE s1000 | 30k | 13.45 | 1.04 | 1.07 |
+| ACT R50-large s1000 | 30k | 10.16 | 0.90 | 0.83 |
+| ACT R50-VAE (ImageNet-V2) s1000 | 30k / 100k | 10.70 / 9.39 | 0.89 / 0.54 | 1.09 / 0.67 |
+| ACT R50-VAE (ImageNet-V1) s1000 | 30k / 100k | 10.17 / 9.46 | 0.93 / 0.42 | 1.01 / 0.48 |
+| ACT R50-VAE (ImageNet-V1) s2000 | 70k | 9.71 | 0.64 | 0.65 |
+| ACT R50-VAE (ImageNet-V1) s3000 | 20k | 11.95 | 0.80 | 0.96 |
+| ACT-flow 1e-5 s1000 | 30k / 100k | 13.36 / 10.86 | 5.21 / 3.15 | 7.69 / 4.46 |
+| ACT-flow 1e-4 s1000 | 30k | 26.16 | 6.20 | 9.06 |
+| ACT-flow beta s1000 | 30k | 22.71 | 6.00 | 9.57 |
+| ACT-DP s1000 | 30k / 100k | 17.90 / 14.17 | 5.11 / 2.29 | 6.36 / 2.49 |
+| ACT-DP s2000 / s3000 | 100k | 14.56 / 14.12 | 3.95 / 2.37 | 5.27 / 2.30 |
+| Diffusion R18 s1000 | 30k / 100k | 10.33 / 9.23 | 2.98 / 1.45 | 3.29 / 1.25 |
+| Diffusion R18 s2000 | 100k | 9.05 | 1.47 | 1.36 |
+| Diffusion R18 s3000 | 30k | 14.11 | 5.99 | 7.48 |
+| released UMI U-Net | 30k | 10.01 | 2.03 | 1.98 |
+| released UMI transformer | 30k | 9.58 | 1.40 | 1.19 |
+
+![Additional controlled-family scores](figures/salvage_h10_scores.png)
+
+*Fig. 11. All 28 additional runs: endpoint error and physical rotational jerk.*
+
+![Matched training-seed groups](figures/salvage_seed_trios.png)
+
+*Fig. 12. Matched or near-matched training-seed groups. Triangles identify partial budgets.*
+
+![30k-to-100k changes](figures/salvage_budget.png)
+
+*Fig. 13. Budget changes in endpoint error and physical jerk.*
+
+Broad family order is repeatable, but training-seed uncertainty is not negligible. At 100k, ACT-L1 spans only about 0.3 mm and ACT-DP about 0.4 mm, whereas R18-VAE spans about 3.1 mm. Per-episode bootstrap intervals do not capture this training variability.
 
 ## 5. Canonical full-chunk results
 
@@ -217,9 +262,9 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 | --- | ---: | ---: | ---: | ---: | ---: |
 | ACT-flow s2000/s3000 | 50k | 31.41–31.97 | 5.45–5.70 | 0.634–0.654 | 0.772–0.818 |
 | ACT-L1 s2000/s3000 | 100k | 23.73–24.33 | 4.83–4.87 | 0.719 | 0.052–0.055 |
-| ACT R50-V1 | 100k | 23.24 [21.46, 25.09] | 4.58 | 0.735 | 0.057 |
-| ACT R50-V1 | 600k | 21.22 [19.59, 22.91] | 4.16 | 0.743 | 0.028 |
-| ACT R50-V1 | 1M | 21.32 [19.74, 22.94] | 4.28 | 0.742 | 0.032 |
+| ACT R50-VAE (ImageNet-V1) | 100k | 23.24 [21.46, 25.09] | 4.58 | 0.735 | 0.057 |
+| ACT R50-VAE (ImageNet-V1) | 600k | 21.22 [19.59, 22.91] | 4.16 | 0.743 | 0.028 |
+| ACT R50-VAE (ImageNet-V1) | 1M | 21.32 [19.74, 22.94] | 4.28 | 0.742 | 0.032 |
 | historical ACT R18 | 100k | 25.57 [23.64, 27.56] | 5.02 | 0.681 | 0.059 |
 | historical ACT R18 | 3M | 23.31 [21.45, 25.20] | 4.50 | 0.715 | 0.054 |
 | official OpenPI h30-trained | 20k | 23.20 [21.56, 24.91] | 4.68 | 0.725 | 0.178 |
@@ -234,19 +279,19 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 
 ![Unified native-h30 metrics](figures/unified_h30_metrics.png)
 
-*Representative native-h30 models on the six co-primary metrics.*
+*Fig. 14. Representative native-h30 models on the six co-primary metrics.*
 
 ![Unified native-h30 budget curves](figures/unified_h30_budget.png)
 
-*All native-h30 budget points for historical R18, fresh R50, π0.5 port, and both SmolVLA padding modes.*
+*Fig. 15. All native-h30 budget points for historical R18, fresh R50, π0.5 port, and both SmolVLA padding modes.*
 
 ![Unified native-h30 second differences](figures/unified_h30_jitter.png)
 
-*Within-chunk second differences for every h30 run.*
+*Fig. 16. Within-chunk second differences for every h30 run.*
 
 ![Unified native-h30 second differences by budget](figures/unified_h30_jitter_budget.png)
 
-*Motion-texture proxy versus training steps at h30.*
+*Fig. 17. Motion-texture proxy versus training steps at h30.*
 
 The main h30 conclusions are stable:
 
@@ -255,6 +300,20 @@ The main h30 conclusions are stable:
 - Official OpenPI reaches approximately ACT-L1@100k quality after only 20k steps, demonstrating strong early learning, but not a ninefold advantage over mature R50 or the port at every operating point.
 - SmolVLA improves with budget but retains a far-horizon deficit.
 - ACT-flow is weak on both error and dynamics at both horizons.
+
+### Matched training-seed checks at h30
+
+The available seed-2000/3000 companion runs reproduce the broad family ordering at their matched partial budgets:
+
+| Family | Seed/budget | XYZ end h30 (mm) | Acc@0.1 |
+| --- | --- | ---: | ---: |
+| ACT-L1 | s2000 / s3000, 100k | 24.33 / 23.73 | 0.719 / 0.719 |
+| ACT R50-VAE (ImageNet-V2) | s2000 / s3000, 80k | 22.21 / 22.10 | 0.736 / 0.744 |
+| ACT-flow | s2000 / s3000, 50k | 31.42 / 31.97 | 0.634 / 0.654 |
+
+![Seed-2000/3000 companion results](figures/seed23k_v2metrics.png)
+
+*Fig. 18. Partial-budget companion runs on the v2 metrics.*
 
 ## 6. Flow-VLM, notation, and recipe controls
 
@@ -290,11 +349,11 @@ These pre-canonical numbers remain the direct within-experiment notation results
 
 ![Rotation notation across stacks](figures/notation_cross_stack.png)
 
-*Rotation notation has little endpoint effect. Small second-difference effects are stack-dependent.*
+*Fig. 19. Rotation notation has little endpoint effect. Small second-difference effects are stack-dependent.*
 
 ![Historical OpenPI budget context](figures/openpi_budget_context.png)
 
-*Historical horizon-matched budget context. Its “all tied / 9×” caption is retained as an experimental artifact, but the final interpretation is superseded by the canonical h10 and h30 tables above.*
+*Fig. 20. Historical horizon-matched budget context. Its “all tied / 9×” caption is retained as an experimental artifact, but the final interpretation is superseded by the canonical h10 and h30 tables above.*
 
 ### Horizon and stack/recipe control
 
@@ -321,99 +380,91 @@ The same OpenPI weights move from 10.89 mm at t+10 to 23.83 mm at t+30, directly
 
 Endpoint intervals overlap at every budget and both horizons. Masking gives a small late smoothness advantage but no meaningful endpoint advantage. The task therefore does not reproduce the large padding sensitivity observed in the separate strawberry experiment.
 
-## 7. Training-seed and recovered-matrix evidence
+## 7. Physical motion dynamics
 
-The initial multi-seed chain was interrupted by artifact-disk failures. The surviving partial-budget seed-2000/3000 runs first reproduced the broad family ordering:
-
-| Family | Seed/budget | XYZ end h30 (mm) | Acc@0.1 |
-| --- | --- | ---: | ---: |
-| ACT-L1 | s2000 / s3000, 100k | 24.33 / 23.73 | 0.719 / 0.719 |
-| ACT R50-VAE | s2000 / s3000, 80k | 22.21 / 22.10 | 0.736 / 0.744 |
-| ACT-flow | s2000 / s3000, 50k | 31.42 / 31.97 | 0.634 / 0.654 |
-
-![Seed-2000/3000 companion results](figures/seed23k_v2metrics.png)
-
-*Partial-budget companion runs on the v2 metrics.*
-
-The disk was later recovered, allowing 28 unique seed-1000 and companion runs to be rescored under the canonical h10 protocol with physical dynamics. The complete recovered summary is retained below because it contains models absent from the main survivor sweep.
-
-| Run | Step | XYZ end (mm) | Rot jerk / GT | XYZ jerk / GT |
-| --- | ---: | ---: | ---: | ---: |
-| ACT-L1 s1000 | 30k / 100k | 13.19 / 9.85 | 0.62 / 0.51 | 0.76 / 0.50 |
-| ACT R18-VAE s1000 | 30k / 100k | 14.15 / 12.65 | 0.95 / 0.49 | 1.03 / 0.71 |
-| ACT R18-VAE s2000 / s3000 | 100k | 9.56 / 9.99 | 0.45 / 0.55 | 0.53 / 0.54 |
-| ACT R34-VAE s1000 | 30k | 13.45 | 1.04 | 1.07 |
-| ACT R50-large s1000 | 30k | 10.16 | 0.90 | 0.83 |
-| ACT R50-V2 s1000 | 30k / 100k | 10.70 / 9.39 | 0.89 / 0.54 | 1.09 / 0.67 |
-| ACT R50-V1 s1000 | 30k / 100k | 10.17 / 9.46 | 0.93 / 0.42 | 1.01 / 0.48 |
-| ACT R50-V1 s2000 | 70k | 9.71 | 0.64 | 0.65 |
-| ACT R50-V1 s3000 | 20k, newest intact | 11.95 | 0.80 | 0.96 |
-| ACT-flow 1e-5 s1000 | 30k / 100k | 13.36 / 10.86 | 5.21 / 3.15 | 7.69 / 4.46 |
-| ACT-flow 1e-4 s1000 | 30k | 26.16 | 6.20 | 9.06 |
-| ACT-flow beta s1000 | 30k | 22.71 | 6.00 | 9.57 |
-| ACT-DP s1000 | 30k / 100k | 17.90 / 14.17 | 5.11 / 2.29 | 6.36 / 2.49 |
-| ACT-DP s2000 / s3000 | 100k | 14.56 / 14.12 | 3.95 / 2.37 | 5.27 / 2.30 |
-| Diffusion R18 s1000 | 30k / 100k | 10.33 / 9.23 | 2.98 / 1.45 | 3.29 / 1.25 |
-| Diffusion R18 s2000 | 100k | 9.05 | 1.47 | 1.36 |
-| Diffusion R18 s3000 | 30k | 14.11 | 5.99 | 7.48 |
-| released UMI U-Net | 30k | 10.01 | 2.03 | 1.98 |
-| released UMI transformer | 30k | 9.58 | 1.40 | 1.19 |
-
-![Recovered matrix scores](figures/salvage_h10_scores.png)
-
-*All 28 recovered runs: endpoint and physical rotational jerk.*
-
-![Recovered training-seed groups](figures/salvage_seed_trios.png)
-
-*Matched or near-matched training-seed groups. Triangles identify partial budgets.*
-
-![Recovered 30k-to-100k changes](figures/salvage_budget.png)
-
-*Budget changes in endpoint and physical jerk.*
-
-Broad family order is repeatable, but training-seed uncertainty is not negligible. At 100k, ACT-L1 spans only about 0.3 mm and ACT-DP about 0.4 mm, whereas R18-VAE spans about 3.1 mm. Per-episode bootstrap intervals do not capture this training variability.
-
-## 8. Physical motion dynamics
-
-**Jerk definition.** For a chunk of poses (x_t, R_t), t = 0…9, at dt = 1/30 s: translational jerk is j_t = (x_{t+3} − 3x_{t+2} + 3x_{t+1} − x_t)/dt³ (third finite difference of position; 7 samples per chunk), reported as mean ‖j_t‖ in mm/s³. Rotational jerk runs on the scalar angular speed ω_t = θ(R_tᵀ R_{t+1})/dt (geodesic inter-step angle over dt): α_t = (ω_{t+1} − ω_t)/dt, then j_t = (α_{t+1} − α_t)/dt, reported as mean |j_t| in deg/s³. Velocity and acceleration are the first and second differences under the same scheme. Values are per-chunk means → per-episode means → episode-balanced means with 95% bootstrap CIs; ground truth is scored identically on the demonstrated chunk.
+**Dynamics definition.** For a chunk of poses (x_t, R_t), t = 0…9, at dt = 1/30 s: translational jerk is j_t = (x_{t+3} − 3x_{t+2} + 3x_{t+1} − x_t)/dt³ (third finite difference of position; 7 samples per chunk), reported as mean ‖j_t‖ in mm/s³. Rotational jerk runs on the scalar angular speed ω_t = θ(R_tᵀ R_{t+1})/dt (geodesic inter-step angle over dt): α_t = (ω_{t+1} − ω_t)/dt, then j_t = (α_{t+1} − α_t)/dt, reported as mean |j_t| in deg/s³. Velocity and acceleration are the first and second differences under the same scheme. Values are per-chunk means → per-episode means → episode-balanced means with 95% bootstrap CIs; ground truth is scored identically on the demonstrated chunk.
 
 The physical sweep uses first, second, and third differences at 30 fps. Ground truth over the canonical h10 window is:
 
 - rotation: 8.25 deg/s velocity, 65.9 deg/s² acceleration, 2,793 deg/s³ jerk;
 - translation: 73.5 mm/s velocity, 628 mm/s² acceleration, 29,521 mm/s³ jerk.
 
-Representative results:
+Representative data are now shown in the same format at every derivative
+order (episode-balanced mean [95% bootstrap CI]); all 92 rows are available
+in `repro/physical_dynamics_h10.{csv,md}`:
 
-| Model | Step | Rot jerk (deg/s³) | ×GT | XYZ jerk (mm/s³) | ×GT |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| historical ACT R18 | 3M | 903 [846, 962] | 0.32 | 5,261 [5,065, 5,458] | 0.18 |
-| ACT R50-V1 | 800k | 459 [437, 483] | 0.16 | 4,445 [4,269, 4,624] | 0.15 |
-| ACT-L1 s2000 | 100k | 1,272 [1,191, 1,360] | 0.46 | 15,732 [14,963, 16,546] | 0.53 |
-| ACT R50-VAE s2000 | 80k | 1,553 [1,452, 1,661] | 0.56 | 16,982 [16,241, 17,745] | 0.58 |
-| ACT-flow s2000 | 50k | 11,043 [10,600, 11,494] | 3.95 | 148,903 [145,143, 152,738] | 5.04 |
-| π0.5 port, OpenPI recipe | 20k | 1,889 [1,804, 1,979] | 0.68 | 21,827 [21,283, 22,373] | 0.74 |
-| π0.5 port | 700k | 1,335 [1,282, 1,386] | 0.48 | 14,423 [14,010, 14,840] | 0.49 |
-| π0.5 port | 1M | 1,389 [1,328, 1,450] | 0.50 | 14,703 [14,266, 15,158] | 0.50 |
-| SmolVLA rot6d | 100k | 9,192 [8,773, 9,620] | 3.29 | 114,806 [111,413, 118,168] | 3.89 |
-| SmolVLA axis-angle | 100k | 8,285 [7,937, 8,639] | 2.97 | 114,502 [111,147, 117,847] | 3.88 |
-| SmolVLA rot6d | 1M | 7,821 [7,435, 8,231] | 2.80 | 86,311 [83,458, 89,198] | 2.92 |
-| SmolVLA masked | 1M | 7,059 [6,768, 7,356] | 2.53 | 82,466 [80,083, 84,927] | 2.79 |
+| Model | Step | Rot velocity (deg/s) | XYZ velocity (mm/s) |
+| --- | ---: | ---: | ---: |
+| demonstrated | — | 8.25 | 73.5 |
+| historical ACT R18 | 3M | 6.26 [6.00, 6.52] | 57.4 [55.3, 59.5] |
+| ACT R50-VAE (ImageNet-V1) | 800k | 5.32 [5.01, 5.65] | 58.9 [56.3, 61.6] |
+| ACT-L1 s2000 | 100k | 4.65 [4.38, 4.93] | 63.2 [60.2, 66.2] |
+| ACT-flow s2000 | 50k | 14.59 [14.26, 14.94] | 83.6 [81.1, 86.3] |
+| π0.5 port | 1M | 5.66 [5.38, 5.95] | 61.8 [59.0, 64.6] |
+| SmolVLA rot6d | 100k | 11.83 [11.56, 12.11] | 78.1 [75.6, 80.7] |
+| SmolVLA rot6d | 1M | 10.21 [9.90, 10.56] | 70.3 [67.9, 72.8] |
+
+| Model | Step | Rot acceleration (deg/s²) | XYZ acceleration (mm/s²) |
+| --- | ---: | ---: | ---: |
+| demonstrated | — | 65.9 | 628 |
+| historical ACT R18 | 3M | 34.0 [32.2, 35.9] | 251 [243, 258] |
+| ACT R50-VAE (ImageNet-V1) | 800k | 19.1 [18.1, 20.1] | 194 [187, 202] |
+| ACT-L1 s2000 | 100k | 25.0 [23.6, 26.5] | 313 [300, 327] |
+| ACT-flow s2000 | 50k | 212 [205, 220] | 2,747 [2,686, 2,811] |
+| π0.5 port | 1M | 35.1 [33.6, 36.6] | 340 [332, 349] |
+| SmolVLA rot6d | 100k | 178 [171, 185] | 2,163 [2,106, 2,221] |
+| SmolVLA rot6d | 1M | 149 [143, 156] | 1,622 [1,573, 1,671] |
+
+| Model | Step | Rot jerk (deg/s³) | XYZ jerk (mm/s³) |
+| --- | ---: | ---: | ---: |
+| demonstrated | — | 2,793 | 29,521 |
+| historical ACT R18 | 3M | 903 [846, 962] | 5,261 [5,065, 5,458] |
+| ACT R50-VAE (ImageNet-V1) | 800k | 459 [437, 483] | 4,445 [4,269, 4,624] |
+| ACT-L1 s2000 | 100k | 1,272 [1,191, 1,360] | 15,732 [14,963, 16,546] |
+| ACT-flow s2000 | 50k | 11,043 [10,600, 11,494] | 148,903 [145,143, 152,738] |
+| π0.5 port | 1M | 1,389 [1,328, 1,450] | 14,703 [14,266, 15,158] |
+| SmolVLA rot6d | 100k | 9,192 [8,773, 9,620] | 114,806 [111,413, 118,168] |
+| SmolVLA rot6d | 1M | 7,821 [7,435, 8,231] | 86,311 [83,458, 89,198] |
+
+![Physical velocity at h10](figures/physical_velocity_h10.png)
+
+*Fig. 21. Physical rotational and translational velocity for representative models.*
+
+![Physical acceleration at h10](figures/physical_acceleration_h10.png)
+
+*Fig. 22. Physical rotational and translational acceleration in the same format.*
 
 ![Physical jerk at h10](figures/physical_jerk_h10.png)
 
-*Physical rotational and translational jerk for representative models.*
+*Fig. 23. Physical rotational and translational jerk, completing the matched derivative suite.*
+
+![Physical velocity every run](figures/physical_velocity_all.png)
+
+*Fig. 24. Velocity for every run (log scale, 95% bootstrap CIs, dashed = demonstrated).*
+
+![Physical acceleration every run](figures/physical_acceleration_all.png)
+
+*Fig. 25. Acceleration for every run in the same ordering and format.*
 
 ![Physical jerk every run](figures/physical_jerk_all.png)
 
-*True jerk for every run of the sweep (log scale, 95% bootstrap CIs, dashed = demonstrated) — the physical-unit counterpart of the within-chunk second-difference figures.*
+*Fig. 26. Jerk for every run, completing the all-run derivative suite.*
 
 ![Physical dynamics ratio ladder](figures/physical_jerk_ratio.png)
 
-*Predicted-to-demonstrated ratio across velocity, acceleration, and jerk.*
+*Fig. 27. Predicted-to-demonstrated ratio across velocity, acceleration, and jerk. Each grouped triplet is a fixed checkpoint, not a training trajectory.*
+
+![Physical velocity by training budget](figures/physical_velocity_budget.png)
+
+*Fig. 28. Physical velocity versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
+
+![Physical acceleration by training budget](figures/physical_acceleration_budget.png)
+
+*Fig. 29. Physical acceleration versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 ![Physical jerk by training budget](figures/physical_jerk_budget.png)
 
-*Physical jerk versus training steps.*
+*Fig. 30. Physical jerk versus training steps. Lines connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs.*
 
 The second-difference findings survive in true physical jerk:
 
@@ -424,16 +475,16 @@ The second-difference findings survive in true physical jerk:
 
 This is a trajectory-similarity result, not proof that matching demonstration jerk maximizes closed-loop success. Contact phases may require different dynamics from free-space motion.
 
-## 9. What the evidence answers
+## 8. What the evidence answers
 
 ### Q1: Does capacity improve ACT?
 
-**Yes, for the ResNet backbone.** R50-V1 improves over R18-V1, so the result is not explained by ImageNet-V2 weights. It reaches the strong h10 group near 100k and lowers mature h30 endpoint error by roughly 2 mm. The wider/deeper 145M ACT transformer was not worthwhile at the tested LR and budget.
+**Yes, for the ResNet backbone.** R50-VAE (ImageNet-V1) improves over R18-VAE (ImageNet-V1), so the result is not explained by ImageNet-V2 weights. It reaches the strong h10 group near 100k and lowers mature h30 endpoint error by roughly 2 mm. The wider/deeper 145M ACT transformer was not worthwhile at the tested LR and budget.
 
 Practical choice:
 
 - use **ACT-L1** when low latency, low memory, and simplicity dominate;
-- use **ACT R50-V1** when the roughly 25% inference-cost increase is acceptable and full-chunk accuracy matters;
+- use **ACT R50-VAE (ImageNet-V1)** when the roughly 25% inference-cost increase is acceptable and full-chunk accuracy matters;
 - select the checkpoint on the horizon that will actually be executed.
 
 ### Q2: Is flow matching the cause of weak flow-policy behavior?
@@ -445,32 +496,32 @@ Practical choice:
 | Need | Candidate | Reason |
 | --- | --- | --- |
 | simple, fast deterministic control | ACT-L1 | lowest inference cost; competitive h10/h30 endpoint |
-| best ACT full-chunk result | ACT R50-V1, roughly 600k | approximately 21.2 mm h30; strong h10 early checkpoint |
+| best ACT full-chunk result | ACT R50-VAE (ImageNet-V1), roughly 600k | approximately 21.2 mm h30; strong h10 early checkpoint |
 | best mature flow-VLM endpoint | π0.5 port, roughly 350k–700k | approximately 8.8–9.0 mm h10 and 21.7–21.9 mm h30 |
 | compute-efficient early VLM fine-tuning | official OpenPI h30 recipe | reaches approximately 23.2 mm h30 at 20k steps |
 | smaller VLA / h10-only emphasis | SmolVLA | reaches approximately 9.1 mm h10, but remains weak at h30 and high-jerk |
 
 These are candidates for robot testing, not a final deployment ranking.
 
-## 10. Limitations and required next experiment
+## 9. Limitations and required next experiment
 
 1. **Open-loop evaluation only.** The study does not measure compounding error, recovery, contact, grasp/lift success, safety failures, or action-queue effects.
 2. **One demonstrated future per query.** A generative policy can produce a valid alternative and still be penalized. Expected-of-K, best-of-K, energy-score, and diversity metrics would better characterize multimodal policies.
-3. **Incomplete training-seed balance.** Recovered seeds support broad family differences, but not every adjacent comparison has three matched-budget trainings.
+3. **Incomplete training-seed balance.** Available seeds support broad family differences, but not every adjacent comparison has three matched-budget trainings.
 4. **Repeated use of one validation set.** Model selection, checkpoint selection, and new metrics were all developed on the same 100 episodes. Final claims need an untouched test set, ideally across sessions, operators, scenes, and occlusion regimes.
 5. **Confidence intervals are descriptive.** Most cross-family claims use marginal episode-bootstrap intervals. Formal paired differences or equivalence tests should be used for “better” or “equivalent” claims.
 6. **Acc@ε is adapted, not native.** Its q01–q99 scale comes from decoded pose coordinates, not the exact normalized action representation optimized by each policy.
 7. **Cross-stack controls retain stack-native differences.** State construction, normalization coverage, layout, and numerics remain confounded.
 
-The decisive follow-up is a blinded, block-randomized closed-loop evaluation of ACT-L1, ACT R50-V1, the π0.5 port, official OpenPI, and SmolVLA. It should report overall and substage success, recovery, safety events, execution latency, and confidence intervals over randomized initial poses and occlusions. A minimum trial count should be selected by a power calculation rather than convenience.
+The decisive follow-up is a blinded, block-randomized closed-loop evaluation of ACT-L1, ACT R50-VAE (ImageNet-V1), the π0.5 port, official OpenPI, and SmolVLA. It should report overall and substage success, recovery, safety events, execution latency, and confidence intervals over randomized initial poses and occlusions. A minimum trial count should be selected by a power calculation rather than convenience.
 
-## 11. Reproducibility and result coverage
+## 10. Reproducibility and result coverage
 
-All **23 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
+All **30 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
 
 The repository-tracked [`repro/`](repro/) directory contains:
 
-- per-episode compressed JSON for 88 physical-dynamics runs and 28 recovered runs;
+- per-episode compressed JSON for 88 main-sweep physical-dynamics runs and 28 additional controlled-matrix runs;
 - the immutable 500-query frame list and its hash;
 - per-run training configurations;
 - dataset and checkpoint SHA-256 manifests;

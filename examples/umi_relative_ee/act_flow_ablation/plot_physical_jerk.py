@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Figures for the §9.2.13 physical-jerk re-evaluation.
+"""Figures for the §9.2.13 physical-dynamics re-evaluation.
 
 Reads the compiler's physical_jerk_h10.csv (produced by
 compile_physical_jerk.py from the kiwi re-eval tree; legacy metrics
 cross-validated there against the archived §9.2.9 numbers) and renders:
 
-  figures/physical_jerk_h10.png       — representative bars of true rot
-    jerk (deg/s³) and XYZ jerk (mm/s³) at dt = 1/30 s, 95% episode
-    bootstrap CIs, GT reference lines.
-  figures/physical_jerk_all.png       — true jerk for EVERY run of the
-    sweep (log-scale horizontal bars, family-grouped, bootstrap CIs,
-    dashed GT) — the physical-unit counterpart of §9.2.9's within-chunk
-    second-difference figure (unified_h10_jitter.png).
+  figures/physical_{velocity,acceleration,jerk}_h10.png — representative
+    rotational and XYZ bars at dt = 1/30 s, 95% episode bootstrap CIs,
+    GT reference lines.
+  figures/physical_{velocity,acceleration,jerk}_all.png — each derivative
+    for EVERY run of the sweep (log-scale horizontal bars, family-grouped,
+    bootstrap CIs, dashed GT).
   figures/physical_jerk_ratio.png      — pred/GT ratio ladder across
     velocity → acceleration → jerk (rot and XYZ): where in the derivative
     stack each family's smoothing/jitter signature appears.
-  figures/physical_jerk_budget.png     — physical jerk vs training steps
-    for the two budget curves plus single-budget stars, GT reference.
+  figures/physical_{velocity,acceleration,jerk}_budget.png — each physical
+    derivative vs training steps for budget curves plus single-budget stars.
 
 The four JAX openpi rows are physical-pending (host re-eval after the h30
 training frees the GPU) and are skipped here. Run via:
@@ -57,11 +56,11 @@ COLORS = {
 # Same representatives as the §9.2.9 figures (torch families only here).
 REPRESENTATIVES = [
     ("act_umi_identity_rot6d_1459_3000000steps", "ACT R18-VAE 3M (hist)", "hist"),
-    ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-V1 800k", "r50v1"),
+    ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
-    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE 80k s2000", "r50vae"),
-    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE 80k s3000", "r50vae"),
+    ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
+    ("act_r50_vae_seed3000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s3000", "r50vae"),
     ("act_r18_flow_u_lr1e5_seed2000_100000steps", "ACT-flow 50k s2000", "flow"),
     ("act_r18_flow_u_lr1e5_seed3000_100000steps", "ACT-flow 50k s3000", "flow"),
     ("pi05_port_openpi_recipe_seed1000_020000steps", "π0.5 port o-recipe 20k", "port"),
@@ -75,9 +74,9 @@ REPRESENTATIVES = [
 
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-    ("act_r50_v1_vae_", "r50v1", "R50-V1"),
+    ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
-    ("act_r50_vae_", "r50vae", "R50-VAE"),
+    ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
     ("act_r18_flow_u_lr1e5_", "flow", "ACT-flow"),
     ("pi05_port_openpi_recipe_", "port", "π0.5 port o-recipe"),
     ("pi05_lora_sroi_", "openpi", "openpi (pending)"),
@@ -97,6 +96,21 @@ def family_of(run: str) -> tuple[str, str] | None:
 
 
 FAMILY_ORDER = [fam for _, fam, _ in FAMILY_PREFIXES]
+
+DYNAMICS = {
+    "velocity": (
+        ("rot_vel_deg_s", "gt_rot_vel_deg_s", "Rotational velocity (deg/s)"),
+        ("xyz_vel_mm_s", "gt_xyz_vel_mm_s", "XYZ velocity (mm/s)"),
+    ),
+    "acceleration": (
+        ("rot_accel_deg_s2", "gt_rot_accel_deg_s2", "Rotational acceleration (deg/s²)"),
+        ("xyz_accel_mm_s2", "gt_xyz_accel_mm_s2", "XYZ acceleration (mm/s²)"),
+    ),
+    "jerk": (
+        ("rot_jerk_deg_s3", "gt_rot_jerk_deg_s3", "Rotational jerk (deg/s³)"),
+        ("xyz_jerk_mm_s3", "gt_xyz_jerk_mm_s3", "XYZ jerk (mm/s³)"),
+    ),
+}
 
 
 def _seed_of(run: str) -> str:
@@ -127,14 +141,10 @@ def have(rows: dict[str, dict], run: str) -> bool:
     return run in rows and not math.isnan(float(rows[run]["rot_jerk_deg_s3"]))
 
 
-def fig_jerk_bars(rows: dict[str, dict]) -> None:
+def fig_derivative_bars(rows: dict[str, dict], derivative: str) -> None:
     reps = [(r, lab, fam) for r, lab, fam in REPRESENTATIVES if have(rows, r)]
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    panels = [
-        ("rot", "rot_jerk_deg_s3", "gt_rot_jerk_deg_s3", "Rotational jerk (deg/s³)"),
-        ("xyz", "xyz_jerk_mm_s3", "gt_xyz_jerk_mm_s3", "XYZ jerk (mm/s³)"),
-    ]
-    for ax, (_, m, gm, title) in zip(axes, panels):
+    for ax, (m, gm, title) in zip(axes, DYNAMICS[derivative], strict=True):
         xs = range(len(reps))
         vals = [float(rows[r][m]) for r, _, _ in reps]
         los = [float(rows[r][m]) - float(rows[r][f"{m}_lo"]) for r, _, _ in reps]
@@ -148,8 +158,9 @@ def fig_jerk_bars(rows: dict[str, dict]) -> None:
         ax.grid(axis="y", alpha=0.3)
         ax.legend(fontsize=9)
     fig.tight_layout()
-    out = os.path.join(FIG_DIR, "physical_jerk_h10.png")
+    out = os.path.join(FIG_DIR, f"physical_{derivative}_h10.png")
     fig.savefig(out, dpi=200)
+    plt.close(fig)
     print(out)
 
 
@@ -165,10 +176,10 @@ def fig_ratio_ladder(rows: dict[str, dict]) -> None:
          ["vel", "accel", "jerk"], "XYZ: pred/GT ratio"),
     ]
     mm = {}  # CSV stores gt xyz columns already in mm
-    for ax, (ms, gms, ticks, title) in zip(axes, ladders):
+    for ax, (ms, gms, ticks, title) in zip(axes, ladders, strict=True):
         w = 0.26
         for i, (run, _, fam) in enumerate(reps):
-            for j, (m, gm) in enumerate(zip(ms, gms)):
+            for j, (m, gm) in enumerate(zip(ms, gms, strict=True)):
                 ratio = float(rows[run][m]) / (float(rows[run][gm]) * mm.get(gm, 1.0))
                 ax.bar(i + (j - 1) * w, ratio, width=w, color=COLORS[fam], alpha=1.0 - 0.25 * j)
         ax.axhline(1.0, color="k", ls="--", lw=1.2)
@@ -180,51 +191,74 @@ def fig_ratio_ladder(rows: dict[str, dict]) -> None:
     fig.tight_layout()
     out = os.path.join(FIG_DIR, "physical_jerk_ratio.png")
     fig.savefig(out, dpi=200)
+    plt.close(fig)
     print(out)
 
 
-def fig_budget(rows: dict[str, dict]) -> None:
+def fig_derivative_budget(rows: dict[str, dict], derivative: str) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.2))
-    panels = [
-        ("rot_jerk_deg_s3", "Rotational jerk (deg/s³)"),
-        ("xyz_jerk_mm_s3", "XYZ jerk (mm/s³)"),
-    ]
     curves = [
-        ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-        ("act_r50_v1_vae_", "r50v1", "R50-V1"),
+        (lambda run: run.startswith("act_umi_identity_rot6d_1459_"), "hist", "R18-VAE hist", "o"),
+        (lambda run: run.startswith("act_r50_v1_vae_seed1000_"), "r50v1", "R50-VAE (ImageNet-V1)", "s"),
+        (lambda run: run.startswith("pi05_port_seed1000_"), "port", "π0.5 port", "^"),
+        (lambda run: re.fullmatch(r"smolvla_rot6d_seed1000_\d{7}steps", run) is not None,
+         "smol1m", "SmolVLA full-width", "D"),
+        (lambda run: re.fullmatch(r"smolvla_masked_seed1000_\d{7}steps", run) is not None,
+         "smolmask", "SmolVLA masked", "v"),
     ]
     singles = [
         ("act_r18_l1_", "actl1", "ACT-L1"),
-        ("act_r50_vae_", "r50vae", "R50-VAE"),
+        ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
         ("act_r18_flow_u_lr1e5_", "flow", "ACT-flow"),
-        ("pi05_port_", "port", "π0.5 port"),
-        ("smolvla_", "smol", "SmolVLA"),
+        ("pi05_port_openpi_recipe_", "port", "π0.5 port o-recipe"),
+        ("smolvla_rot6d_seed1000_100000steps", "smol", "SmolVLA rot6d short"),
+        ("smolvla_axis_angle_", "smol", "SmolVLA axis-angle short"),
     ]
-    for ax, (m, title) in zip(axes, panels):
+    for ax, (m, _, title) in zip(axes, DYNAMICS[derivative], strict=True):
         gt = float(next(iter(rows.values()))[f"gt_{m}"])
-        for prefix, fam, label in curves:
+        for select, fam, label, marker in curves:
             pts = sorted((int(r["steps"]), float(r[m])) for run, r in rows.items()
-                         if run.startswith(prefix) and "seed" not in run)
+                         if select(run))
             if pts:
-                ax.plot([p[0] for p in pts], [p[1] for p in pts], "-o", ms=3, color=COLORS[fam], label=label)
+                xs = [p[0] for p in pts]
+                ax.plot(xs, [p[1] for p in pts], marker=marker, ms=3, lw=1.5,
+                        color=COLORS[fam], label=label)
+                selected = sorted((int(r["steps"]), r) for run, r in rows.items() if select(run))
+                ax.fill_between(
+                    xs,
+                    [float(r[f"{m}_lo"]) for _, r in selected],
+                    [float(r[f"{m}_hi"]) for _, r in selected],
+                    color=COLORS[fam], alpha=0.10, lw=0,
+                )
         for prefix, fam, label in singles:
-            pts = [(int(r["steps"]), float(r[m])) for run, r in rows.items() if run.startswith(prefix)]
+            pts = [(int(r["steps"]), float(r[m]), float(r[f"{m}_lo"]), float(r[f"{m}_hi"]))
+                   for run, r in rows.items() if run.startswith(prefix)]
             if pts:
-                ax.scatter([p[0] for p in pts], [p[1] for p in pts], marker="*", s=60,
-                           color=COLORS[fam], label=label, zorder=5)
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                ax.errorbar(
+                    xs, ys,
+                    yerr=[[y - lo for _, y, lo, _ in pts], [hi - y for _, y, _, hi in pts]],
+                    fmt="*", ms=8, capsize=2, lw=0.8, color=COLORS[fam],
+                    label=label, zorder=5,
+                )
         ax.axhline(gt, color="k", ls="--", lw=1.2, label=f"GT ({gt:,.0f})")
+        ax.set_xscale("log")
         ax.set_xlabel("training steps")
         ax.set_title(f"{title} vs training budget")
         ax.grid(alpha=0.3)
-        ax.legend(fontsize=8)
-    fig.tight_layout()
-    out = os.path.join(FIG_DIR, "physical_jerk_budget.png")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=6, fontsize=8,
+               bbox_to_anchor=(0.5, 0.01))
+    fig.tight_layout(rect=(0, 0.16, 1, 1))
+    out = os.path.join(FIG_DIR, f"physical_{derivative}_budget.png")
     fig.savefig(out, dpi=200)
+    plt.close(fig)
     print(out)
 
 
-def fig_jerk_all(rows: dict[str, dict]) -> None:
-    """True jerk for EVERY run of the sweep, log-x bars (jitter-figure style).
+def fig_derivative_all(rows: dict[str, dict], derivative: str) -> None:
+    """One physical derivative for EVERY run of the sweep, in a shared format.
 
     Mirrors §9.2.9's within-chunk second-difference figure
     (unified_h10_jitter.png): one row per run, grouped by family (budget
@@ -242,47 +276,45 @@ def fig_jerk_all(rows: dict[str, dict]) -> None:
         return
     entries.sort(key=lambda e: (e[0], e[1], e[2]))
 
-    ref = next(iter(rows.values()))
-    gt_rot = float(ref["gt_rot_jerk_deg_s3"])
-    gt_xyz = float(ref["gt_xyz_jerk_mm_s3"])
-
     fig, axes = plt.subplots(1, 2, figsize=(15, 0.22 * len(entries) + 2.4), sharey=True)
     fig.suptitle(
-        "Physical-unit jerk — every run of the §9.2.13 sweep "
+        f"Physical-unit {derivative} — every run of the §9.2.13 sweep "
         "(dt = 1/30 s; log scale; 95% episode bootstrap CI; dashed = ground truth)",
         fontsize=12,
     )
     labels = [all_runs_label(run, r) for _, _, run, r, _ in entries]
-    for ax, (m, title, gt) in zip(
-        axes,
-        (
-            ("rot_jerk_deg_s3", "Rotational jerk (deg/s³)", gt_rot),
-            ("xyz_jerk_mm_s3", "XYZ jerk (mm/s³)", gt_xyz),
-        ),
-    ):
+    for ax, (m, gm, title) in zip(axes, DYNAMICS[derivative], strict=True):
+        gt = float(next(iter(rows.values()))[gm])
         means, lows, highs, colors = [], [], [], []
-        for _, _, run, r, fam in entries:
+        for _, _, _run, r, fam in entries:
             v = float(r[m])
             means.append(v)
             lows.append(v - float(r[f"{m}_lo"]))
             highs.append(float(r[f"{m}_hi"]) - v)
             colors.append(COLORS[fam])
         y = range(len(labels))
-        ax.barh(y, means, xerr=[lows, highs], color=colors, alpha=0.85,
-                error_kw=dict(lw=1, capsize=2, ecolor="#333333"))
+        ax.barh(
+            y,
+            means,
+            xerr=[lows, highs],
+            color=colors,
+            alpha=0.85,
+            error_kw={"lw": 1, "capsize": 2, "ecolor": "#333333"},
+        )
         ax.set_xscale("log")
-        ax.set_xlim(min(means) * 0.45, max(m + h for m, h in zip(means, highs)) * 1.6)
+        ax.set_xlim(min(means) * 0.45, max(m + h for m, h in zip(means, highs, strict=True)) * 1.6)
         ax.axvline(gt, color="#000000", ls="--", lw=1.3)
         ax.text(gt * 1.06, -0.6, f"GT {gt:,.0f}", fontsize=8, color="#000000")
         ax.set_title(title, fontsize=10)
         ax.grid(axis="x", alpha=0.3, which="both")
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-    axes[0].set_yticks(list(range(len(labels))), labels=[f"{l}  " for l in labels], fontsize=7)
+    axes[0].set_yticks(list(range(len(labels))), labels=[f"{label}  " for label in labels], fontsize=7)
     axes[0].invert_yaxis()
     fig.tight_layout(rect=(0, 0, 1, 0.965))
-    out = os.path.join(FIG_DIR, "physical_jerk_all.png")
+    out = os.path.join(FIG_DIR, f"physical_{derivative}_all.png")
     fig.savefig(out, dpi=200)
+    plt.close(fig)
     print(f"wrote {out} ({len(entries)} runs)")
 
 
@@ -290,10 +322,11 @@ def main() -> int:
     os.makedirs(FIG_DIR, exist_ok=True)
     rows = load_rows()
     print(f"{len(rows)} runs with physical metrics")
-    fig_jerk_bars(rows)
-    fig_jerk_all(rows)
+    for derivative in DYNAMICS:
+        fig_derivative_bars(rows, derivative)
+        fig_derivative_all(rows, derivative)
+        fig_derivative_budget(rows, derivative)
     fig_ratio_ladder(rows)
-    fig_budget(rows)
     return 0
 
 
