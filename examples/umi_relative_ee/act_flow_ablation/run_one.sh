@@ -117,6 +117,16 @@ case "$VARIANT" in
       --policy.consecutive_frames=2
     )
     ;;
+  act_r50_v1_vae_noproprio)
+    # Q4 proprioception ablation: single frame, no UMI-derived 20D two-pose
+    # state input (image-only policy). See RESEARCH_REPORT.md Q4.
+    POLICY+=(
+      --policy.use_vae=true
+      --policy.vision_backbone=resnet50
+      --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
+      --policy.use_proprioception=false
+    )
+    ;;
   act_r50_large)
     POLICY+=(
       --policy.use_vae=true

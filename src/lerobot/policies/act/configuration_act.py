@@ -100,6 +100,12 @@ class ACTConfig(PreTrainedConfig):
     # instead of per-dim MIN_MAX scaling, matching canonical UMI. A/B test for
     # rotation jumpiness. See examples/umi_relative_ee/rotation_normalization.md.
     umi_rot6d_identity_norm: bool = False
+    # Whether the policy receives the UMI-derived proprioceptive observation
+    # state (the 20D two-pose window). True (default) keeps the historical
+    # behavior. False trains an image-only policy: no state feature is declared,
+    # no state is derived from the action pair, and the transformer conditions
+    # on image tokens only (actions still use the relative-EE anchor).
+    use_proprioception: bool = True
 
     # Deprecated fields retained so existing processor-based ACT checkpoints
     # can be decoded without rewriting train_config.json.

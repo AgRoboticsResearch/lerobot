@@ -203,11 +203,16 @@ def make_dataset(
                 ]
             ),
         }
-        dataset.meta.info.features[OBS_STATE] = {
-            "dtype": "float32",
-            "shape": [20],
-            "names": [f"umi_relative_state_{index}" for index in range(20)],
-        }
+        if getattr(trainable_config, "use_proprioception", True):
+            dataset.meta.info.features[OBS_STATE] = {
+                "dtype": "float32",
+                "shape": [20],
+                "names": [f"umi_relative_state_{index}" for index in range(20)],
+            }
+        else:
+            # Image-only policies (e.g. ACT `use_proprioception=False`): drop the
+            # synthetic state feature so no state lands in the policy inputs.
+            dataset.meta.info.features.pop(OBS_STATE, None)
         logging.info(
             "Prepared %s UMI relative-EE dataset for %s: raw action 7D -> model action %s, "
             "derived state 20D",

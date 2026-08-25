@@ -63,19 +63,25 @@ def make_act_pre_post_processors(
     cache_key = make_umi_cache_key()
     relative_step = UmiRelativeActionsStep(cache_key=cache_key)
 
+    # With `use_proprioception=False` the policy is image-only: the state is
+    # neither derived from the action pair nor made relative, and no state
+    # feature is declared — but actions still use the relative-EE anchor (and
+    # the postprocessor still converts predictions back to absolute poses).
+    umi_state_steps = (
+        [
+            *([UmiDeriveStateFromActionStep()] if config.use_proprioception else []),
+            relative_step,
+            *([UmiRelativeStateStep()] if config.use_proprioception else []),
+        ]
+        if config.use_umi_relative_ee
+        else []
+    )
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
-        *(
-            [
-                UmiDeriveStateFromActionStep(),
-                relative_step,
-                UmiRelativeStateStep(),
-            ]
-            if config.use_umi_relative_ee
-            else []
-        ),
+        *umi_state_steps,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,

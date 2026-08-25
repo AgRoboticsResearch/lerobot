@@ -132,3 +132,65 @@ def test_checkpoint_roundtrip_preserves_widened_conv1(tmp_path):
     )
     reloaded.eval()
     assert torch.allclose(reloaded.predict_action_chunk(dict(batch)), expected)
+
+
+# --- Q4: image-only ACT (`use_proprioception=False`) -------------------------
+
+
+def make_image_only_config(**overrides) -> ACTConfig:
+    config = make_config(use_umi_relative_ee=True, **overrides)
+    config.input_features = {
+        CAMERA: PolicyFeature(type=FeatureType.VISUAL, shape=(3, H, W)),
+    }
+    return config
+
+
+def make_image_only_batch(batch_size: int = 2) -> dict[str, torch.Tensor]:
+    return {
+        CAMERA: torch.randn(batch_size, 3, H, W),
+        ACTION: torch.randn(batch_size, 4, 10),
+        "action_is_pad": torch.zeros(batch_size, 4, dtype=torch.bool),
+    }
+
+
+def test_image_only_forward_and_predict():
+    policy = ACTPolicy(make_image_only_config(use_proprioception=False))
+    assert policy.config.robot_state_feature is None
+    policy.train()
+    loss, _ = policy.forward(make_image_only_batch())
+    assert torch.isfinite(loss)
+    policy.eval()
+    chunk = policy.predict_action_chunk(make_image_only_batch(batch_size=1))
+    assert tuple(chunk.shape) == (1, 4, 10)
+
+
+def test_image_only_processor_skips_state_steps():
+    from lerobot.policies.act.processor_act import make_act_pre_post_processors
+    from lerobot.processor.umi_relative_ee_processor import (
+        UmiDeriveStateFromActionStep,
+        UmiRelativeActionsStep,
+        UmiRelativeStateStep,
+    )
+
+    pre, _ = make_act_pre_post_processors(make_image_only_config(use_proprioception=False))
+    step_types = [type(step) for step in pre.steps]
+    assert UmiDeriveStateFromActionStep not in step_types
+    assert UmiRelativeStateStep not in step_types
+    assert UmiRelativeActionsStep in step_types  # action anchor stays
+
+    pre_with_state, _ = make_act_pre_post_processors(make_config(use_umi_relative_ee=True))
+    assert UmiDeriveStateFromActionStep in [type(s) for s in pre_with_state.steps]
+
+
+def test_image_only_checkpoint_roundtrip(tmp_path):
+    torch.manual_seed(11)
+    policy = ACTPolicy(make_image_only_config(use_proprioception=False))
+    policy.eval()
+    batch = make_image_only_batch(batch_size=1)
+    expected = policy.predict_action_chunk(dict(batch))
+    policy.save_pretrained(tmp_path)
+    reloaded = ACTPolicy.from_pretrained(tmp_path)
+    assert reloaded.config.use_proprioception is False
+    assert reloaded.config.robot_state_feature is None
+    reloaded.eval()
+    assert torch.allclose(reloaded.predict_action_chunk(dict(batch)), expected)

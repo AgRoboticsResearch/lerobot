@@ -173,13 +173,14 @@ class ACTPolicy(PreTrainedPolicy):
             return self.model(batch)[0]
 
         batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_STATE].shape[0]
+        noise_ref = batch[OBS_IMAGES][0] if OBS_IMAGES in batch else batch[OBS_STATE]
         if noise is None:
             noise = torch.randn(
                 batch_size,
                 self.config.chunk_size,
                 self.config.action_feature.shape[0],
-                device=batch[OBS_STATE].device,
-                dtype=batch[OBS_STATE].dtype,
+                device=noise_ref.device,
+                dtype=noise_ref.dtype,
             )
         expected_shape = (batch_size, self.config.chunk_size, self.config.action_feature.shape[0])
         if tuple(noise.shape) != expected_shape:
@@ -593,7 +594,7 @@ class ACT(nn.Module):
             cls_joint_is_pad = torch.full(
                 (batch_size, 2 if self.config.robot_state_feature else 1),
                 False,
-                device=batch[OBS_STATE].device,
+                device=action_embed.device,
             )
             key_padding_mask = torch.cat(
                 [cls_joint_is_pad, batch["action_is_pad"]], axis=1
@@ -617,7 +618,7 @@ class ACT(nn.Module):
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch[OBS_STATE].device
+                self.encoder_latent_input_proj.weight.device
             )
 
         # Prepare transformer encoder inputs.
