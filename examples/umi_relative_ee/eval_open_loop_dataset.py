@@ -95,6 +95,23 @@ def parse_args() -> argparse.Namespace:
         "(e.g. 10 to compare a 30-step policy against a 10-step-horizon model "
         "on equal footing). None = score the full chunk.",
     )
+    parser.add_argument(
+        "--stability_eval",
+        action="store_true",
+        help=(
+            "Cross-query prediction-stability mode: for each pair anchor t and each "
+            "re-query interval k (frames), query the policy at t and t+k with the same "
+            "inference seed and measure the disagreement of the two decoded chunks on "
+            "their overlapping future timestamps — the async-replan consistency that "
+            "the canonical sparse single queries cannot see. Writes "
+            "<...>_stability_metrics.json instead of the canonical metrics file."
+        ),
+    )
+    parser.add_argument(
+        "--stability_intervals",
+        default="1,5,10",
+        help="Comma-separated re-query intervals in frames for --stability_eval.",
+    )
     return parser.parse_args()
 
 
@@ -141,6 +158,198 @@ def choose_query_indices(
                 )
             )
     return selected
+
+
+def predict_chunk_at_frame(
+    dataset,
+    dataset_index: int,
+    frame_index: int,
+    seed: int,
+    policy,
+    preprocessor,
+    postprocessor,
+    device: torch.device,
+    task: str,
+) -> tuple[torch.Tensor, float]:
+    """Fetch, preprocess, and decode one query frame's predicted chunk.
+
+    Execution core of the stability evaluation (the canonical loop keeps its
+    own inline copy so its behavior stays byte-identical): full processor and
+    policy reset per query — independent queries, no cross-chunk state —
+    seeded before inference, decoded to absolute [xyz, rotvec, gripper] poses.
+    """
+    batch = lerobot_collate_fn([dataset[dataset_index]])
+    if CAMERA_KEY in batch and batch[CAMERA_KEY].dtype == torch.uint8:
+        batch[CAMERA_KEY] = batch[CAMERA_KEY].to(torch.float32) / 255.0
+    if not batch.get("task"):
+        batch["task"] = [task]
+    padding = batch.get("action_is_pad")
+    if padding is not None and bool(padding.any()):
+        raise RuntimeError(f"Internal sampling error: frame {frame_index} is padded")
+    preprocessor.reset()
+    postprocessor.reset()
+    if hasattr(policy, "reset"):
+        policy.reset()
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
+    with torch.no_grad():
+        processed = preprocessor(batch)
+        processed.pop(ACTION, None)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        start = time.perf_counter()
+        predicted_model = policy.predict_action_chunk(processed)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        seconds = time.perf_counter() - start
+        predicted = postprocessor(predicted_model).squeeze(0).to(torch.float32).cpu()
+    return predicted, seconds
+
+
+def run_stability_eval(
+    args,
+    metadata,
+    dataset,
+    policy,
+    preprocessor,
+    postprocessor,
+    device: torch.device,
+    model_path: str,
+    policy_config,
+    episode_indices: list[int],
+    query_min_action_offset: int,
+    query_max_action_offset: int,
+    dataset_root,
+    repo_id: str,
+) -> None:
+    """Cross-query prediction-stability evaluation (§: replan consistency).
+
+    For each anchor t and re-query interval k the policy is queried at t and
+    t+k (same seed, so stochastic heads share their sampler realization) and
+    the two decoded chunks are compared on their overlapping future
+    timestamps: predicted[i] is the pose for t+1+i, so chunk_a[k:] aligns
+    with chunk_b[:len-k].
+    """
+    intervals = [int(k) for k in args.stability_intervals.split(",") if k.strip()]
+    if not intervals or any(k < 1 for k in intervals):
+        raise ValueError(f"stability intervals must be positive ints, got {args.stability_intervals!r}")
+    # Both members of a pair must keep the full action window in-episode.
+    anchors = choose_query_indices(
+        metadata.episodes,
+        episode_indices,
+        query_min_action_offset,
+        query_max_action_offset + max(intervals),
+        args.samples_per_episode,
+    )
+    if not anchors:
+        raise ValueError("No valid stability anchors were found")
+    logger.info(
+        "Stability eval: %d anchors × intervals %s on %d episodes",
+        len(anchors), intervals, len({ep for _, ep, _ in anchors}),
+    )
+
+    samples: list[dict[str, float]] = []
+    inference_seconds: list[float] = []
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    pair_index = 0
+    for anchor_i, (dataset_index, episode_index, anchor_frame) in enumerate(anchors):
+        for interval in intervals:
+            pair_index += 1
+            seed = args.seed + pair_index  # same realization for both members
+            chunk_a, sec_a = predict_chunk_at_frame(
+                dataset, dataset_index, anchor_frame, seed, policy,
+                preprocessor, postprocessor, device, args.task,
+            )
+            chunk_b, sec_b = predict_chunk_at_frame(
+                dataset, dataset_index + interval, anchor_frame + interval, seed, policy,
+                preprocessor, postprocessor, device, args.task,
+            )
+            inference_seconds += [sec_a, sec_b]
+            steps = min(len(chunk_a) - interval, len(chunk_b))
+            if steps <= 0:
+                continue
+            aligned_a = chunk_a[interval : interval + steps]
+            aligned_b = chunk_b[:steps]
+            xyz_disagreement = torch.linalg.vector_norm(
+                aligned_a[:, :3] - aligned_b[:, :3], dim=-1
+            )
+            rot_disagreement = rotation_error_deg(aligned_a, aligned_b)
+            gripper_disagreement = (aligned_a[:, 6] - aligned_b[:, 6]).abs()
+            samples.append(
+                {
+                    "episode_index": episode_index,
+                    "anchor_frame": anchor_frame,
+                    "interval": interval,
+                    "overlap_steps": int(steps),
+                    "xyz_overlap_mean_mm": float(xyz_disagreement.mean() * 1000.0),
+                    "xyz_overlap_end_mm": float(xyz_disagreement[-1] * 1000.0),
+                    "rotation_overlap_mean_deg": float(rot_disagreement.mean()),
+                    "rotation_overlap_end_deg": float(rot_disagreement[-1]),
+                    "gripper_overlap_mean": float(gripper_disagreement.mean()),
+                }
+            )
+        if (anchor_i + 1) % 10 == 0 or anchor_i + 1 == len(anchors):
+            logger.info("Completed stability anchors %d/%d", anchor_i + 1, len(anchors))
+
+    metrics = (
+        "xyz_overlap_mean_mm",
+        "xyz_overlap_end_mm",
+        "rotation_overlap_mean_deg",
+        "rotation_overlap_end_deg",
+        "gripper_overlap_mean",
+    )
+    summary: dict[str, dict] = {}
+    for interval in sorted({s["interval"] for s in samples}):
+        rows = [s for s in samples if s["interval"] == interval]
+        by_episode: dict[int, list[dict]] = {}
+        for row in rows:
+            by_episode.setdefault(row["episode_index"], []).append(row)
+        summary[str(interval)] = {
+            "pairs": len(rows),
+            "episodes": len(by_episode),
+            **{m: float(np.mean([row[m] for row in rows])) for m in metrics},
+        }
+
+    report = {
+        "mode": "stability",
+        "policy_type": policy_config.type,
+        "checkpoint": model_path,
+        "dataset_root": str(dataset_root),
+        "dataset_total_episodes": metadata.total_episodes,
+        "requested_episode_indices": episode_indices,
+        "anchors_per_episode": args.samples_per_episode,
+        "stability_intervals": intervals,
+        "query_action_offset_bounds": {
+            "min": query_min_action_offset,
+            "max": query_max_action_offset,
+        },
+        "seed": args.seed,
+        "video_backend": args.video_backend,
+        "control_fps": float(metadata.fps),
+        "metric_definitions": {
+            "xyz_overlap_mean_mm": "mean XYZ distance between the two queries' decoded predictions at matched overlapping future timestamps, mm",
+            "xyz_overlap_end_mm": "XYZ disagreement at the last overlapping timestamp, mm",
+            "rotation_overlap_mean_deg": "mean SO(3) geodesic disagreement over the overlap, deg",
+            "rotation_overlap_end_deg": "rotation disagreement at the last overlapping timestamp, deg",
+            "gripper_overlap_mean": "mean |gripper difference| over the overlap",
+            "seeding": "both members of a pair share one inference seed, so stochastic heads share their sampler realization — disagreement isolates the conditioning (observation) change",
+        },
+        "inference_latency_seconds": summarize_inference_latency(inference_seconds),
+        "cuda_peak_memory_bytes": (
+            torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+        ),
+        "summary": summary,
+        "samples": samples,
+    }
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_name = f"{Path(model_path).parents[2].name}_{Path(model_path).parent.name}"
+    report_path = output_dir / f"{checkpoint_name}_stability_metrics.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    logger.info("Saved %s", report_path)
+    print(json.dumps(report["summary"], indent=2))
 
 
 def load_policy_and_processors(
@@ -547,6 +756,23 @@ def main() -> None:
         return_uint8=True,
         video_backend=args.video_backend,
     )
+    if args.stability_eval:
+        return run_stability_eval(
+            args,
+            metadata,
+            dataset,
+            policy,
+            preprocessor,
+            postprocessor,
+            device,
+            model_path,
+            policy_config,
+            episode_indices,
+            query_min_action_offset,
+            query_max_action_offset,
+            dataset_root,
+            repo_id,
+        )
     logger.info(
         "Evaluating %s on %d/%d episodes and %d query frames with action-offset bounds [%d, %d]",
         policy_config.type,
