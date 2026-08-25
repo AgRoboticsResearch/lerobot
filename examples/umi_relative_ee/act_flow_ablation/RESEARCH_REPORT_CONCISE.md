@@ -20,6 +20,7 @@ The main findings are:
 - **Rotation notation is not a useful accuracy lever here.** Axis-angle/rotvec and rot6d have similar endpoint accuracy in both SmolVLA and OpenPI. Small motion-texture effects change direction across stacks.
 - **Padding mode is also a minor lever on this task.** Full-width and masked-subspace SmolVLA training have indistinguishable endpoint behavior; masking is only about 7–9% smoother late in training.
 - **Motion dynamics expose strong family signatures.** ACT becomes over-smoothed, SmolVLA remains high-frequency, the π0.5 port sits closer to the demonstrated dynamics, and under-trained ACT-flow is the roughest family.
+- **SmolVLA is the only re-query-unstable family.** With the inference seed held fixed, re-querying at t+1 disagrees with the chunk predicted at t by 6.3–7.1 mm in every SmolVLA arm — about 2× every other family, CI-separated, and unchanged by 1M steps. The mature π0.5 port is stable (3.7 mm @ k=1), and ACT/port families become more stable with budget.
 
 These are open-loop results. They support checkpoint selection and diagnosis, but **do not establish closed-loop task success**.
 
@@ -479,6 +480,24 @@ The second-difference findings survive in true physical jerk:
 
 This is a trajectory-similarity result, not proof that matching demonstration jerk maximizes closed-loop success. Contact phases may require different dynamics from free-space motion.
 
+### Cross-query prediction stability
+
+The canonical protocol scores each prediction in isolation, so it cannot see whether a policy *changes its plan* when re-queried about a future it has already predicted — the consistency an async-replanning deployment actually executes. The stability metric re-queries at t and t+k (k = 1, 5, 10 frames) with a **shared inference seed**, so stochastic heads draw the same sampler realization and the disagreement isolates the conditioning change. Full protocol and 17-row table: §9.2.19 of the full report.
+
+![Stability scores](figures/stability_h10_scores.png)
+
+*Fig. 32. Cross-query disagreement at k=1 (async-replan regime) and k=10 — 17 representative runs, episode-balanced, 95% bootstrap CIs. SmolVLA (all four arms) separates cleanly from the pack at k=1.*
+
+![Stability growth](figures/stability_growth.png)
+
+*Fig. 33. Disagreement vs re-query interval with CI bands — every family drifts ~5× from k=1 to k=10, but the ordering set at k=1 persists.*
+
+- **SmolVLA is the only re-query-unstable family** — 6.3–7.1 mm @ k=1, ~2× the pack (2.9–5.2 mm), CI-separated from every other row, and 1M steps do not fix it (6.9 → 6.8 mm). Because the pair shares one seed, this is a genuine plan flip from a nearly identical observation — the same input hypersensitivity as its §9.2.13 high-jerk signature, seen from another angle.
+- **The π0.5 port is NOT plan-unstable** (3.66 mm @ k=1 @ 1M, second only to historical ACT 2.93 and R50-V1 1M 3.08); its deployed shakiness is the async-inference latency story, not prediction inconsistency.
+- **Budget buys stability in every ACT/port family** (R50-V1 4.21 → 3.08 mm, port 4.49 → 3.66 from 100k → 1M); under-trained checkpoints (ACT-flow 50k 4.68, UMI-DP 30k 5.03, o-recipe 20k 5.21) are the weakest of their stacks.
+- **The Q3 two-frame arm ties 1-frame here too** (3.31 mm @ 500k vs 3.08 @ 1M on the same curve) — a third metric where temporal-frame stacking changes nothing.
+- For mature policies k=1 disagreement (~3 mm) is an order below k=10 drift (~15 mm) and below execution error (9–11 mm): in the async-replan regime risk concentrates in under-trained or hypersensitive stacks, not in mature re-planning.
+
 ## 8. What the evidence answers
 
 ### Q1: Does capacity improve ACT?
@@ -521,7 +540,7 @@ The decisive follow-up is a blinded, block-randomized closed-loop evaluation of 
 
 ## 10. Reproducibility and result coverage
 
-All **31 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
+All **33 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
 
 The repository-tracked [`repro/`](repro/) directory contains:
 
