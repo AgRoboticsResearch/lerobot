@@ -104,7 +104,10 @@ def episode_means(report: dict) -> dict[int, dict[str, float]]:
 def check_protocol(run: str, report: dict) -> float:
     if report.get("query_action_offset_bounds") != {"min": -1, "max": 31}:
         raise ValueError(f"{run}: non-canonical query bounds")
-    if report.get("eval_horizon") != 10:
+    eh = report.get("eval_horizon")
+    # openpi ah=10 rows are scored without --eval_horizon (no clipping: pred[:10]
+    # on a 10-step chunk is the identity), so None ≡ 10 there.
+    if eh != 10 and not (eh is None and report.get("action_horizon") == 10):
         raise ValueError(f"{run}: eval_horizon != 10")
     if len(report["samples"]) != 500:
         raise ValueError(f"{run}: {len(report['samples'])} queries, expected 500")
@@ -179,9 +182,14 @@ def main() -> int:
                 deltas[m] = max(deltas[m], abs(ab[m] - entry["balanced"][m]))
         n_checked += 1
 
-    # --- openpi rows carried from the archived tree (physical pending) --------
+    # --- openpi rows carried from the archived tree (legacy fallback) ---------
+    # Only fires for openpi runs with no re-scored counterpart in the jerk tree;
+    # since the 2026-08-25 host sweep all 4 legacy rows (plus the §9.2.14 bs4
+    # 100k row) are re-scored, so the carry is normally empty.
     carried = {}
     for run in [] if args.no_openpi_carry else sorted(OPENPI_RUNS):
+        if run in rows:
+            continue  # re-scored row takes precedence
         arch = sorted(glob.glob(os.path.join(args.unified_root, run, "seed1000", "*_open_loop_metrics.json")))
         if not arch:
             print(f"WARN: openpi row {run} missing from archived tree", file=sys.stderr)
@@ -287,7 +295,8 @@ def main() -> int:
 
     val = [f"cross-checked {n_checked} runs against the archived §9.2.9 tree (episode-balanced, seed 1000):"]
     val += [f"  max |Δ{m}| = {d:.3g}" for m, d in deltas.items()]
-    val.append(f"re-eval rows: {len(rows)}, openpi rows carried (physical pending): {len(carried)}")
+    val.append(f"re-eval rows: {len(rows)}, openpi rows carried (physical pending): {len(carried)}"
+               + (" — all JAX openpi rows re-scored" if not carried else ""))
     with open(os.path.join(args.out_dir, "validation.txt"), "w") as f:
         f.write("\n".join(val) + "\n")
     print("\n".join(val))

@@ -58,6 +58,47 @@ def within_chunk_jerk(poses):
     return float(rot_jerk), float(xyz_jerk)
 
 
+def within_chunk_dynamics(poses: torch.Tensor, dt: float) -> dict[str, float]:
+    """Physical-unit velocity / acceleration / jerk of one predicted or GT chunk.
+
+    VERBATIM port of eval_open_loop_dataset.py's within_chunk_dynamics (kept
+    numerically identical so JAX rows join the §9.2.13 physical tables):
+    velocity = first difference / dt, acceleration = second difference / dt²,
+    jerk = third difference / dt³. Rotation uses the magnitude of the
+    inter-step SO(3) rotation as angular speed, then finite differences of
+    that scalar. Means are over the chunk; zeros when too short.
+    """
+    steps = poses.shape[0]
+    out = {
+        "rot_vel_deg_s": 0.0,
+        "rot_accel_deg_s2": 0.0,
+        "rot_jerk_deg_s3": 0.0,
+        "xyz_vel_m_s": 0.0,
+        "xyz_accel_m_s2": 0.0,
+        "xyz_jerk_m_s3": 0.0,
+    }
+    if dt <= 0:
+        raise ValueError(f"dt must be positive, got {dt}")
+    if steps >= 2:
+        rot = axis_angle_to_matrix(poses[:, 3:6])  # [steps, 3, 3]
+        step_rot = rot[:-1].transpose(-2, -1) @ rot[1:]
+        omega = so3_angle_deg(step_rot) / dt  # angular speed per step, deg/s
+        step_xyz = (poses[1:, :3] - poses[:-1, :3]) / dt  # m/s vectors
+        out["rot_vel_deg_s"] = float(omega.mean())
+        out["xyz_vel_m_s"] = float(step_xyz.norm(dim=-1).mean())
+        if steps >= 3:
+            alpha = (omega[1:] - omega[:-1]) / dt  # deg/s², signed scalars
+            accel = (step_xyz[1:] - step_xyz[:-1]) / dt  # m/s² vectors
+            out["rot_accel_deg_s2"] = float(alpha.abs().mean())
+            out["xyz_accel_m_s2"] = float(accel.norm(dim=-1).mean())
+            if steps >= 4:
+                jerk_rot = (alpha[1:] - alpha[:-1]) / dt  # deg/s³, signed scalars
+                jerk_xyz = (accel[1:] - accel[:-1]) / dt  # m/s³ vectors
+                out["rot_jerk_deg_s3"] = float(jerk_rot.abs().mean())
+                out["xyz_jerk_m_s3"] = float(jerk_xyz.norm(dim=-1).mean())
+    return out
+
+
 def rot6d_to_rotvec_chunk(chunk):  # (T,10) -> (T,7): xyz + rotvec(rot6d) + gripper
     from scipy.spatial.transform import Rotation as R
     r6 = chunk[:, 3:9].reshape(-1, 2, 3)  # 2 rows
@@ -111,6 +152,136 @@ def bootstrap_ci(episode_means, metric_names, num_resamples=10000, seed=0, confi
     return {n: {"low": float(lo[i]), "high": float(hi[i])} for i, n in enumerate(metric_names)}
 
 
+def run_cross_frame_mse(args, policy, ds, meta, query, ep_data_index_from, is_rot6d):
+    """Direct same-index MSE for independently queried chunks at t and t+1."""
+    horizons = sorted({int(value) for value in args.cross_frame_mse_horizons.split(",")})
+    if not horizons or horizons[0] <= 0 or horizons[-1] > args.action_horizon:
+        raise ValueError(
+            f"Invalid horizons {horizons} for action_horizon={args.action_horizon}"
+        )
+    maximum_horizon = max(horizons)
+    bases, deltas, geodesics, ground_truths, infer_s = [], [], [], [], []
+
+    def predict(item):
+        image = item["observation.images.camera"]
+        state = np.asarray(item["observation.state"], dtype=np.float32)
+        if is_rot6d:
+            state = rotvec_to_rot6d_state(state)
+        start = time.perf_counter()
+        output = policy.infer({"image": image, "state": state})
+        infer_s.append(time.perf_counter() - start)
+        predicted = np.asarray(output["actions"])
+        if is_rot6d:
+            predicted = rot6d_to_rotvec_chunk(predicted)
+        return torch.as_tensor(predicted, dtype=torch.float32)
+
+    for pair_index, (episode, frame) in enumerate(query):
+        dataset_index = ep_data_index_from[episode] + frame
+        item_t = ds[dataset_index]
+        chunk_t = predict(item_t)
+        chunk_t1 = predict(ds[dataset_index + 1])
+        ground_truth = torch.as_tensor(np.asarray(item_t["action"]), dtype=torch.float32)
+        steps = min(len(chunk_t), len(chunk_t1), len(ground_truth))
+        if steps < maximum_horizon:
+            raise ValueError(f"Only {steps} comparable steps; requested {maximum_horizon}")
+        chunk_t, chunk_t1 = chunk_t[:maximum_horizon], chunk_t1[:maximum_horizon]
+        bases.append({
+            "episode_index": episode,
+            "anchor_frame": frame,
+            "chunk_steps": maximum_horizon,
+            "pair_index": pair_index,
+        })
+        deltas.append(chunk_t - chunk_t1)
+        geodesics.append(rotation_error_deg(chunk_t, chunk_t1))
+        ground_truths.append(ground_truth[:maximum_horizon])
+        if (pair_index + 1) % 50 == 0 or pair_index + 1 == len(query):
+            print(f"  {pair_index + 1}/{len(query)} adjacent-frame pairs done")
+
+    metric_names = (
+        "action_cross_frame_mse_normalized",
+        "xyz_cross_frame_mse_mm2_per_dim",
+        "rotvec_cross_frame_mse_deg2_per_dim",
+        "rotation_geodesic_cross_frame_mse_deg2",
+        "gripper_cross_frame_mse",
+    )
+    horizon_results = {}
+    for horizon in horizons:
+        scales = gt_quantile_scales([ground_truth[:horizon] for ground_truth in ground_truths])
+        samples = []
+        for base, delta, geodesic in zip(bases, deltas, geodesics, strict=True):
+            delta = delta[:horizon]
+            samples.append({
+                **base,
+                "chunk_steps": horizon,
+                "action_cross_frame_mse_normalized": float(((delta / scales) ** 2).mean()),
+                "xyz_cross_frame_mse_mm2_per_dim": float(((delta[:, :3] * 1000) ** 2).mean()),
+                "rotvec_cross_frame_mse_deg2_per_dim": float(
+                    (torch.rad2deg(delta[:, 3:6]) ** 2).mean()
+                ),
+                "rotation_geodesic_cross_frame_mse_deg2": float(
+                    (geodesic[:horizon] ** 2).mean()
+                ),
+                "gripper_cross_frame_mse": float((delta[:, 6] ** 2).mean()),
+            })
+        episode_rows = defaultdict(list)
+        for sample in samples:
+            episode_rows[sample["episode_index"]].append(sample)
+        episode_means = {
+            episode: {
+                name: float(np.mean([sample[name] for sample in rows]))
+                for name in metric_names
+            }
+            for episode, rows in episode_rows.items()
+        }
+        horizon_results[str(horizon)] = {
+            "normalization": {
+                "definition": "per-dim decoded action difference / ((q99-q01)/2 of pooled anchor GT chunks)",
+                "per_dim_half_ranges": [float(scale) for scale in scales],
+            },
+            "summary": {
+                "num_episodes": len(episode_rows),
+                "num_pairs": len(samples),
+                "episode_balanced": {
+                    name: float(np.mean([row[name] for row in episode_means.values()]))
+                    for name in metric_names
+                },
+                "episode_balanced_95ci": bootstrap_ci(episode_means, metric_names),
+                "per_episode": episode_means,
+            },
+            "samples": samples,
+        }
+    report = {
+        "mode": "cross_frame_mse",
+        "policy_type": args.config_name,
+        "checkpoint": args.checkpoint,
+        "dataset_root": args.dataset_root,
+        "dataset_total_episodes": meta.total_episodes,
+        "pairs_per_episode": args.samples_per_episode,
+        "frame_interval": 1,
+        "eval_horizons": horizons,
+        "query_action_offset_bounds": {
+            "min": args.query_min_action_offset,
+            "max": args.query_max_action_offset,
+        },
+        "seed": args.seed,
+        "pair_seed_strategy": "independent sequential draws from deterministic JAX RNG initialized at policy creation",
+        "control_fps": float(meta.fps),
+        "inference_latency_seconds": {
+            "mean": float(np.mean(infer_s)),
+            "median": float(np.median(infer_s)),
+        },
+        "confidence_interval_method": {
+            "unit": "episode", "resamples": 10000, "confidence": 0.95, "seed": 0,
+        },
+        "horizons": horizon_results,
+    }
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    with open(args.output, "w") as handle:
+        json.dump(report, handle, indent=2)
+    print(json.dumps({h: v["summary"]["episode_balanced"] for h, v in horizon_results.items()}, indent=2))
+    print(f"wrote {args.output}")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config-name", required=True)
@@ -132,6 +303,8 @@ def main():
                    help="see --query_min_action_offset")
     p.add_argument("--output", required=True)
     p.add_argument("--seed", type=int, default=1000)
+    p.add_argument("--cross_frame_mse_eval", action="store_true")
+    p.add_argument("--cross_frame_mse_horizons", default="10")
     args = p.parse_args()
 
     is_rot6d = "rot6d" in args.config_name
@@ -161,7 +334,7 @@ def main():
             # canonical LeRobot-evaluator window (eval_open_loop_dataset.
             # choose_query_indices): identical frames to the fixed 500-query set
             lo = max(0, -args.query_min_action_offset)
-            hi = length - 1 - args.query_max_action_offset
+            hi = length - 1 - args.query_max_action_offset - int(args.cross_frame_mse_eval)
             if hi < lo:
                 continue
             count = min(args.samples_per_episode, hi - lo + 1)
@@ -177,6 +350,10 @@ def main():
     train_config = _config.get_config(args.config_name)
     policy = _policy_config.create_trained_policy(train_config, args.checkpoint,
                                                   default_prompt="pick the strawberry")
+    if args.cross_frame_mse_eval:
+        return run_cross_frame_mse(
+            args, policy, ds, meta, query, ep_data_index_from, is_rot6d
+        )
 
     metric_names = ("rotation_chunk_mean_deg", "rotation_chunk_rmse_deg", "rotation_chunk_mse_deg2",
                     "rotation_end_deg",
@@ -187,10 +364,15 @@ def main():
                     "action_acc_at_0p5", "action_acc_at_0p1",
                     "xyz_acc_at_0p5", "xyz_acc_at_0p1",
                     "rotvec_acc_at_0p5", "rotvec_acc_at_0p1",
-                    "rot_jerk_deg", "xyz_jerk_m", "gt_rot_jerk_deg", "gt_xyz_jerk_m")
+                    "rot_jerk_deg", "xyz_jerk_m", "gt_rot_jerk_deg", "gt_xyz_jerk_m",
+                    "rot_vel_deg_s", "rot_accel_deg_s2", "rot_jerk_deg_s3",
+                    "xyz_vel_m_s", "xyz_accel_m_s2", "xyz_jerk_m_s3",
+                    "gt_rot_vel_deg_s", "gt_rot_accel_deg_s2", "gt_rot_jerk_deg_s3",
+                    "gt_xyz_vel_m_s", "gt_xyz_accel_m_s2", "gt_xyz_jerk_m_s3")
     samples = []
     scored_chunks = []
     infer_s = []
+    dt = 1.0 / float(meta.fps)  # physical dynamics period (30 Hz)
     for si, (ep, fi) in enumerate(query):
         didx = ep_data_index_from[ep] + fi
         item = ds[didx]
@@ -227,6 +409,8 @@ def main():
         xyz_l1 = float(xyz_delta.abs().mean()); xyz_mse_pd = float((xyz_delta ** 2).mean())
         rv_l1 = float(rotvec_delta_deg.abs().mean()); rv_mse_pd = float((rotvec_delta_deg ** 2).mean())
         prj, pxj = within_chunk_jerk(pred); grj, gxj = within_chunk_jerk(gt)
+        pred_dyn = within_chunk_dynamics(pred, dt)
+        gt_dyn = within_chunk_dynamics(gt, dt)
         samples.append({
             "episode_index": ep, "frame_index": fi,
             "rotation_chunk_mean_deg": float(rot_err.mean()), "rotation_chunk_rmse_deg": rot_mse ** 0.5,
@@ -238,6 +422,7 @@ def main():
             "xyz_l1_per_dim_m": xyz_l1, "xyz_mse_per_dim_m2": xyz_mse_pd,
             "rotvec_l1_per_dim_deg": rv_l1, "rotvec_mse_per_dim_deg2": rv_mse_pd,
             "rot_jerk_deg": prj, "xyz_jerk_m": pxj, "gt_rot_jerk_deg": grj, "gt_xyz_jerk_m": gxj,
+            **pred_dyn, **{f"gt_{k}": v for k, v in gt_dyn.items()},
         })
         scored_chunks.append((pred, gt))
         if (si + 1) % 50 == 0 or si + 1 == len(query):
@@ -262,12 +447,16 @@ def main():
                                        "max": args.query_max_action_offset},
         "query_frames": [[int(ep), int(fi)] for ep, fi in query],
         "num_episodes": len(ep_samples), "num_samples": len(samples),
+        "control_fps": float(meta.fps),
         "inference_latency_seconds": {"mean": float(np.mean(infer_s)), "median": float(np.median(infer_s))},
         "accuracy_at_tau_normalization": {
             "definition": "per-dim error / ((q99-q01)/2 of pooled GT chunks); inclusive <= tau",
             "per_dim_half_ranges": [float(scale) for scale in tau_scales],
         },
         "summary": {"episode_balanced": eb, "episode_balanced_95ci": ci},
+        # per-sample rows let compile_physical_jerk.py ingest JAX rows with the
+        # same LeRobot-schema path as the torch re-evals (§9.2.13 physical set).
+        "samples": samples,
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     json.dump(report, open(args.output, "w"), indent=2)
