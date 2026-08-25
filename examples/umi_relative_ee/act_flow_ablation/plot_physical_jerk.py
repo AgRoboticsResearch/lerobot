@@ -44,6 +44,7 @@ FIG_DIR = os.path.join(HERE, "figures")
 COLORS = {
     "hist": "#444444",
     "r50v1": "#1f77b4",
+    "2frame": "#1f9e89",
     "actl1": "#2ca02c",
     "r50vae": "#9467bd",
     "flow": "#d62728",
@@ -59,6 +60,7 @@ COLORS = {
 REPRESENTATIVES = [
     ("act_umi_identity_rot6d_1459_3000000steps", "ACT R18-VAE 3M (hist)", "hist"),
     ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
+    ("act_r50_v1_vae_2frame_seed1000_0500000steps", "ACT R50-VAE 2-frame 500k (Q3)", "2frame"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
     ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
@@ -76,6 +78,8 @@ REPRESENTATIVES = [
 
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
+    # 2frame prefix MUST precede act_r50_v1_vae_ (it is a strict extension).
+    ("act_r50_v1_vae_2frame_", "2frame", "R50-VAE 2-frame (Q3)"),
     ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
     ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
@@ -201,6 +205,7 @@ def _budget_series():
     curves = [
         (lambda run: run.startswith("act_umi_identity_rot6d_1459_"), "hist", "R18-VAE hist", "o"),
         (lambda run: run.startswith("act_r50_v1_vae_seed1000_"), "r50v1", "R50-VAE (ImageNet-V1)", "s"),
+        (lambda run: run.startswith("act_r50_v1_vae_2frame_seed1000_"), "2frame", "R50-VAE 2-frame (Q3)", "x"),
         (lambda run: run.startswith("pi05_port_seed1000_"), "port", "π0.5 port", "^"),
         (lambda run: re.fullmatch(r"smolvla_rot6d_seed1000_\d{7}steps", run) is not None,
          "smol1m", "SmolVLA full-width", "D"),

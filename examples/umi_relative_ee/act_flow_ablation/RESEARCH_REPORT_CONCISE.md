@@ -1,14 +1,16 @@
 # ACT capacity and generative-objective ablation
 
-**Concise results report · 24 August 2026**  
+**Concise results report · 25 August 2026**
 Derived from the [full research record](RESEARCH_REPORT.md). The original remains the chronological lab notebook; this document is the result-led version intended for human readers.
 
 ## Executive summary
 
-This study asked two practical questions on the 1,459-episode UMI relative-end-effector dataset:
+This study asked two practical questions on the 1,459-episode UMI relative-end-effector dataset, plus two later input-ablation questions (Q3/Q4, §8):
 
 1. Can the production ResNet-18 ACT policy be improved by increasing visual-backbone capacity?
 2. Is the weak behavior of some local flow policies caused by flow matching itself, or by the surrounding denoiser and training recipe?
+3. Does multi-frame visual input help ACT? (answered: no — §8 Q3)
+4. Does ACT need proprioception on this task? (in flight)
 
 The main findings are:
 
@@ -21,6 +23,7 @@ The main findings are:
 - **Padding mode is also a minor lever on this task.** Full-width and masked-subspace SmolVLA training have indistinguishable endpoint behavior; masking is only about 7–9% smoother late in training.
 - **Motion dynamics expose strong family signatures.** ACT becomes over-smoothed, SmolVLA remains high-frequency, the π0.5 port sits closer to the demonstrated dynamics, and under-trained ACT-flow is the roughest family.
 - **SmolVLA is the only re-query-unstable family.** With the inference seed held fixed, re-querying at t+1 disagrees with the chunk predicted at t by 6.3–7.1 mm in every SmolVLA arm — about 2× every other family, CI-separated, and unchanged by 1M steps. The mature π0.5 port is stable (3.7 mm @ k=1), and ACT/port families become more stable with budget.
+- **Multi-frame visual input does not help ACT here.** A 2-frame (t−1, t) channel-stacked R50-V1 arm ties the matched 1-frame budget curve at all five shared checkpoints (endpoint gaps ≤0.37 mm, overlapping CIs) and on dynamics, accuracy, and re-query stability alike.
 
 These are open-loop results. They support checkpoint selection and diagnosis, but **do not establish closed-loop task success**.
 
@@ -493,8 +496,8 @@ The canonical protocol scores each prediction in isolation, so it cannot see whe
 *Fig. 33. Disagreement vs re-query interval with CI bands — every family drifts ~5× from k=1 to k=10, but the ordering set at k=1 persists.*
 
 - **SmolVLA is the only re-query-unstable family** — 6.3–7.1 mm @ k=1, ~2× the pack (2.9–5.2 mm), CI-separated from every other row, and 1M steps do not fix it (6.9 → 6.8 mm). Because the pair shares one seed, this is a genuine plan flip from a nearly identical observation — the same input hypersensitivity as its §9.2.13 high-jerk signature, seen from another angle.
-- **The π0.5 port is NOT plan-unstable** (3.66 mm @ k=1 @ 1M, second only to historical ACT 2.93 and R50-V1 1M 3.08); its deployed shakiness is the async-inference latency story, not prediction inconsistency.
-- **Budget buys stability in every ACT/port family** (R50-V1 4.21 → 3.08 mm, port 4.49 → 3.66 from 100k → 1M); under-trained checkpoints (ACT-flow 50k 4.68, UMI-DP 30k 5.03, o-recipe 20k 5.21) are the weakest of their stacks.
+- **The π0.5 port is NOT plan-unstable** (3.66 mm @ k=1 @ 1M, second only to historical ACT 2.93 and ACT R50-VAE (ImageNet-V1) 1M 3.08); its deployed shakiness is the async-inference latency story, not prediction inconsistency.
+- **Budget buys stability in every ACT/port family** (ACT R50-VAE (ImageNet-V1) 4.21 → 3.08 mm, port 4.49 → 3.66 from 100k → 1M); under-trained checkpoints (ACT-flow 50k 4.68, UMI-DP 30k 5.03, o-recipe 20k 5.21) are the weakest of their stacks.
 - **The Q3 two-frame arm ties 1-frame here too** (3.31 mm @ 500k vs 3.08 @ 1M on the same curve) — a third metric where temporal-frame stacking changes nothing.
 - For mature policies k=1 disagreement (~3 mm) is an order below k=10 drift (~15 mm) and below execution error (9–11 mm): in the async-replan regime risk concentrates in under-trained or hypersensitive stacks, not in mature re-planning.
 
@@ -513,6 +516,14 @@ Practical choice:
 ### Q2: Is flow matching the cause of weak flow-policy behavior?
 
 **No general claim is supported.** The matched ACT-flow formulation is weak, and swapping it to epsilon/DDIM diffusion does not fix it. But conventional and released-UMI diffusion policies are competitive, while pretrained flow VLAs can be strong. The evidence is consistent with an interaction among denoiser architecture, time/action conditioning, objective weighting, optimizer, sampler, pretraining, and budget.
+
+### Q3: Does multi-frame visual input help?
+
+**No.** A 2-frame (t−1, t) channel-stacked ACT R50-V1 arm (widened conv1, tiled pretrained filters, +9,408 parameters; `--policy.consecutive_frames=2`) ties the matched 1-frame budget curve at all five shared checkpoints (100k–500k): XYZ endpoint gaps ≤0.37 mm with fully overlapping CIs, and ties on rotation endpoint, Acc@0.1, within-chunk and physical jerk, and cross-query stability. Keep the simpler 1-frame input. Full table and read-outs: §9.2.17 of the full report.
+
+![Q3 2-frame vs 1-frame budget comparison](figures/q3_2frame_vs_1frame.png)
+
+*Fig. 34. Q3 budget comparison — XYZ endpoint, within-chunk rotational 2nd-diff, and physical rotational jerk for the 2-frame arm against the matched 1-frame curve (95% CI bands, dashed = demonstrated).*
 
 ### Policy-family recommendation from the offline evidence
 
@@ -540,7 +551,7 @@ The decisive follow-up is a blinded, block-randomized closed-loop evaluation of 
 
 ## 10. Reproducibility and result coverage
 
-All **33 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
+All **34 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
 
 The repository-tracked [`repro/`](repro/) directory contains:
 

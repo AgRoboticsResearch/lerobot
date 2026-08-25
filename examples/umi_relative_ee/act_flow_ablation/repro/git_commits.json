@@ -1,20 +1,21 @@
 {
-  "generated": "2026-08-23",
+  "generated": "2026-08-25",
   "lerobot_host": {
     "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
     "branch": "research/umi-act-flowmatching-ablation-20260811",
-    "commit": "c274c3d2ec6a12b24bfc26469fb6383408bb2c1e",
-    "dirty_files": 2,
+    "commit": "e82962e482321135722b6bb004a70825325ef9aa",
+    "dirty_files": 0,
     "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
-    "src_py_tree_sha256": "05784c3a110fdc07370fc3a01ebbfeebbce5ae2e4b02428fbf003f1b10bebe0d"
+    "src_py_tree_sha256": "095432bf686103c25ac25a9e01ffb3f6003b9c9c913e7bc110915cae1eb43168",
+    "note": "src tree now includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes (tests: tests/policies/test_act_consecutive_frames.py, 11 green) and the --stability_eval evaluator (e0520535)."
   },
   "lerobot_kiwi": {
     "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",
-    "note": "rsynced working copy, no .git; identity established by matching src/ python-tree hash",
-    "src_py_tree_sha256": "23168f8a5a1d23c9ce49ded48de476cd9525d3ec78208f50934372fb72f6c256",
+    "note": "rsynced working copy, no .git; identity established by matching src/ python-tree hash (find src -name '*.py' | sort | xargs sha256sum | sha256sum)",
+    "src_py_tree_sha256": "a17609819882279c41ec1af1e4180e39e304b7ae21fffb3a7ec157789f6cac10",
     "matches_host_src": false,
-    "src_equivalent_host_commit": "b3d169fdbeb6ceb4f329ce1b1e39b91e9a27a561 (2026-08-16)",
-    "divergence": "only source diffs vs host HEAD are the scheduler auto_scale flag (commit faba5fa5, training-schedule-only; inference/modeling code identical). Verified by full rsync --checksum diff + 5-digit metric reproduction on the smoke cross-check (act_r50_v1_vae@1M)."
+    "src_equivalent_host_commit": "research/umi-act-flowmatching-ablation-20260811 @ e82962e4 + Q3/Q4 working-tree sync (2026-08-25)",
+    "divergence": "kiwi src carries the Q3 consecutive_frames + Q4 use_proprioception + --stability_eval changes synced 2026-08-23/25 (rsync, verified by the Q3/Q4 launches reading the new config fields), on top of the 2026-08-16 base (b3d169fd) with the scheduler auto_scale flag (faba5fa5, training-schedule-only). Earlier equivalence verification: full rsync --checksum diff + 5-digit metric reproduction on the smoke cross-check (act_r50_v1_vae@1M)."
   },
   "openpi_host": {
     "path": "/home/zfei/codes/openpi",

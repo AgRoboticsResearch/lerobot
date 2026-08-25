@@ -42,6 +42,7 @@ FIG_DIR = os.path.join(HERE, "figures")
 COLORS = {
     "hist": "#444444",
     "r50v1": "#1f77b4",
+    "2frame": "#1f9e89",
     "actl1": "#2ca02c",
     "r50vae": "#9467bd",
     "flow": "#d62728",
@@ -59,6 +60,7 @@ COLORS = {
 REPRESENTATIVES = [
     ("act_umi_identity_rot6d_1459_3000000steps", "ACT R18-VAE 3M (historical)", "hist"),
     ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
+    ("act_r50_v1_vae_2frame_seed1000_0500000steps", "ACT R50-VAE 2-frame 500k (Q3)", "2frame"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
     ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
@@ -93,6 +95,8 @@ PANELS = [
 # reference families after).
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
+    # 2frame prefix MUST precede act_r50_v1_vae_ (it is a strict extension).
+    ("act_r50_v1_vae_2frame_", "2frame", "R50-VAE 2-frame (Q3)"),
     ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
     ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
@@ -179,6 +183,10 @@ def fig_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("act_r50_v1_vae_seed1000_")
     )
+    q3 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_2frame_seed1000_")
+    )
     port = sorted(
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
@@ -204,6 +212,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
+            (q3, COLORS["2frame"], "ACT R50-VAE 2-frame (Q3, 5 ckpts)", "x"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
@@ -333,6 +342,10 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("act_r50_v1_vae_seed1000_")
     )
+    q3 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_2frame_seed1000_")
+    )
     port = sorted(
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
@@ -363,6 +376,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         for series, color, label, marker in (
             (hist, COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
+            (q3, COLORS["2frame"], "ACT R50-VAE 2-frame (Q3, 5 ckpts)", "x"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
