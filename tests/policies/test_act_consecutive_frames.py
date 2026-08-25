@@ -168,18 +168,58 @@ def test_image_only_processor_skips_state_steps():
     from lerobot.policies.act.processor_act import make_act_pre_post_processors
     from lerobot.processor.umi_relative_ee_processor import (
         UmiDeriveStateFromActionStep,
+        UmiDropObsStateStep,
         UmiRelativeActionsStep,
         UmiRelativeStateStep,
     )
 
     pre, _ = make_act_pre_post_processors(make_image_only_config(use_proprioception=False))
     step_types = [type(step) for step in pre.steps]
-    assert UmiDeriveStateFromActionStep not in step_types
+    # The derive step must stay (it strips the anchor frame from the action and
+    # provides the anchor for the 7D->10D conversion); the state is dropped
+    # right after the conversion and never made relative.
+    assert UmiDeriveStateFromActionStep in step_types
+    assert UmiRelativeActionsStep in step_types
+    assert UmiDropObsStateStep in step_types
     assert UmiRelativeStateStep not in step_types
-    assert UmiRelativeActionsStep in step_types  # action anchor stays
+    drop_idx = step_types.index(UmiDropObsStateStep)
+    assert step_types.index(UmiRelativeActionsStep) < drop_idx
 
     pre_with_state, _ = make_act_pre_post_processors(make_config(use_umi_relative_ee=True))
-    assert UmiDeriveStateFromActionStep in [type(s) for s in pre_with_state.steps]
+    with_state_types = [type(s) for s in pre_with_state.steps]
+    assert UmiDeriveStateFromActionStep in with_state_types
+    assert UmiRelativeStateStep in with_state_types
+    assert UmiDropObsStateStep not in with_state_types
+
+
+def test_image_only_processor_end_to_end_shapes():
+    from lerobot.policies.act.processor_act import make_act_pre_post_processors
+    from lerobot.utils.constants import OBS_STATE
+
+    config = make_image_only_config(use_proprioception=False)
+    pre, _ = make_act_pre_post_processors(
+        config,
+        dataset_stats={
+            CAMERA: {
+                "mean": torch.zeros(3, 1, 1),
+                "std": torch.ones(3, 1, 1),
+            },
+            ACTION: {
+                "min": torch.zeros(10),
+                "max": torch.ones(10),
+            },
+        },
+    )
+    batch = {
+        CAMERA: torch.rand(2, 3, H, W),
+        # raw absolute action window: [t-1, t, ..., t+29] in 7D
+        ACTION: torch.rand(2, 31, 7),
+        "action_is_pad": torch.zeros(2, 31, dtype=torch.bool),
+    }
+    out = pre(batch)
+    assert OBS_STATE not in out  # image-only: no state reaches the policy
+    assert out[ACTION].shape == (2, 30, 10)  # anchor stripped + 7D -> 10D relative
+    assert out[CAMERA].shape == (2, 3, H, W)
 
 
 def test_image_only_checkpoint_roundtrip(tmp_path):

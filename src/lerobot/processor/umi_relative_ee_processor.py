@@ -318,6 +318,36 @@ class UmiRelativeAxisAngleActionsStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("umi_drop_obs_state")
+@dataclass
+class UmiDropObsStateStep(ProcessorStep):
+    """Remove the derived UMI state from the observation (image-only policies).
+
+    ``UmiDeriveStateFromActionStep`` must still run (it strips the anchor frame
+    from the action and provides the anchor that ``UmiRelativeActionsStep``
+    converts the chunk against), but with `use_proprioception=False` the state
+    must not reach the policy as an input. Placed AFTER the relative-actions
+    step so the cached anchor (used by the postprocessor to convert
+    predictions back to absolute poses) is already stored.
+    """
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not observation or OBS_STATE not in observation:
+            return transition
+        result = deepcopy(transition)
+        new_observation = dict(result[TransitionKey.OBSERVATION])
+        new_observation.pop(OBS_STATE, None)
+        result[TransitionKey.OBSERVATION] = new_observation
+        return result
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    def transform_features(self, features):
+        return features
+
+
 @ProcessorStepRegistry.register("umi_relative_state")
 @dataclass
 class UmiRelativeStateStep(ProcessorStep):

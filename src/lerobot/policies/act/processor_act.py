@@ -26,6 +26,7 @@ from lerobot.processor import (
     RenameObservationsProcessorStep,
     UmiAbsoluteActionsStep,
     UmiDeriveStateFromActionStep,
+    UmiDropObsStateStep,
     UmiRelativeActionsStep,
     UmiRelativeStateStep,
     UnnormalizerProcessorStep,
@@ -63,14 +64,16 @@ def make_act_pre_post_processors(
     cache_key = make_umi_cache_key()
     relative_step = UmiRelativeActionsStep(cache_key=cache_key)
 
-    # With `use_proprioception=False` the policy is image-only: the state is
-    # neither derived from the action pair nor made relative, and no state
-    # feature is declared — but actions still use the relative-EE anchor (and
-    # the postprocessor still converts predictions back to absolute poses).
+    # With `use_proprioception=False` the policy is image-only. The derive step
+    # must still run (it strips the anchor frame from the action and provides
+    # the anchor the relative-actions conversion caches for the postprocessor),
+    # but the state is dropped right after — it never reaches the policy as an
+    # input and `UmiRelativeStateStep` is skipped.
     umi_state_steps = (
         [
-            *([UmiDeriveStateFromActionStep()] if config.use_proprioception else []),
+            UmiDeriveStateFromActionStep(),
             relative_step,
+            *([] if config.use_proprioception else [UmiDropObsStateStep()]),
             *([UmiRelativeStateStep()] if config.use_proprioception else []),
         ]
         if config.use_umi_relative_ee
