@@ -182,8 +182,10 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._negative_prompt_embeds = None
         # Memoized per-task T5 embeddings (frozen encoder => pure function of
         # the prompt text); training batches usually repeat one task string
-        # every step, and the CPU-resident UMT5-XXL forward is slow.
-        self._t5_embed_cache: dict[str, Tensor] = {}
+        # every step, and the CPU-resident UMT5-XXL forward is slow. Kept
+        # across resets: offline eval resets per query, and clearing this
+        # re-ran the ~1 min CPU text-encode on every single query.
+        self._t5_embed_cache: dict[str, Tensor] = getattr(self, "_t5_embed_cache", {})
         self.last_predicted_frames = None
         self.last_predicted_latents = None
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
