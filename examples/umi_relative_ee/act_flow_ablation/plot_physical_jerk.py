@@ -55,6 +55,7 @@ COLORS = {
     "smol1m": "#e377c2",
     "smolmask": "#7f7f7f",
     "openpi1m": "#bcbd22",
+    "lingbot": "#ff9896",
 }
 
 # Same representatives as the §9.2.9 figures (torch families only here).
@@ -76,6 +77,7 @@ REPRESENTATIVES = [
     ("smolvla_rot6d_seed1000_1000000steps", "SmolVLA rot6d 1M", "smol1m"),
     ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-ang 100k", "smol"),
     ("smolvla_masked_seed1000_1000000steps", "SmolVLA masked 1M", "smolmask"),
+    ("lingbot_va_axis_angle_seed1000_200000steps", "LingBot-VA 200k", "lingbot"),
 ]
 
 FAMILY_PREFIXES = [
@@ -94,6 +96,7 @@ FAMILY_PREFIXES = [
     ("smolvla_rot6d_", "smol", "SmolVLA rot6d"),
     ("smolvla_axis_angle_", "smol", "SmolVLA axis-angle"),
     ("smolvla_masked_", "smolmask", "SmolVLA masked"),
+    ("lingbot_va_axis_angle_", "lingbot", "LingBot-VA"),
 ]
 
 
@@ -215,6 +218,8 @@ def _budget_series():
          "smol1m", "SmolVLA full-width", "D"),
         (lambda run: re.fullmatch(r"smolvla_masked_seed1000_\d{7}steps", run) is not None,
          "smolmask", "SmolVLA masked", "v"),
+        (lambda run: run.startswith("lingbot_va_axis_angle_seed1000_"),
+         "lingbot", "LingBot-VA", "*"),
     ]
     singles = [
         ("act_r18_l1_", "actl1", "ACT-L1"),

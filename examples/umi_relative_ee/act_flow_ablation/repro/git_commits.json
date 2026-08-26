@@ -3,11 +3,12 @@
   "lerobot_host": {
     "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
     "branch": "research/umi-act-flowmatching-ablation-20260811",
-    "commit": "fd01a685803640abd7dd1ae25cb9f7514ad5bcdc",
-    "dirty_files": 0,
+    "commit": "c2c612f028022b171320e11e0f2f9d87b714fdc4",
+    "dirty_files": 38,
+    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent) and both report documents; src/ itself is clean",
     "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
-    "src_py_tree_sha256": "dedbb776dfbc14fd321c969d91e194b35cd24113b2326d033e9127e2ccd3d61d",
-    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the --stability_eval/--cross_frame_mse_eval evaluator extensions, and the lingbot_va offline 5-D camera-window fix (177cdf04)."
+    "src_py_tree_sha256": "3a98e0d0de46e41debbec361ad18a05a5e0cfb78db66ea630bbb6d4ec6e9c508",
+    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
   },
   "lerobot_kiwi": {
     "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",

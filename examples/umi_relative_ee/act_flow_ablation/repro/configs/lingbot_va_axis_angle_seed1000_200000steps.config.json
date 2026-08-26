@@ -1,0 +1,96 @@
+{
+    "type": "lingbot_va",
+    "n_obs_steps": 1,
+    "input_features": {
+        "observation.images.camera": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                256,
+                256
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                7
+            ]
+        }
+    },
+    "device": "cuda",
+    "use_amp": false,
+    "use_peft": true,
+    "push_to_hub": false,
+    "repo_id": null,
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": "/mnt/data1/projects/lerobot-arch-exp/train/lingbot_va_axis_angle_seed1000_200000steps/checkpoints/last/pretrained_model",
+    "use_umi_relative_ee": true,
+    "umi_rot6d_identity_norm": true,
+    "patch_size": [
+        1,
+        2,
+        2
+    ],
+    "num_attention_heads": 24,
+    "attention_head_dim": 128,
+    "in_channels": 48,
+    "out_channels": 48,
+    "action_dim": 30,
+    "text_dim": 4096,
+    "freq_dim": 256,
+    "ffn_dim": 14336,
+    "num_layers": 30,
+    "cross_attn_norm": true,
+    "eps": 1e-06,
+    "rope_max_seq_len": 1024,
+    "attn_mode": "flex",
+    "wan_pretrained_path": "/mnt/data1/projects/lerobot-arch-exp/lingbot/assets/lingbot_va_frozen_libero_long",
+    "dtype": "bfloat16",
+    "text_encoder_device": "cpu",
+    "obs_cam_keys": [
+        "observation.images.camera"
+    ],
+    "image_hflip": false,
+    "camera_layout": "width_concat",
+    "height": 128,
+    "width": 128,
+    "action_per_frame": 4,
+    "frame_chunk_size": 4,
+    "attn_window": 30,
+    "num_inference_steps": 20,
+    "video_exec_step": -1,
+    "action_num_inference_steps": 50,
+    "guidance_scale": 5.0,
+    "action_guidance_scale": 1.0,
+    "snr_shift": 5.0,
+    "action_snr_shift": 0.05,
+    "max_sequence_length": 512,
+    "used_action_channel_ids": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+    ],
+    "save_predicted_video": false,
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "IDENTITY",
+        "ACTION": "IDENTITY"
+    },
+    "optimizer_lr": 1e-05,
+    "optimizer_betas": [
+        0.9,
+        0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 0.0001,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_warmup_steps": 1000
+}

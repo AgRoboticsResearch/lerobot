@@ -53,6 +53,7 @@ COLORS = {
     "smol1m": "#e377c2",
     "smolmask": "#7f7f7f",
     "openpi1m": "#bcbd22",
+    "lingbot": "#ff9896",
 }
 
 # Bar-chart representatives: (run, label, family). One row per surviving
@@ -81,6 +82,7 @@ REPRESENTATIVES = [
     ("smolvla_rot6d_seed1000_1000000steps", "SmolVLA rot6d 1M (full-width)", "smol1m"),
     ("smolvla_axis_angle_seed1000_100000steps", "SmolVLA axis-angle 100k", "smol"),
     ("smolvla_masked_seed1000_1000000steps", "SmolVLA masked 1M (§9.2.10 B)", "smolmask"),
+    ("lingbot_va_axis_angle_seed1000_200000steps", "LingBot-VA 200k", "lingbot"),
 ]
 
 PANELS = [
@@ -113,6 +115,7 @@ FAMILY_PREFIXES = [
     ("smolvla_rot6d_", "smol", "SmolVLA rot6d"),
     ("smolvla_axis_angle_", "smol", "SmolVLA axis-angle"),
     ("smolvla_masked_", "smolmask", "SmolVLA masked"),
+    ("lingbot_va_axis_angle_", "lingbot", "LingBot-VA"),
 ]
 FAMILY_ORDER = [fam for _, fam, _ in FAMILY_PREFIXES]
 
@@ -206,14 +209,18 @@ def fig_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if re.fullmatch(r"smolvla_masked_seed1000_\d{7}steps", run)
     )
+    ling = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("lingbot_va_axis_angle_seed1000_")
+    )
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(
         "Unified horizon-10 budget curves — accuracy@0.1 and XYZ endpoint vs training steps",
         fontsize=12,
     )
     specs = [
-        (axes[0], "action_acc_at_0p1", "accuracy@0.1 (action, normalized)", 1, (0.86, 0.95)),
-        (axes[1], "xyz_end_m", "XYZ endpoint error (mm)", 1000, (8, 17)),
+        (axes[0], "action_acc_at_0p1", "accuracy@0.1 (action, normalized)", 1, (0.50, 0.95)),
+        (axes[1], "xyz_end_m", "XYZ endpoint error (mm)", 1000, (8, 23)),
     ]
     for ax, met, ylab, scale, ylim in specs:
         for series, color, label, marker in (
@@ -224,6 +231,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
+            (ling, COLORS["lingbot"], "LingBot-VA (3 ckpts)", "*"),
         ):
             if not series:
                 continue
@@ -269,7 +277,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
 
 
 def fig_jitter(rows: dict[str, dict]) -> None:
@@ -370,6 +378,10 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if re.fullmatch(r"smolvla_masked_seed1000_\d{7}steps", run)
     )
+    ling = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("lingbot_va_axis_angle_seed1000_")
+    )
     ref = next(iter(rows.values()))
     gt_rot = float(ref["gt_rot_jerk_deg"])
     gt_xyz = float(ref["gt_xyz_jerk_m"]) * 1000
@@ -393,6 +405,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
+            (ling, COLORS["lingbot"], "LingBot-VA (3 ckpts)", "*"),
         ):
             if not series:
                 continue
@@ -439,7 +452,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_jitter_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
 
 
 def main() -> int:
