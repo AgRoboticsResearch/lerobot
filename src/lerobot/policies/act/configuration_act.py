@@ -106,6 +106,14 @@ class ACTConfig(PreTrainedConfig):
     # no state is derived from the action pair, and the transformer conditions
     # on image tokens only (actions still use the relative-EE anchor).
     use_proprioception: bool = True
+    # Total poses W in the UMI-derived proprioceptive state window, oldest-first
+    # with the current pose LAST: [rel(t-(W-1)|t) ... rel(t-1|t) || identity+gripper],
+    # flattened to 10*W dims. 2 (default) keeps the historical two-pose 20D state
+    # bit-identical. W > 2 also adds W-1 leading negative action deltas so the
+    # dataset fetches the pose history (clamped at episode starts, standard
+    # `*_is_pad` semantics). W > 2 is training/offline-eval only: the live
+    # single-pose state buffer in `UmiRelativeStateStep` stays W=2.
+    umi_state_window: int = 2
 
     # Deprecated fields retained so existing processor-based ACT checkpoints
     # can be decoded without rewriting train_config.json.
@@ -199,6 +207,11 @@ class ACTConfig(PreTrainedConfig):
                 )
             if self.use_joint_obs:
                 raise ValueError("UMI processor mode derives state from absolute EE actions.")
+            if self.umi_state_window < 2:
+                raise ValueError(
+                    "`umi_state_window` must be >= 2 (the current pose is always "
+                    f"included). Got {self.umi_state_window}."
+                )
             self.derive_state_from_action = True
             self.use_relative_actions = True
             self.pose_dim = 6
@@ -282,7 +295,9 @@ class ACTConfig(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list:
         if self.use_umi_relative_ee:
-            return [-1] + list(range(self.chunk_size))
+            # W-1 leading negative deltas fetch the state-window pose history;
+            # W=2 yields [-1] + range(chunk_size), the historical list exactly.
+            return list(range(1 - self.umi_state_window, 0)) + list(range(self.chunk_size))
         return list(range(self.chunk_size))
 
     @property

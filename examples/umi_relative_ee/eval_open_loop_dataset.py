@@ -733,6 +733,17 @@ def main() -> None:
     action_delta_indices = policy_config.action_delta_indices
     if action_delta_indices is None or not action_delta_indices:
         raise ValueError("UMI relative-EE evaluation requires action delta indices")
+    # Leading negative deltas fetch the proprio state-window history (W-1 poses
+    # for ACT `umi_state_window=W`); the scored chunk starts after them.
+    n_action_history = sum(1 for delta in action_delta_indices if delta < 0)
+    if n_action_history < 1:
+        raise ValueError("UMI relative-EE evaluation expects leading negative action deltas")
+    window_from_config = getattr(policy_config, "umi_state_window", None)
+    if window_from_config is not None and window_from_config != n_action_history + 1:
+        raise ValueError(
+            f"action_delta_indices ({n_action_history} negative deltas) desync from "
+            f"umi_state_window={window_from_config}"
+        )
     query_min_action_offset = (
         min(action_delta_indices) if args.query_min_action_offset is None else args.query_min_action_offset
     )
@@ -793,6 +804,7 @@ def main() -> None:
     samples: list[dict[str, float]] = []
     scored_chunks: list[tuple[torch.Tensor, torch.Tensor]] = []
     inference_seconds: list[float] = []
+    clamped_history_queries = 0
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     for sample_index, (dataset_index, episode_index, frame_index) in enumerate(query_indices):
@@ -801,11 +813,16 @@ def main() -> None:
             batch[CAMERA_KEY] = batch[CAMERA_KEY].to(torch.float32) / 255.0
         if not batch.get("task"):
             batch["task"] = [args.task]
+        # History pads (clamped episode-start frames duplicated into the state
+        # window) are protocol-accepted; only padded SCORED actions are errors.
         padding = batch.get("action_is_pad")
-        if padding is not None and bool(padding.any()):
+        if padding is not None and bool(padding[..., n_action_history:].any()):
             raise RuntimeError(
-                f"Internal sampling error: episode {episode_index} frame {frame_index} is padded"
+                f"Internal sampling error: episode {episode_index} frame {frame_index} "
+                "has padded scored actions"
             )
+        if padding is not None and bool(padding[..., :n_action_history].any()):
+            clamped_history_queries += 1
 
         preprocessor.reset()
         postprocessor.reset()
@@ -815,7 +832,7 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.manual_seed_all(args.seed + sample_index)
 
-        ground_truth = batch[ACTION][0, 1:].to(torch.float32)
+        ground_truth = batch[ACTION][0, n_action_history:].to(torch.float32)
         with torch.no_grad():
             processed = preprocessor(batch)
             processed.pop(ACTION, None)
@@ -883,6 +900,13 @@ def main() -> None:
 
     # accuracy@tau needs a global normalization: per-dim (q99-q01)/2 half-ranges
     # pooled over this evaluation's GT chunks (protocol-fixed, model-independent).
+    if clamped_history_queries:
+        logger.info(
+            "%d/%d queries clamp part of the %d-frame state history at the episode start",
+            clamped_history_queries,
+            len(query_indices),
+            n_action_history,
+        )
     tau_scales = gt_quantile_scales([ground_truth for _, ground_truth in scored_chunks])
     for sample, (predicted, ground_truth) in zip(samples, scored_chunks, strict=True):
         sample.update(accuracy_at_tau(predicted, ground_truth, tau_scales))
@@ -928,6 +952,8 @@ def main() -> None:
             "definition": "per-dim error / ((q99-q01)/2 of pooled GT chunks); inclusive <= tau",
             "per_dim_half_ranges": [float(scale) for scale in tau_scales],
         },
+        "action_history_frames": n_action_history,
+        "queries_with_clamped_state_history": clamped_history_queries,
         "summary": summarize(samples),
         "samples": samples,
     }

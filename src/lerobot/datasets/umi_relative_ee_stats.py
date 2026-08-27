@@ -82,10 +82,16 @@ def _valid_query_starts(episode_indices: np.ndarray, query_length: int) -> np.nd
     return np.concatenate(starts) if starts else np.empty(0, dtype=np.int64)
 
 
-# rot6d lives at action dims [3:9] within [pos(3), rot6d(6), gripper(1)]. The derived
-# 20D state stacks two such poses, so rot6d repeats at [3:9] and [13:19].
+# rot6d lives at action dims [3:9] within [pos(3), rot6d(6), gripper(1)]. A derived
+# 10*W state stacks W such poses, so pose i's rot6d occupies [10i+3, 10i+9).
 _ROT6D_ACTION_SLICES: tuple[slice, ...] = (slice(3, 9),)
-_ROT6D_STATE_SLICES: tuple[slice, ...] = (slice(3, 9), slice(13, 19))
+
+
+def _rot6d_state_slices(state_window: int) -> tuple[slice, ...]:
+    return tuple(slice(10 * i + 3, 10 * i + 9) for i in range(state_window))
+
+
+_ROT6D_STATE_SLICES: tuple[slice, ...] = _rot6d_state_slices(2)
 
 # Statistics that make every NormalizationMode a no-op on a dimension: MIN_MAX needs
 # min=-1/max=1; QUANTILES/QUANTILE10 need q01=q10=-1, q90=q99=1; MEAN_STD needs
@@ -102,7 +108,9 @@ _IDENTITY_ROT6D_STATS: dict[str, float] = {
 }
 
 
-def _force_identity_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -> None:
+def _force_identity_rot6d_stats(
+    stats: dict[str, dict[str, np.ndarray]], state_window: int = 2
+) -> None:
     """Overwrite rot6d statistics in place so normalization leaves rotation unchanged.
 
     rot6d entries are rotation-matrix rows already bounded in [-1, 1]. Scaling them
@@ -113,7 +121,7 @@ def _force_identity_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -> None
     """
     for key, slices in (
         (ACTION, _ROT6D_ACTION_SLICES),
-        ("observation.state", _ROT6D_STATE_SLICES),
+        ("observation.state", _rot6d_state_slices(state_window)),
     ):
         feature_stats = stats.get(key)
         if not feature_stats:
@@ -140,12 +148,15 @@ def _force_identity_state_rot6d_stats(stats: dict[str, dict[str, np.ndarray]]) -
 
 
 def compute_umi_relative_ee_stats(
-    hf_dataset, chunk_size: int, identity_rot6d: bool = False
+    hf_dataset, chunk_size: int, identity_rot6d: bool = False, state_window: int = 2
 ) -> dict[str, dict[str, np.ndarray]]:
     """Compute stats for the exact tensors produced by the UMI processors.
 
     The second queried action is the chunk base and first retained target. This
     intentionally includes the identity/current-pose target at action index 0.
+
+    ``state_window`` W extends the state to [t-(W-1) ... t] poses (current LAST,
+    flattened 10*W). W=2 is the historical two-pose 20D state, bit-identical.
     """
     actions = np.asarray(hf_dataset[ACTION], dtype=np.float32)
     if actions.ndim != 2 or actions.shape[1] != 7:
@@ -154,17 +165,23 @@ def compute_umi_relative_ee_stats(
             f"[xyz, axis-angle, gripper], got {actions.shape}"
         )
     episode_indices = np.asarray(hf_dataset["episode_index"])
-    starts = _valid_query_starts(episode_indices, chunk_size + 1)
-    if len(starts) == 0:
+    # Valid windows span [t-(W-1) ... t+chunk-1]: length chunk + W - 1 (W=2 gives
+    # the historical chunk_size + 1). Only unclamped in-episode windows are used.
+    window_starts = _valid_query_starts(episode_indices, chunk_size + state_window - 1)
+    if len(window_starts) == 0:
         raise ValueError(
-            f"No episode contains the required {chunk_size + 1} contiguous frames "
-            f"for chunk_size={chunk_size}"
+            f"No episode contains the required {chunk_size + state_window - 1} contiguous "
+            f"frames for chunk_size={chunk_size}, state_window={state_window}"
         )
+    # Re-center on the historical query start s = t-1: state poses span
+    # [s-(W-2) ... s+1], base/target actions span [s+1 ... s+chunk].
+    starts = window_starts + (state_window - 2)
 
     logger.info("Computing UMI relative-EE stats from %d valid chunks", len(starts))
     action_stats = RunningQuantileStats()
     state_stats = RunningQuantileStats()
     offsets = np.arange(1, chunk_size + 1)
+    state_offsets = np.arange(2 - state_window, 2)
 
     # Keep temporary [num_chunks, chunk_size, 7] arrays bounded on large datasets.
     for batch_start in range(0, len(starts), 20_000):
@@ -175,9 +192,11 @@ def compute_umi_relative_ee_stats(
         relative_actions = _absolute_aa_to_relative_rot6d(expanded_base, targets)
         action_stats.update(relative_actions)
 
-        state_pair = np.stack([actions[batch], base], axis=1)
-        state_base = np.broadcast_to(base[:, None, :], state_pair.shape)
-        relative_state = _absolute_aa_to_relative_rot6d(state_base, state_pair).reshape(-1, 20)
+        state_poses = actions[batch[:, None] + state_offsets[None, :]]
+        state_base = np.broadcast_to(base[:, None, :], state_poses.shape)
+        relative_state = _absolute_aa_to_relative_rot6d(state_base, state_poses).reshape(
+            -1, 10 * state_window
+        )
         state_stats.update(relative_state)
 
     stats = {
@@ -185,7 +204,7 @@ def compute_umi_relative_ee_stats(
         "observation.state": state_stats.get_statistics(),
     }
     if identity_rot6d:
-        _force_identity_rot6d_stats(stats)
+        _force_identity_rot6d_stats(stats, state_window=state_window)
         logger.info(
             "UMI relative-EE: rot6d action/state stats forced to identity "
             "(rotation left unnormalized)"

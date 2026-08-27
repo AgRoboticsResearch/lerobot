@@ -68,13 +68,19 @@ def make_act_pre_post_processors(
     # must still run (it strips the anchor frame from the action and provides
     # the anchor the relative-actions conversion caches for the postprocessor),
     # but the state is dropped right after — it never reaches the policy as an
-    # input and `UmiRelativeStateStep` is skipped.
+    # input and `UmiRelativeStateStep` is skipped. Both steps carry the state
+    # window so the derive step strips exactly the W-1 leading history actions
+    # the dataset fetched, proprio or not.
     umi_state_steps = (
         [
-            UmiDeriveStateFromActionStep(),
+            UmiDeriveStateFromActionStep(window=config.umi_state_window),
             relative_step,
             *([] if config.use_proprioception else [UmiDropObsStateStep()]),
-            *([UmiRelativeStateStep()] if config.use_proprioception else []),
+            *(
+                [UmiRelativeStateStep(window=config.umi_state_window)]
+                if config.use_proprioception
+                else []
+            ),
         ]
         if config.use_umi_relative_ee
         else []

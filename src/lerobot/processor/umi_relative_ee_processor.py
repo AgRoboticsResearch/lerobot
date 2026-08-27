@@ -190,9 +190,15 @@ def to_umi_absolute_axis_angle_actions(actions: Tensor, state: Tensor) -> Tensor
 
 
 def to_umi_relative_state(state: Tensor) -> Tensor:
-    """Convert ``[previous, current]`` 7D poses to a flattened 20D state."""
-    if state.ndim != 3 or state.shape[-2:] != (2, 7):
-        raise ValueError(f"UMI state must have shape [batch, 2, 7], got {tuple(state.shape)}")
+    """Convert a W-pose 7D window (current LAST) to a flattened 10*W state.
+
+    W=2 is the historical ``[previous, current]`` -> 20D case; larger windows
+    are produced by `UmiDeriveStateFromActionStep(window=W)`.
+    """
+    if state.ndim != 3 or state.shape[-1] != 7 or state.shape[-2] < 2:
+        raise ValueError(
+            f"UMI state must have shape [batch, W>=2, 7] (current pose last), got {tuple(state.shape)}"
+        )
     current = state[:, -1:].expand_as(state)
     return absolute_aa_to_relative_rot6d(current, state).flatten(start_dim=-2)
 
@@ -207,9 +213,19 @@ def make_umi_cache_key() -> str:
 @ProcessorStepRegistry.register("umi_derive_state_from_action")
 @dataclass
 class UmiDeriveStateFromActionStep(ProcessorStep):
-    """Build state from ``action[t-1:t+1]`` and remove the leading action."""
+    """Build state from ``action[t-W+1:t+1]`` and remove the leading W-1 actions.
+
+    ``window`` W is the total pose count (current pose LAST). W=2 keeps the
+    historical behavior bit-identical: state = ``action[..., :2, :]`` and the
+    leading anchor action is dropped. W>2 drops W-1 leading history actions.
+    """
 
     enabled: bool = True
+    window: int = 2
+
+    def __post_init__(self) -> None:
+        if self.window < 2:
+            raise ValueError(f"window must be >= 2 (current pose always included), got {self.window}")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         action = transition.get(TransitionKey.ACTION)
@@ -217,21 +233,21 @@ class UmiDeriveStateFromActionStep(ProcessorStep):
             return transition
         result = deepcopy(transition)
         observation = dict(result.get(TransitionKey.OBSERVATION) or {})
-        observation[OBS_STATE] = action[..., :2, :]
+        observation[OBS_STATE] = action[..., : self.window, :]
         result[TransitionKey.OBSERVATION] = observation
-        result[TransitionKey.ACTION] = action[..., 1:, :]
+        result[TransitionKey.ACTION] = action[..., self.window - 1 :, :]
 
         complementary = dict(result.get(TransitionKey.COMPLEMENTARY_DATA, {}))
         for container in (result, complementary):
             padding = container.get("action_is_pad")
             if isinstance(padding, Tensor) and padding.ndim >= 2:
-                container["action_is_pad"] = padding[..., 1:]
+                container["action_is_pad"] = padding[..., self.window - 1 :]
         if complementary:
             result[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return result
 
     def get_config(self) -> dict[str, Any]:
-        return {"enabled": self.enabled}
+        return {"enabled": self.enabled, "window": self.window}
 
     def transform_features(self, features):
         return features
@@ -351,10 +367,22 @@ class UmiDropObsStateStep(ProcessorStep):
 @ProcessorStepRegistry.register("umi_relative_state")
 @dataclass
 class UmiRelativeStateStep(ProcessorStep):
-    """Convert two absolute 7D poses to a flattened relative 20D state."""
+    """Convert a W-pose 7D window to a flattened relative 10*W state.
+
+    Training path: the dataset/derive step supplies ``[B, W, 7]`` (current
+    pose LAST). Live path (``[B, 7]`` single poses): the step buffers the
+    previous pose and builds the W=2 pair — only implemented for window=2;
+    W>2 state windows are training/offline-eval only (no deployment frame
+    history buffer).
+    """
 
     enabled: bool = True
+    window: int = 2
     _previous_state: Tensor | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.window < 2:
+            raise ValueError(f"window must be >= 2 (current pose always included), got {self.window}")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
@@ -364,13 +392,21 @@ class UmiRelativeStateStep(ProcessorStep):
         if state is None:
             return transition
         if state.ndim == 2:
+            if self.window != 2:
+                raise NotImplementedError(
+                    "Single-pose live state buffering is only implemented for window=2; "
+                    "W>2 state windows are training/offline-eval only (deployment out of scope)."
+                )
             previous = state if self._previous_state is None else self._previous_state.to(state)
             state_pair = torch.stack([previous, state], dim=1)
             self._previous_state = state.detach().clone()
-        elif state.ndim == 3 and state.shape[1] == 2:
+        elif state.ndim == 3 and state.shape[1] == self.window:
             state_pair = state
         else:
-            raise ValueError(f"UMI state must be [B, 7] or [B, 2, 7], got {tuple(state.shape)}")
+            raise ValueError(
+                f"UMI state must be [B, 7] (live, window=2) or [B, {self.window}, 7], "
+                f"got {tuple(state.shape)}"
+            )
         result = deepcopy(transition)
         result_observation = dict(observation)
         result_observation[OBS_STATE] = to_umi_relative_state(state_pair)
@@ -381,7 +417,7 @@ class UmiRelativeStateStep(ProcessorStep):
         self._previous_state = None
 
     def get_config(self) -> dict[str, Any]:
-        return {"enabled": self.enabled}
+        return {"enabled": self.enabled, "window": self.window}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -390,7 +426,7 @@ class UmiRelativeStateStep(ProcessorStep):
         observation_features = result.get(PipelineFeatureType.OBSERVATION, {})
         if OBS_STATE in observation_features:
             feature = observation_features[OBS_STATE]
-            observation_features[OBS_STATE] = PolicyFeature(type=feature.type, shape=(20,))
+            observation_features[OBS_STATE] = PolicyFeature(type=feature.type, shape=(10 * self.window,))
         return result
 
 

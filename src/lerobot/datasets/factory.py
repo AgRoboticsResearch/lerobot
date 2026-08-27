@@ -164,6 +164,9 @@ def make_dataset(
             and getattr(trainable_config, "umi_rotation_representation", "rot6d") == "axis_angle"
         )
         chunk_size = getattr(trainable_config, "chunk_size", None) or trainable_config.horizon
+        # ACT-family state window (total poses incl. identity-current); other
+        # UMI policies keep the historical W=2 default.
+        state_window = int(getattr(trainable_config, "umi_state_window", 2))
         if not is_validation:
             dataset.meta.stats.update(
                 compute_umi_relative_axis_angle_stats(
@@ -181,6 +184,7 @@ def make_dataset(
                     identity_rot6d=bool(
                         getattr(trainable_config, "umi_rot6d_identity_norm", False)
                     ),
+                    state_window=state_window,
                 )
             )
         dataset.meta.info.features[ACTION] = {
@@ -206,8 +210,8 @@ def make_dataset(
         if getattr(trainable_config, "use_proprioception", True):
             dataset.meta.info.features[OBS_STATE] = {
                 "dtype": "float32",
-                "shape": [20],
-                "names": [f"umi_relative_state_{index}" for index in range(20)],
+                "shape": [10 * state_window],
+                "names": [f"umi_relative_state_{index}" for index in range(10 * state_window)],
             }
         else:
             # Image-only policies (e.g. ACT `use_proprioception=False`): drop the
@@ -215,10 +219,12 @@ def make_dataset(
             dataset.meta.info.features.pop(OBS_STATE, None)
         logging.info(
             "Prepared %s UMI relative-EE dataset for %s: raw action 7D -> model action %s, "
-            "derived state 20D",
+            "derived state %dD (W=%d)",
             "validation" if is_validation else "training",
             trainable_config.type,
             "7D axis-angle" if uses_axis_angle else "10D rot6d",
+            10 * state_window,
+            state_window,
         )
 
     if dataset_config.use_imagenet_stats:

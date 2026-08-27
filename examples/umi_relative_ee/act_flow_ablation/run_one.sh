@@ -127,6 +127,25 @@ case "$VARIANT" in
       --policy.use_proprioception=false
     )
     ;;
+  act_r50_v1_vae_state5)
+    # Q4 expansion: 5-pose proprio state window ([t-4..t] in t's frame, 50D).
+    # See RESEARCH_REPORT.md Q4 (state-window sweep W=2/5/10).
+    POLICY+=(
+      --policy.use_vae=true
+      --policy.vision_backbone=resnet50
+      --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
+      --policy.umi_state_window=5
+    )
+    ;;
+  act_r50_v1_vae_state10)
+    # Q4 expansion: 10-pose proprio state window ([t-9..t] in t's frame, 100D).
+    POLICY+=(
+      --policy.use_vae=true
+      --policy.vision_backbone=resnet50
+      --policy.pretrained_backbone_weights=ResNet50_Weights.IMAGENET1K_V1
+      --policy.umi_state_window=10
+    )
+    ;;
   act_r50_large)
     POLICY+=(
       --policy.use_vae=true
