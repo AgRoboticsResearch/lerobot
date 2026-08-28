@@ -7,7 +7,7 @@ VARIANT="${1:?usage: run_one.sh VARIANT STEPS [SEED]}"
 STEPS="${2:?usage: run_one.sh VARIANT STEPS [SEED]}"
 SEED="${3:-1000}"
 
-REPO=/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified
+REPO="${UMI_REPO:-/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified}"
 ARTIFACT_ROOT="${UMI_ABLATION_ROOT:-/media/zfei/Glowat512/projects/lerobot-arch-exp}"
 TRAIN_REPO=sroi/sroiv2_strawberry_picking_lab_1459_occlusion
 TRAIN_ROOT="${UMI_TRAIN_ROOT:-/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1459_occlusion}"

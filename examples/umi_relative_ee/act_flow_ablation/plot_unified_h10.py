@@ -44,6 +44,8 @@ COLORS = {
     "r50v1": "#1f77b4",
     "2frame": "#1f9e89",
     "noproprio": "#8c564b",
+    "state5": "#e6550d",
+    "state10": "#756bb1",
     "actl1": "#2ca02c",
     "r50vae": "#9467bd",
     "flow": "#d62728",
@@ -64,6 +66,8 @@ REPRESENTATIVES = [
     ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
     ("act_r50_v1_vae_2frame_seed1000_0500000steps", "ACT R50-VAE 2-frame 500k (Q3)", "2frame"),
     ("act_r50_v1_vae_noproprio_seed1000_0500000steps", "ACT R50-VAE no-proprio 500k (Q4)", "noproprio"),
+    ("act_r50_v1_vae_state5_seed1000_0500000steps", "ACT R50-VAE state-W5 500k (Q4+)", "state5"),
+    ("act_r50_v1_vae_state10_seed1000_0500000steps", "ACT R50-VAE state-W10 500k (Q4+)", "state10"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
     ("act_r18_l1_seed3000_100000steps", "ACT-L1 100k s3000", "actl1"),
     ("act_r50_vae_seed2000_100000steps", "ACT R50-VAE (ImageNet-V2) 80k s2000", "r50vae"),
@@ -99,9 +103,11 @@ PANELS = [
 # reference families after).
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-    # 2frame/noproprio prefixes MUST precede act_r50_v1_vae_ (strict extensions).
+    # 2frame/noproprio/state5/state10 prefixes MUST precede act_r50_v1_vae_ (strict extensions).
     ("act_r50_v1_vae_noproprio_", "noproprio", "R50-VAE no-proprio (Q4)"),
     ("act_r50_v1_vae_2frame_", "2frame", "R50-VAE 2-frame (Q3)"),
+    ("act_r50_v1_vae_state10_", "state10", "R50-VAE state-W10 (Q4+)"),
+    ("act_r50_v1_vae_state5_", "state5", "R50-VAE state-W5 (Q4+)"),
     ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
     ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
@@ -197,6 +203,14 @@ def fig_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("act_r50_v1_vae_noproprio_seed1000_")
     )
+    w5 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_state5_seed1000_")
+    )
+    w10 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_state10_seed1000_")
+    )
     port = sorted(
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
@@ -220,7 +234,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     )
     specs = [
         (axes[0], "action_acc_at_0p1", "accuracy@0.1 (action, normalized)", 1, (0.50, 0.95)),
-        (axes[1], "xyz_end_m", "XYZ endpoint error (mm)", 1000, (8, 23)),
+        (axes[1], "xyz_end_m", "XYZ endpoint error (mm)", 1000, (7, 23)),
     ]
     for ax, met, ylab, scale, ylim in specs:
         for series, color, label, marker in (
@@ -228,6 +242,8 @@ def fig_budget(rows: dict[str, dict]) -> None:
             (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (q3, COLORS["2frame"], "ACT R50-VAE 2-frame (Q3, 5 ckpts)", "x"),
             (q4, COLORS["noproprio"], "ACT R50-VAE no-proprio (Q4, 5 ckpts)", "P"),
+            (w5, COLORS["state5"], "ACT R50-VAE state-W5 (Q4+, 5 ckpts)", "<"),
+            (w10, COLORS["state10"], "ACT R50-VAE state-W10 (Q4+, 5 ckpts)", ">"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
@@ -277,7 +293,7 @@ def fig_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(w5)} state5 + {len(w10)} state10 + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
 
 
 def fig_jitter(rows: dict[str, dict]) -> None:
@@ -366,6 +382,14 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("act_r50_v1_vae_noproprio_seed1000_")
     )
+    w5 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_state5_seed1000_")
+    )
+    w10 = sorted(
+        (int(r["step"]), r) for run, r in rows.items()
+        if run.startswith("act_r50_v1_vae_state10_seed1000_")
+    )
     port = sorted(
         (int(r["step"]), r) for run, r in rows.items()
         if run.startswith("pi05_port_seed1000_")
@@ -402,6 +426,8 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
             (r50, COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
             (q3, COLORS["2frame"], "ACT R50-VAE 2-frame (Q3, 5 ckpts)", "x"),
             (q4, COLORS["noproprio"], "ACT R50-VAE no-proprio (Q4, 5 ckpts)", "P"),
+            (w5, COLORS["state5"], "ACT R50-VAE state-W5 (Q4+, 5 ckpts)", "<"),
+            (w10, COLORS["state10"], "ACT R50-VAE state-W10 (Q4+, 5 ckpts)", ">"),
             (port, COLORS["port"], "π0.5 port (curve, 19 ckpts)", "^"),
             (smol1m, COLORS["smol1m"], "SmolVLA rot6d 1M full-width (10 ckpts)", "D"),
             (smolmask, COLORS["smolmask"], "SmolVLA rot6d 1M masked (10 ckpts)", "v"),
@@ -452,7 +478,7 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     fig.tight_layout(rect=(0, 0, 1, 0.94))
     out = os.path.join(FIG_DIR, "unified_h10_jitter_budget.png")
     fig.savefig(out, dpi=200)
-    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
+    print(f"wrote {out} ({len(hist)} hist + {len(r50)} R50-VAE (ImageNet-V1) + {len(q3)} 2frame + {len(q4)} no-proprio + {len(w5)} state5 + {len(w10)} state10 + {len(port)} port + {len(smol1m)} smol-1M + {len(smolmask)} masked + {len(ling)} lingbot points)")
 
 
 def main() -> int:

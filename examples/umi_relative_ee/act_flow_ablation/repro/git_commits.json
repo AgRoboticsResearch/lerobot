@@ -1,22 +1,22 @@
 {
-  "generated": "2026-08-26",
+  "generated": "2026-08-29",
   "lerobot_host": {
     "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
     "branch": "research/umi-act-flowmatching-ablation-20260811",
-    "commit": "c2c612f028022b171320e11e0f2f9d87b714fdc4",
-    "dirty_files": 38,
-    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent) and both report documents; src/ itself is clean",
+    "commit": "b2c02b233c0466a681e7f7fa0d95d8be27972707",
+    "dirty_files": 142,
+    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent), both report documents, and the §9.2.20 evidence refresh (recompiled repro CSVs, regenerated budget figures; ~100 per-episode json.gz show as modified from gzip mtime churn only — gunzipped content verified identical); src/ itself is clean",
     "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
-    "src_py_tree_sha256": "3a98e0d0de46e41debbec361ad18a05a5e0cfb78db66ea630bbb6d4ec6e9c508",
-    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
+    "src_py_tree_sha256": "6286b49c9bd3ad97bf6feb24897b981feda0218dd9ba2b4de681fcdfb03f0a74",
+    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the umi_state_window W-pose proprio-state knob (b2c02b23, §9.2.20; default W=2 bit-identical), the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
   },
   "lerobot_kiwi": {
     "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",
     "note": "rsynced working copy, no .git; identity established by matching src/ python-tree hash (find src -name '*.py' | sort | xargs sha256sum | sha256sum)",
-    "src_py_tree_sha256": "a17609819882279c41ec1af1e4180e39e304b7ae21fffb3a7ec157789f6cac10",
-    "matches_host_src": false,
-    "src_equivalent_host_commit": "research/umi-act-flowmatching-ablation-20260811 @ e82962e4 + Q3/Q4 working-tree sync (2026-08-25); unchanged through the 2026-08-26 Q4 evals (re-hashed)",
-    "divergence": "kiwi src carries the Q3 consecutive_frames + Q4 use_proprioception + --stability_eval changes synced 2026-08-23/25 (rsync, verified by the Q3/Q4 launches reading the new config fields), on top of the 2026-08-16 base (b3d169fd) with the scheduler auto_scale flag (faba5fa5, training-schedule-only). Kiwi does NOT carry the 177cdf04 lingbot_va fix (host-side policy; kiwi ran no lingbot evals). Earlier equivalence verification: full rsync --checksum diff + 5-digit metric reproduction on the smoke cross-check (act_r50_v1_vae@1M)."
+    "src_py_tree_sha256": "6286b49c9bd3ad97bf6feb24897b981feda0218dd9ba2b4de681fcdfb03f0a74",
+    "matches_host_src": true,
+    "src_equivalent_host_commit": "research/umi-act-flowmatching-ablation-20260811 @ b2c02b23 — full additive `rsync -rc src/` from the host worktree on 2026-08-28 before the W=10 launch (kiwi src predated the Q4 knob); re-hashed identical 2026-08-29",
+    "divergence": "none as of 2026-08-29: the full checksum rsync overwrote the earlier additive-sync divergence (the kiwi-only scheduler auto_scale flag faba5fa5 is gone; kiwi now also carries the 177cdf04/c2c612f0 lingbot fixes, inert there). The W=10 arm (train + canonical evals) ran entirely on this tree."
   },
   "openpi_host": {
     "path": "/home/zfei/codes/openpi",

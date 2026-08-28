@@ -1,0 +1,307 @@
+{
+    "dataset": {
+        "repo_id": "sroi/sroiv2_strawberry_picking_lab_1459_occlusion",
+        "root": "/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_1459_occlusion",
+        "episodes": null,
+        "image_transforms": {
+            "enable": false,
+            "max_num_transforms": 3,
+            "random_order": false,
+            "tfs": {
+                "brightness": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "brightness": [
+                            0.8,
+                            1.2
+                        ]
+                    }
+                },
+                "contrast": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "contrast": [
+                            0.8,
+                            1.2
+                        ]
+                    }
+                },
+                "saturation": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "saturation": [
+                            0.5,
+                            1.5
+                        ]
+                    }
+                },
+                "hue": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "hue": [
+                            -0.05,
+                            0.05
+                        ]
+                    }
+                },
+                "sharpness": {
+                    "weight": 1.0,
+                    "type": "SharpnessJitter",
+                    "kwargs": {
+                        "sharpness": [
+                            0.5,
+                            1.5
+                        ]
+                    }
+                },
+                "affine": {
+                    "weight": 1.0,
+                    "type": "RandomAffine",
+                    "kwargs": {
+                        "degrees": [
+                            -5.0,
+                            5.0
+                        ],
+                        "translate": [
+                            0.05,
+                            0.05
+                        ]
+                    }
+                }
+            }
+        },
+        "revision": null,
+        "use_imagenet_stats": true,
+        "video_backend": "pyav",
+        "return_uint8": false,
+        "streaming": false
+    },
+    "validation_dataset": {
+        "repo_id": "sroi/sroiv2_strawberry_picking_lab_validation",
+        "root": "/mnt/data1/sroi/lerobot/sroiv2_strawberry_picking_lab_validation",
+        "episodes": null,
+        "image_transforms": {
+            "enable": false,
+            "max_num_transforms": 3,
+            "random_order": false,
+            "tfs": {
+                "brightness": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "brightness": [
+                            0.8,
+                            1.2
+                        ]
+                    }
+                },
+                "contrast": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "contrast": [
+                            0.8,
+                            1.2
+                        ]
+                    }
+                },
+                "saturation": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "saturation": [
+                            0.5,
+                            1.5
+                        ]
+                    }
+                },
+                "hue": {
+                    "weight": 1.0,
+                    "type": "ColorJitter",
+                    "kwargs": {
+                        "hue": [
+                            -0.05,
+                            0.05
+                        ]
+                    }
+                },
+                "sharpness": {
+                    "weight": 1.0,
+                    "type": "SharpnessJitter",
+                    "kwargs": {
+                        "sharpness": [
+                            0.5,
+                            1.5
+                        ]
+                    }
+                },
+                "affine": {
+                    "weight": 1.0,
+                    "type": "RandomAffine",
+                    "kwargs": {
+                        "degrees": [
+                            -5.0,
+                            5.0
+                        ],
+                        "translate": [
+                            0.05,
+                            0.05
+                        ]
+                    }
+                }
+            }
+        },
+        "revision": null,
+        "use_imagenet_stats": true,
+        "video_backend": "pyav",
+        "return_uint8": false,
+        "streaming": false
+    },
+    "env": null,
+    "policy": {
+        "type": "act",
+        "n_obs_steps": 1,
+        "input_features": {
+            "observation.images.camera": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    480,
+                    640
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    50
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    10
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "use_peft": false,
+        "push_to_hub": false,
+        "repo_id": null,
+        "private": null,
+        "tags": null,
+        "license": null,
+        "pretrained_path": null,
+        "chunk_size": 30,
+        "n_action_steps": 30,
+        "consecutive_frames": 1,
+        "use_umi_relative_ee": true,
+        "umi_rot6d_identity_norm": true,
+        "use_proprioception": true,
+        "umi_state_window": 5,
+        "obs_state_horizon": 2,
+        "obs_down_sample_steps": 1,
+        "disable_temporal_wrapper": true,
+        "use_joint_obs": false,
+        "ee_target_frame": "",
+        "derive_state_from_action": true,
+        "use_relative_actions": true,
+        "pose_dim": 6,
+        "use_rot6d": true,
+        "relative_exclude_joints": [
+            "gripper"
+        ],
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "vision_backbone": "resnet50",
+        "pretrained_backbone_weights": "ResNet50_Weights.IMAGENET1K_V1",
+        "replace_final_stride_with_dilation": false,
+        "pre_norm": false,
+        "dim_model": 512,
+        "n_heads": 8,
+        "dim_feedforward": 3200,
+        "feedforward_activation": "relu",
+        "n_encoder_layers": 4,
+        "n_decoder_layers": 1,
+        "use_vae": true,
+        "latent_dim": 32,
+        "n_vae_encoder_layers": 4,
+        "temporal_ensemble_coeff": null,
+        "dropout": 0.1,
+        "kl_weight": 10.0,
+        "action_objective": "l1",
+        "flow_num_inference_steps": 10,
+        "flow_time_sampling_beta_alpha": 1.0,
+        "flow_time_sampling_beta_beta": 1.0,
+        "flow_time_sampling_scale": 0.999,
+        "flow_time_sampling_offset": 0.001,
+        "flow_min_period": 0.004,
+        "flow_max_period": 4.0,
+        "diffusion_num_train_timesteps": 100,
+        "diffusion_num_inference_steps": 10,
+        "diffusion_beta_schedule": "squaredcos_cap_v2",
+        "diffusion_clip_sample": true,
+        "diffusion_clip_sample_range": 1.0,
+        "optimizer_lr": 1e-05,
+        "optimizer_weight_decay": 0.0001,
+        "optimizer_lr_backbone": 1e-05
+    },
+    "reward_model": null,
+    "output_dir": "/mnt/data1/projects/lerobot-arch-exp/train/act_r50_v1_vae_state5_seed1000_500000steps",
+    "job_name": "act_r50_v1_vae_state5_seed1000_500000steps",
+    "resume": false,
+    "seed": 1000,
+    "cudnn_deterministic": false,
+    "num_workers": 4,
+    "batch_size": 8,
+    "prefetch_factor": 4,
+    "persistent_workers": true,
+    "steps": 500000,
+    "eval_freq": 0,
+    "val_freq": 10000,
+    "log_freq": 200,
+    "tolerance_s": 0.0001,
+    "save_checkpoint": true,
+    "save_freq": 100000,
+    "use_policy_training_preset": true,
+    "optimizer": {
+        "type": "adamw",
+        "lr": 1e-05,
+        "weight_decay": 0.0001,
+        "grad_clip_norm": 10.0,
+        "betas": [
+            0.9,
+            0.999
+        ],
+        "eps": 1e-08
+    },
+    "scheduler": null,
+    "eval": {
+        "n_episodes": 50,
+        "batch_size": 22,
+        "use_async_envs": true
+    },
+    "wandb": {
+        "enable": false,
+        "disable_artifact": false,
+        "project": "lerobot",
+        "entity": null,
+        "notes": null,
+        "run_id": null,
+        "mode": null,
+        "add_tags": true
+    },
+    "peft": null,
+    "sample_weighting": null,
+    "rename_map": {},
+    "checkpoint_path": null
+}
