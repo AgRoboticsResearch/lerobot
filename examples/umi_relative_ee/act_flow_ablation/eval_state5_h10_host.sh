@@ -15,7 +15,10 @@ cd "$REPO" || exit 1
 
 for STEP in 100000 200000 300000 400000 500000; do
   CKPT="$ROOT/train/$TRAIN_RUN/checkpoints/$STEP/pretrained_model"
-  OUT="$ROOT/reeval_v2metrics/eval_unified_h10/$EVAL_RUN/seed1000"
+  # Per-checkpoint run dir (7-digit zero-padded) — one dir per step, else the
+  # compilers collapse the sweep into a single summary row.
+  RUN_DIR="$ROOT/reeval_v2metrics/eval_unified_h10/act_r50_v1_vae_state5_seed1000_$(printf '%07d' "$STEP")steps"
+  OUT="$RUN_DIR/seed1000"
   if [[ ! -d "$CKPT" ]]; then
     echo "SKIP step=$STEP (checkpoint missing)"
     continue
@@ -38,8 +41,8 @@ for STEP in 100000 200000 300000 400000 500000; do
     --video_backend=pyav \
     --output_dir="$OUT" || { echo "FAILED step=$STEP"; exit 1; }
   # Mirror into the §9.2.13 jerk tree so compile_physical_jerk picks the row up.
-  JERK="$ROOT/reeval_v2metrics/eval_unified_h10_jerk/$EVAL_RUN/seed1000"
+  JERK="$ROOT/reeval_v2metrics/eval_unified_h10_jerk/act_r50_v1_vae_state5_seed1000_$(printf '%07d' "$STEP")steps/seed1000"
   mkdir -p "$JERK"
-  cp -r "$ROOT/reeval_v2metrics/eval_unified_h10/$EVAL_RUN/seed1000"/. "$JERK"/
+  cp "$OUT/${TRAIN_RUN}_${STEP}_open_loop_metrics.json" "$JERK"/
 done
 echo "[$(date '+%F %T')] sweep complete: $EVAL_RUN"

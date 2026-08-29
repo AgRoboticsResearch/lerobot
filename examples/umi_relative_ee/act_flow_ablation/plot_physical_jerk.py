@@ -46,6 +46,7 @@ COLORS = {
     "r50v1": "#1f77b4",
     "2frame": "#1f9e89",
     "noproprio": "#8c564b",
+    "state3": "#bcbd22",
     "state5": "#e6550d",
     "state10": "#756bb1",
     "actl1": "#2ca02c",
@@ -66,6 +67,7 @@ REPRESENTATIVES = [
     ("act_r50_v1_vae_seed1000_0800000steps", "ACT R50-VAE (ImageNet-V1) 800k", "r50v1"),
     ("act_r50_v1_vae_2frame_seed1000_0500000steps", "ACT R50-VAE 2-frame 500k (Q3)", "2frame"),
     ("act_r50_v1_vae_noproprio_seed1000_0500000steps", "ACT R50-VAE no-proprio 500k (Q4)", "noproprio"),
+    ("act_r50_v1_vae_state3_seed1000_0500000steps", "ACT R50-VAE state-W3 500k (Q4+)", "state3"),
     ("act_r50_v1_vae_state5_seed1000_0500000steps", "ACT R50-VAE state-W5 500k (Q4+)", "state5"),
     ("act_r50_v1_vae_state10_seed1000_0500000steps", "ACT R50-VAE state-W10 500k (Q4+)", "state10"),
     ("act_r18_l1_seed2000_100000steps", "ACT-L1 100k s2000", "actl1"),
@@ -86,11 +88,12 @@ REPRESENTATIVES = [
 
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
-    # 2frame/noproprio/state5/state10 prefixes MUST precede act_r50_v1_vae_ (strict extensions).
+    # 2frame/noproprio/state3/state5/state10 prefixes MUST precede act_r50_v1_vae_ (strict extensions).
     ("act_r50_v1_vae_noproprio_", "noproprio", "R50-VAE no-proprio (Q4)"),
     ("act_r50_v1_vae_2frame_", "2frame", "R50-VAE 2-frame (Q3)"),
     ("act_r50_v1_vae_state10_", "state10", "R50-VAE state-W10 (Q4+)"),
     ("act_r50_v1_vae_state5_", "state5", "R50-VAE state-W5 (Q4+)"),
+    ("act_r50_v1_vae_state3_", "state3", "R50-VAE state-W3 (Q4+)"),
     ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
     ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
@@ -219,6 +222,7 @@ def _budget_series():
         (lambda run: run.startswith("act_r50_v1_vae_seed1000_"), "r50v1", "R50-VAE (ImageNet-V1)", "s"),
         (lambda run: run.startswith("act_r50_v1_vae_2frame_seed1000_"), "2frame", "R50-VAE 2-frame (Q3)", "x"),
         (lambda run: run.startswith("act_r50_v1_vae_noproprio_seed1000_"), "noproprio", "R50-VAE no-proprio (Q4)", "P"),
+        (lambda run: run.startswith("act_r50_v1_vae_state3_seed1000_"), "state3", "R50-VAE state-W3 (Q4+)", "+"),
         (lambda run: run.startswith("act_r50_v1_vae_state5_seed1000_"), "state5", "R50-VAE state-W5 (Q4+)", "<"),
         (lambda run: run.startswith("act_r50_v1_vae_state10_seed1000_"), "state10", "R50-VAE state-W10 (Q4+)", ">"),
         (lambda run: run.startswith("pi05_port_seed1000_"), "port", "π0.5 port", "^"),

@@ -1,14 +1,14 @@
 {
-  "generated": "2026-08-29",
+  "generated": "2026-08-29 (W=3 addendum)",
   "lerobot_host": {
     "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
     "branch": "research/umi-act-flowmatching-ablation-20260811",
-    "commit": "b2c02b233c0466a681e7f7fa0d95d8be27972707",
-    "dirty_files": 142,
-    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent), both report documents, and the §9.2.20 evidence refresh (recompiled repro CSVs, regenerated budget figures; ~100 per-episode json.gz show as modified from gzip mtime churn only — gunzipped content verified identical); src/ itself is clean",
+    "commit": "f33a63072e3badb501c0e2353732d0c227e027f7",
+    "dirty_files": 157,
+    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent), both report documents, and the §9.2.20 W=3 addendum evidence (recompiled repro CSVs, regenerated budget figures; ~100 per-episode json.gz show as modified from gzip mtime churn only — gunzipped content verified identical); src/ itself is clean",
     "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
     "src_py_tree_sha256": "6286b49c9bd3ad97bf6feb24897b981feda0218dd9ba2b4de681fcdfb03f0a74",
-    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the umi_state_window W-pose proprio-state knob (b2c02b23, §9.2.20; default W=2 bit-identical), the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
+    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the umi_state_window W-pose proprio-state knob (b2c02b23, §9.2.20; default W=2 bit-identical; the W=3/5/10 arms all trained on this src — f33a6307 changed no src file), the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
   },
   "lerobot_kiwi": {
     "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",
@@ -23,9 +23,9 @@
     "branch": "main",
     "commit": "ad049ac0b5324d062037efd7749c132393d85135",
     "dirty_files": 0,
-    "note": "all JAX openpi arms (\u00a79.2.4/\u00a79.2.5/\u00a79.2.12 and the in-flight pi05_lora_sroi_rot6d_h30_bs4_1m) trained from this checkout; per-arm TrainConfigs in src/openpi/training/config.py"
+    "note": "all JAX openpi arms (§9.2.4/§9.2.5/§9.2.12 and the in-flight pi05_lora_sroi_rot6d_h30_bs4_1m) trained from this checkout; per-arm TrainConfigs in src/openpi/training/config.py"
   },
   "openpi_kiwi": {
-    "note": "checkout deleted after \u00a79.2.5; its checkpoints are archived at /mnt/data/zfei/report_ckpts/pi05_lora_sroi_{rot6d,rotvec,rot6d_h30}/run1/19999 (code pinned by openpi_host)"
+    "note": "checkout deleted after §9.2.5; its checkpoints are archived at /mnt/data/zfei/report_ckpts/pi05_lora_sroi_{rot6d,rotvec,rot6d_h30}/run1/19999 (code pinned by openpi_host)"
   }
 }
