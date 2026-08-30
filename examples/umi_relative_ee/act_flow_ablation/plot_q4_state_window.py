@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""§9.2.20 dedicated figure — Q4 state-window sweep W ∈ {0, 2, 3, 5, 10}.
+"""§9.2.20 dedicated figure — Q4 state-window sweep W ∈ {0, 2, 3, 4, 5, 10}.
 
 Two matched-budget figures over the five shared checkpoints (100k..500k):
   1. Six canonical-h10 co-primary accuracy metrics.
@@ -7,7 +7,7 @@ Two matched-budget figures over the five shared checkpoints (100k..500k):
 
 W counts total poses in the UMI proprio state incl. the identity-current pose
 (state dim 10*W): W=0 is the image-only no-proprio arm, W=2 the historical
-two-pose baseline, W=3/5/10 the window extensions. All panels include 95% episode-bootstrap CI bands.
+two-pose baseline, W=3/4/5/10 the window extensions. All panels include 95% episode-bootstrap CI bands.
 
 The adjacent-frame cross-frame panel is deferred: the §9.2.19 sweep has not
 been extended to the W=5/W=10 arms.
@@ -38,6 +38,7 @@ SERIES = [
     (r"act_r50_v1_vae_noproprio_seed1000_\d{7}steps", "W=0 (no proprio)", "#8c564b", "P"),
     (r"act_r50_v1_vae_seed1000_\d{7}steps", "W=2 (baseline)", "#1f77b4", "s"),
     (r"act_r50_v1_vae_state3_seed1000_\d{7}steps", "W=3", "#bcbd22", "+"),
+    (r"act_r50_v1_vae_state4_seed1000_\d{7}steps", "W=4", "#17becf", "*"),
     (r"act_r50_v1_vae_state5_seed1000_\d{7}steps", "W=5", "#e6550d", "<"),
     (r"act_r50_v1_vae_state10_seed1000_\d{7}steps", "W=10", "#756bb1", ">"),
 ]
@@ -133,7 +134,7 @@ def fig_accuracy(arms) -> int:
 def fig_physical(arms) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     fig.suptitle(
-        "Q4 state-window physical dynamics — W ∈ {0,2,3,5,10}, canonical h10 (dt = 1/30 s)",
+        "Q4 state-window physical dynamics — W ∈ {0,2,3,4,5,10}, canonical h10 (dt = 1/30 s)",
         fontsize=12,
     )
     for ax, (metric, title) in zip(axes.flat, PHYSICAL_PANELS, strict=True):

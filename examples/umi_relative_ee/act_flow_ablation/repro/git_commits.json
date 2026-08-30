@@ -1,14 +1,14 @@
 {
-  "generated": "2026-08-29 (W=3 addendum)",
+  "generated": "2026-08-30 (W=4 addendum)",
   "lerobot_host": {
     "path": "/mnt/data0/code/lerobots/lerobot-fei-v5.0-umi-unified",
     "branch": "research/umi-act-flowmatching-ablation-20260811",
-    "commit": "f33a63072e3badb501c0e2353732d0c227e027f7",
+    "commit": "cb587ab6",
     "dirty_files": 157,
-    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent), both report documents, and the §9.2.20 W=3 addendum evidence (recompiled repro CSVs, regenerated budget figures; ~100 per-episode json.gz show as modified from gzip mtime churn only — gunzipped content verified identical); src/ itself is clean",
+    "dirty_note": "uncommitted working-tree files at pin time: the cross-frame/Q3-h30 report cluster + regenerated stability/h30 figures (§9.2.19, another agent), both report documents, and the §9.2.20 W=4 addendum evidence (recompiled repro CSVs, regenerated budget figures; ~100 per-episode json.gz show as modified from gzip mtime churn only — gunzipped content verified identical); src/ itself is clean",
     "remote": "git@github.com:AgRoboticsResearch/lerobot.git",
     "src_py_tree_sha256": "6286b49c9bd3ad97bf6feb24897b981feda0218dd9ba2b4de681fcdfb03f0a74",
-    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the umi_state_window W-pose proprio-state knob (b2c02b23, §9.2.20; default W=2 bit-identical; the W=3/5/10 arms all trained on this src — f33a6307 changed no src file), the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
+    "note": "src tree includes the Q3 consecutive_frames / Q4 use_proprioception ACT changes, the umi_state_window W-pose proprio-state knob (b2c02b23, §9.2.20; default W=2 bit-identical; the W=3/4/5/10 arms all trained on this src — f33a6307/cb587ab6 changed no src file), the --stability_eval/--cross_frame_mse_eval evaluator extensions, the lingbot_va offline 5-D camera-window fix (177cdf04), and the lingbot_va T5-embed memo surviving reset() (c2c612f0) — an eval-latency fix only (~87 s to ~3.5 s/query; per-query CPU UMT5 re-encodes). Embeddings are identical, so LingBot rows scored before (200k) and after (50k/100k) the fix are directly comparable."
   },
   "lerobot_kiwi": {
     "path": "/home/zfei/code/lerobot-fei-v5.0-umi-unified",
