@@ -1,6 +1,6 @@
 # ACT capacity and generative-objective ablation
 
-**Concise results report · 25 August 2026**
+**Concise results report · 26 August 2026**
 Derived from the [full research record](RESEARCH_REPORT.md). The original remains the chronological lab notebook; this document is the result-led version intended for human readers.
 
 ## Executive summary
@@ -10,7 +10,7 @@ This study asked two practical questions on the 1,459-episode UMI relative-end-e
 1. Can the production ResNet-18 ACT policy be improved by increasing visual-backbone capacity?
 2. Is the weak behavior of some local flow policies caused by flow matching itself, or by the surrounding denoiser and training recipe?
 3. Does multi-frame visual input help ACT? (answered: no — §8 Q3)
-4. Does ACT need proprioception on this task? (in flight)
+4. Does ACT need proprioception on this task? (answered: yes — and a ≥4-pose window; §8 Q4, §9.2.20)
 
 The main findings are:
 
@@ -22,8 +22,11 @@ The main findings are:
 - **Rotation notation is not a useful accuracy lever here.** Axis-angle/rotvec and rot6d have similar endpoint accuracy in both SmolVLA and OpenPI. Small motion-texture effects change direction across stacks.
 - **Padding mode is also a minor lever on this task.** Full-width and masked-subspace SmolVLA training have indistinguishable endpoint behavior; masking is only about 7–9% smoother late in training.
 - **Motion dynamics expose strong family signatures.** ACT becomes over-smoothed, SmolVLA remains high-frequency, the π0.5 port sits closer to the demonstrated dynamics, and under-trained ACT-flow is the roughest family.
-- **SmolVLA is the only re-query-unstable family.** With the inference seed held fixed, re-querying at t+1 disagrees with the chunk predicted at t by 6.3–7.1 mm in every SmolVLA arm — about 2× every other family, CI-separated, and unchanged by 1M steps. The mature π0.5 port is stable (3.7 mm @ k=1), and ACT/port families become more stable with budget.
-- **Multi-frame visual input does not help ACT here.** A 2-frame (t−1, t) channel-stacked R50-V1 arm ties the matched 1-frame budget curve at all five shared checkpoints (endpoint gaps ≤0.37 mm, overlapping CIs) and on dynamics, accuracy, and re-query stability alike.
+- **Adjacent-frame direct prediction-change MSE separates deterministic output from fresh stochastic variation.** Across the full 134-checkpoint inventory, deterministic ACT occupies the low-change band, while stochastic flow/diffusion/VLA heads generally move more between independent t/t+1 calls. The metric deliberately compares same chunk indices with no shared-future alignment and includes both the changed relative-pose anchor and a fresh sampler draw; it is a deployment-output diagnostic, not an accuracy score.
+- **Multi-frame visual input does not help ACT here.** A 2-frame (t−1, t) channel-stacked ACT R50-VAE (ImageNet-V1) arm ties the matched 1-frame budget curve at all five shared checkpoints at both h10 and native h30 (endpoint gaps ≤0.37 mm and ≤0.30 mm, respectively, with overlapping CIs) and on dynamics, accuracy, and adjacent-frame prediction change alike.
+- **Proprioception is required, not redundant.** Dropping the (derived) state input from the same R50-V1 recipe costs +2.9–4.4 mm endpoint (13.55 vs 9.20 mm at 100k), CI-separated worse at all five matched budgets, plus ~3–4 pp Acc@0.1 and uniformly rougher physical jerk. Its sometimes-lower direct-change XYZ MSE reflects reduced responsiveness, not better predictions.
+- **Proprioceptive *history* is a second lever, and the best ACT accuracy measured.** Extending the state from 2 to 4–10 poses (W = total poses, identity-current last, token 10·W) drops endpoint from 10.25 to 8.50–9.05 mm at 500k, with rotation, Acc@0.1, and budget-flatness all improving; the W=10 100k/200k rows (7.96 / 7.86 mm) are the best endpoint rows in the whole inventory. The response is a one-pose step, not a ramp — W=3 CI-ties W=2 while W=4 already ties W=5 — and it saturates above 4 poses (≈100 ms of EE history), costing almost no motion quality (rot jerk 0.20 → 0.23× GT, still over-smoothed). W>2 is offline-only — the live 2-D state path is unimplemented.
+- **The video-action LingBot-VA arm is the inventory's weakest endpoint family.** A Wan-2.2-stack policy (LoRA on a ~5B video DiT; 16-action chunks) lands at 19.3–21.3 mm over a 3-point 50k–200k budget curve — roughly 2× the 9–11 mm pack — with Acc@0.1 stuck ~0.2 below pack and the worst gripper column by 4–7×, while its dynamics are unremarkable (2nd-diff just above the port band, physical jerk 1.6–2.0× GT). Under the first-chunk open-loop protocol with a large domain shift, accuracy — not smoothness — is the failure mode.
 
 These are open-loop results. They support checkpoint selection and diagnosis, but **do not establish closed-loop task success**.
 
@@ -269,6 +272,8 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 | ACT R50-VAE (ImageNet-V1) | 100k | 23.24 [21.46, 25.09] | 4.58 | 0.735 | 0.057 |
 | ACT R50-VAE (ImageNet-V1) | 600k | 21.22 [19.59, 22.91] | 4.16 | 0.743 | 0.028 |
 | ACT R50-VAE (ImageNet-V1) | 1M | 21.32 [19.74, 22.94] | 4.28 | 0.742 | 0.032 |
+| ACT R50-VAE (ImageNet-V1), 2-frame Q3 | 100k | 23.03 [21.31, 24.81] | 4.62 | 0.736 | 0.064 |
+| ACT R50-VAE (ImageNet-V1), 2-frame Q3 | 500k | 21.63 [20.03, 23.30] | 4.38 | 0.744 | 0.034 |
 | historical ACT R18 | 100k | 25.57 [23.64, 27.56] | 5.02 | 0.681 | 0.059 |
 | historical ACT R18 | 3M | 23.31 [21.45, 25.20] | 4.50 | 0.715 | 0.054 |
 | official OpenPI h30-trained | 20k | 23.20 [21.56, 24.91] | 4.68 | 0.725 | 0.178 |
@@ -287,7 +292,7 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 
 ![Unified native-h30 budget curves](figures/unified_h30_budget.png)
 
-*Fig. 15. All native-h30 budget points for historical R18, fresh R50, π0.5 port, and both SmolVLA padding modes across the same six co-primary metrics as Fig. 14: XYZ/rotation endpoint error, XYZ/rotation L1 per dimension, Acc@0.5, and Acc@0.1. Stars are single-budget reference models.*
+*Fig. 15. All native-h30 budget points for historical R18, fresh one-frame R50, Q3 two-frame R50, Q4 state-window W=4 R50, π0.5 port, and both SmolVLA padding modes across the same six co-primary metrics as Fig. 14: XYZ/rotation endpoint error, XYZ/rotation L1 per dimension, Acc@0.5, and Acc@0.1. The teal × curve is the five-checkpoint two-frame arm and the olive P curve the five-checkpoint W=4 arm (21.0–22.1 mm, CI-tied with the one/two-frame arms); stars are single-budget reference models.*
 
 ![Unified native-h30 second differences](figures/unified_h30_jitter.png)
 
@@ -300,6 +305,7 @@ The h30 sweep scores the native 30-action chunk over about one second. This is t
 The main h30 conclusions are stable:
 
 - R50 is better than historical R18 at every matched budget.
+- The Q3 two-frame R50 curve overlaps the matched one-frame R50 curve on all six native-h30 metrics; temporal stacking does not improve the far horizon either.
 - Mature R50 and the π0.5 port occupy the strongest endpoint band, roughly 21–22 mm.
 - Official OpenPI reaches approximately ACT-L1@100k quality after only 20k steps, demonstrating strong early learning, but not a ninefold advantage over mature R50 or the port at every operating point.
 - SmolVLA improves with budget but retains a far-horizon deficit.
@@ -394,7 +400,7 @@ The physical sweep uses first, second, and third differences at 30 fps. Ground t
 - translation: 73.5 mm/s velocity, 628 mm/s² acceleration, 29,521 mm/s³ jerk.
 
 Representative data are now shown in the same format at every derivative
-order (episode-balanced mean [95% bootstrap CI]); all 92 rows are available
+order (episode-balanced mean [95% bootstrap CI]); all 126 rows are available
 in `repro/physical_dynamics_h10.{csv,md}`:
 
 | Model | Step | Rot velocity (deg/s) | XYZ velocity (mm/s) |
@@ -483,23 +489,20 @@ The second-difference findings survive in true physical jerk:
 
 This is a trajectory-similarity result, not proof that matching demonstration jerk maximizes closed-loop success. Contact phases may require different dynamics from free-space motion.
 
-### Cross-query prediction stability
+### Adjacent-frame direct prediction change
 
-The canonical protocol scores each prediction in isolation, so it cannot see whether a policy *changes its plan* when re-queried about a future it has already predicted — the consistency an async-replanning deployment actually executes. The stability metric re-queries at t and t+k (k = 1, 5, 10 frames) with a **shared inference seed**, so stochastic heads draw the same sampler realization and the disagreement isolates the conditioning change. Full protocol and 17-row table: §9.2.19 of the full report.
+The revised canonical diagnostic queries each policy independently at t and t+1, then compares the two decoded relative-motion chunks **at the same chunk index** over h10 and, where native, h30. There is no shared-future timestamp alignment, anchor compensation, or k=5/k=10 sweep. The two calls use independent deterministic sampler seeds, so the score intentionally includes both the changed observation/relative-pose anchor and fresh stochastic-sampler variation. Each row uses the canonical 100 episodes × 5 adjacent pairs, episode-balanced means, and 95% bootstrap CIs. Full protocol and table: §9.2.19 of the full report.
 
-![Stability scores](figures/stability_h10_scores.png)
+![Adjacent-frame direct prediction-change MSE by training budget](figures/cross_frame_mse_budget.png)
 
-*Fig. 32. Cross-query disagreement at k=1 (async-replan regime) and k=10 — 17 representative runs, episode-balanced, 95% bootstrap CIs. SmolVLA (all four arms) separates cleanly from the pack at k=1.*
+*Fig. 32. All canonical adjacent-frame direct prediction-change results in the same 2×3 budget layout as Figs. 15 and 28: normalized action, translational XYZ, and rotational geodesic MSE at h10 across the top and h30 across the bottom (log x/y scales; lower means less output change). Lines and confidence bands connect checkpoints from the same training trajectory; stars are single-budget or independent companion runs. The inventory contains 129 PyTorch checkpoints plus five official OpenPI/JAX checkpoints (134 total; 262 native-horizon rows). H10-only OpenPI models and the 16-action LingBot-VA curve appear only in the top row.*
 
-![Stability growth](figures/stability_growth.png)
-
-*Fig. 33. Disagreement vs re-query interval with CI bands — every family drifts ~5× from k=1 to k=10, but the ordering set at k=1 persists.*
-
-- **SmolVLA is the only re-query-unstable family** — 6.3–7.1 mm @ k=1, ~2× the pack (2.9–5.2 mm), CI-separated from every other row, and 1M steps do not fix it (6.9 → 6.8 mm). Because the pair shares one seed, this is a genuine plan flip from a nearly identical observation — the same input hypersensitivity as its §9.2.13 high-jerk signature, seen from another angle.
-- **The π0.5 port is NOT plan-unstable** (3.66 mm @ k=1 @ 1M, second only to historical ACT 2.93 and ACT R50-VAE (ImageNet-V1) 1M 3.08); its deployed shakiness is the async-inference latency story, not prediction inconsistency.
-- **Budget buys stability in every ACT/port family** (ACT R50-VAE (ImageNet-V1) 4.21 → 3.08 mm, port 4.49 → 3.66 from 100k → 1M); under-trained checkpoints (ACT-flow 50k 4.68, UMI-DP 30k 5.03, o-recipe 20k 5.21) are the weakest of their stacks.
-- **The Q3 two-frame arm ties 1-frame here too** (3.31 mm @ 500k vs 3.08 @ 1M on the same curve) — a third metric where temporal-frame stacking changes nothing.
-- For mature policies k=1 disagreement (~3 mm) is an order below k=10 drift (~15 mm) and below execution error (9–11 mm): in the async-replan regime risk concentrates in under-trained or hypersensitive stacks, not in mature re-planning.
+- Deterministic ACT occupies the low-change band. The historical R18 improves most clearly over h30 (10.01 → 4.88 mm²/dim XYZ MSE from 100k → 3M), while fresh R50 improves 10.25 → 5.92 by 1M. H10 changes are smaller because only the near chunk is compared.
+- Stochastic flow/diffusion/VLA policies generally move more between independent calls because this metric includes sampler variation. Training suppresses it strongly in the π0.5 port: XYZ MSE falls 13.18 → 5.45 mm²/dim at h10 and 51.16 → 8.83 at h30 from 100k → 1M, bringing the mature port close to deterministic ACT. SmolVLA also improves but remains much higher over the full chunk (full-width 70.29 → 40.36; masked 67.30 → 31.45 mm²/dim h30).
+- Official OpenPI/JAX sits between mature ACT/port and early stochastic rows at h10 (rot6d 20k 8.21, rotvec 20k 7.69, 1M-schedule 100k 6.51 mm²/dim XYZ). Its h30 20k arm is 29.25, while the stopped stretched-schedule h30 100k arm is worse at 44.45; more nominal steps do not guarantee more stable independent samples.
+- The Q3 two-frame curve again tracks one-frame ACT (at 500k: h10 XYZ 4.37 vs 4.53 mm²/dim; h30 6.64 vs 6.51). Temporal stacking does not materially change adjacent-frame output stability.
+- Lower direct-change MSE is **not** accuracy. The Q4 no-proprio model can be less reactive in XYZ while remaining much less accurate; at 500k its h10 XYZ MSE is 4.11 vs 4.53 for the proprio model, but rotation MSE is worse (0.249 vs 0.211 deg²), and its canonical endpoint deficit remains +2.94 mm.
+- H30 exposes more accumulated output change than h10 across every family. Select a model using endpoint accuracy, motion dynamics, and this diagnostic together; a constant but wrong chunk would score perfectly here.
 
 ## 8. What the evidence answers
 
@@ -519,18 +522,108 @@ Practical choice:
 
 ### Q3: Does multi-frame visual input help?
 
-**No.** A 2-frame (t−1, t) channel-stacked ACT R50-V1 arm (widened conv1, tiled pretrained filters, +9,408 parameters; `--policy.consecutive_frames=2`) ties the matched 1-frame budget curve at all five shared checkpoints (100k–500k): XYZ endpoint gaps ≤0.37 mm with fully overlapping CIs, and ties on rotation endpoint, Acc@0.1, within-chunk and physical jerk, and cross-query stability. Keep the simpler 1-frame input. Full table and read-outs: §9.2.17 of the full report.
+**No.** A 2-frame (t−1, t) channel-stacked ACT R50-VAE (ImageNet-V1) arm (widened conv1, tiled pretrained filters, +9,408 parameters; `--policy.consecutive_frames=2`) ties the matched 1-frame budget curve at all five shared checkpoints (100k–500k) at both h10 and native h30: XYZ endpoint gaps are ≤0.37 mm and ≤0.30 mm, respectively, with fully overlapping CIs. Rotation endpoint, component L1, Acc@0.5/0.1, within-chunk and physical jerk, and adjacent-frame prediction change also tie. The native-h30 six-metric curve is included in Fig. 15; keep the simpler 1-frame input. Full tables and read-outs: §9.2.17 of the full report.
 
 ![Q3 2-frame vs 1-frame budget comparison](figures/q3_2frame_vs_1frame.png)
 
-*Fig. 34. Q3 budget comparison — XYZ endpoint, within-chunk rotational 2nd-diff, and physical rotational jerk for the 2-frame arm against the matched 1-frame curve (95% CI bands, dashed = demonstrated).*
+*Fig. 33. Q3 budget comparison — XYZ endpoint, within-chunk rotational 2nd-diff, and physical rotational jerk for the 2-frame arm against the matched 1-frame curve (95% CI bands, dashed = demonstrated).*
+
+### Q4: Does ACT need proprioception?
+
+**Yes.** The image-only arm (`use_proprioception=false`, 500k, same R50-VAE (ImageNet-V1) recipe and seed) is worse than its proprio twin at every matched budget, with fully separated bootstrap intervals:
+
+| ckpt | no-proprio end (mm) | 1-frame end (mm) | gap |
+|---|---:|---:|---:|
+| 100k | 13.55 [12.75, 14.36] | 9.20 [8.67, 9.72] | +4.35 |
+| 300k | 13.41 [12.68, 14.18] | 9.81 [9.21, 10.44] | +3.60 |
+| 500k | 13.19 [12.43, 13.99] | 10.25 [9.62, 10.88] | +2.94 |
+
+The no-proprio curve is flat within noise — budget does not close the gap; the apparent shrinkage is the baseline's known late-budget t+10 drift. Motion stays deterministic-ACT over-smoothed (0.31–0.63× GT rot jerk) but is uniformly rougher than the proprio twin at matched budget. Its 500k direct-change result is mixed (h10 XYZ MSE 4.11 vs 4.53 mm²/dim, rotation 0.249 vs 0.211 deg²), which is expected because a less responsive but inaccurate policy can change less. Since the state input is free at inference time on this pipeline (derived from the same SLAM/relative-EE path as the targets), proprioception stays — roughly a third of the t+10 endpoint error budget is carried by it. How much state history to keep is answered in the addendum below (§9.2.20).
+
+![Q4 no-proprio vs 1-frame budget comparison](figures/q4_noproprio_vs_1frame.png)
+
+![Q4 no-proprio physical-motion budget comparison](figures/q4_noproprio_physical_dynamics.png)
+
+![Q4 no-proprio adjacent-frame consistency comparison](figures/q4_noproprio_cross_frame_mse.png)
+
+*Fig. 34. Q4 matched-budget comparison in three aligned 2×3 views: (top) the six canonical co-primary metrics from Fig. 15; (middle) rotational and translational velocity, acceleration, and jerk in the format of Fig. 28; (bottom) normalized-action, XYZ, and rotation adjacent-frame direct prediction-change MSE at h10 and h30 in the format of Fig. 32. Curves compare the image-only arm with the matched proprioceptive 1-frame ACT at 100k–500k; bands are 95% episode-bootstrap CIs, dashed lines are demonstrated physical-motion references, and lower cross-frame MSE means less output change. Full table and read-outs: §9.2.18 of the full report.*
+
+### LingBot-VA: video-action policy under the unified protocol
+
+The only video-action policy in the inventory: a Wan-2.2-stack transformer (~5B, LoRA on all linear layers) that generates future video latents (20 CFG flow steps) and decodes a 16-action chunk through a 50-step action head. Trained 200k steps at batch size 4 on-host (axis-angle, seed 1000) and scored at three budgets under the canonical protocol (500 queries, h10 identity-clip of the 16-action chunk, seed 1000):
+
+| ckpt | XYZ end (mm) | Rot end (°) | Acc@0.1 | Rot 2nd-diff | Phys rot jerk (×GT) | Gripper end |
+|---|---:|---:|---:|---:|---:|---:|
+| 50k  | 21.31 [20.61, 22.03] | 3.29 | 0.539 | 0.204 | 1.63× | 0.353 |
+| 100k | 19.97 [18.93, 21.01] | 2.93 | 0.711 | 0.223 | 2.02× | 0.595 |
+| 200k | 19.32 [18.21, 20.44] | 2.86 | 0.719 | 0.209 | 1.99× | 0.535 |
+
+Endpoint is ~2× the 9–11 mm pack with CIs disjoint from every other family; budget buys only 2.0 mm over 50k→200k and the last two budgets overlap in CI. Acc@0.1 jumps 0.54→0.71 at 100k then plateaus ~0.2 below the pack's 0.91–0.93. The gripper channel concentrates the domain gap (4–7× worse than every other row). Dynamics are not the failure mode: 2nd-diff sits just above the port band and physical jerk rises with budget — the opposite of ACT's budget-buys-smoothness direction. Adjacent-frame consistency does degrade with budget: normalized MSE rises 0.0084→0.0212 and XYZ MSE 37.0→43.7 mm²/dim from 50k→200k, leaving LingBot substantially less stable than both anchors. Caveat: the evaluator feeds one conditioning frame per query, so the policy's autoregressive video-rollout path is never exercised — these are one-shot first-chunk scores under a large domain shift (frozen LIBERO-oriented base vs single-camera UMI), a floor for this recipe rather than a bound on the architecture. Full table, read-outs, and the runtime-fix comparability note: §9.2.16 of the full report.
+
+![LingBot-VA budget comparison](figures/lingbot_budget.png)
+
+![LingBot-VA physical-motion budget comparison](figures/lingbot_physical_dynamics.png)
+
+![LingBot-VA adjacent-frame consistency comparison](figures/lingbot_cross_frame_mse.png)
+
+*Fig. 35. Standard three-view LingBot-VA budget comparison against the report's two budget-covered anchors (ACT R50-VAE 1-frame and π0.5 port): (a) the six canonical co-primary metrics, (b) rotational and translational velocity/acceleration/jerk, and (c) normalized-action, XYZ, and rotation adjacent-frame direct prediction-change MSE. LingBot-VA has a 16-action chunk, so the consistency view is h10-only; h30 is structurally unsupported. Bands are 95% episode-bootstrap CIs, dashed lines are demonstrated physical-motion references, and lower consistency MSE means less output change.*
+
+### Q4 addendum: how long should the proprioceptive window be?
+
+**Four poses ≈ 100 ms of end-effector history; five and ten add nothing measurable.**
+The `umi_state_window` knob (default W=2, bit-identical to all prior runs) extends
+the state to `[rel(t−(W−1)|t) … rel(t−1|t) ‖ identity+gripper]`. W=5 and W=10
+(first 2026-08-28), W=3 (2026-08-29), and W=4 (2026-08-30) repeat the R50-VAE
+(ImageNet-V1) recipe — 500k steps, seed 1000, checkpoints every 100k, host 4090
+for W=3/W=4/W=5 and kiwi 5080 for W=10 — and all twenty rows were scored under
+the canonical h10 protocol:
+
+| ckpt | W=0 (mm) | W=2 (mm) | W=3 (mm) | W=4 (mm) | W=5 (mm) | W=10 (mm) |
+|---|---:|---:|---:|---:|---:|---:|
+| 100k | 13.55 [12.75, 14.36] | 9.20 [8.67, 9.72] | 8.86 [8.25, 9.50] | 8.41 [7.92, 8.91] | 9.33 [8.87, 9.82] | **7.96 [7.51, 8.42]** |
+| 200k | 12.71 [12.03, 13.43] | 9.47 [8.91, 10.05] | 9.01 [8.35, 9.71] | 8.31 [7.77, 8.87] | 8.16 [7.70, 8.62] | **7.86 [7.36, 8.37]** |
+| 500k | 13.19 [12.43, 13.99] | 10.25 [9.62, 10.88] | 9.20 [8.63, 9.79] | 9.05 [8.49, 9.63] | **8.50 [8.00, 9.02]** | **8.59 [8.07, 9.13]** |
+
+Endpoint responds as a one-pose step between 3 and 4, not a ramp: W=3 CI-ties
+W=2 at every matched budget, while W=4 already sits in the long-window band
+(8.31–8.82 mm at 100k–400k, CI-overlapping W=5 everywhere; rotation 1.60–1.67°
+and Acc@0.1 0.930–0.934 at W=5 level). W=4, W=5, and W=10 tie each other on
+endpoint (W=10 CI-separated from W=2 at all five budgets, W=5 at ≥200k; only
+rotation still edges down to 1.53°), so the sweep brackets the useful window
+as {2,3} ≈ tie < {4,5,10} ≈ tie — ~100 ms of EE history suffices. Fine-grained
+metrics move earlier than the endpoint: rotation and Acc@0.1 already improve
+~half-way at W=3 (0.913 → 0.926 → 0.930 → 0.931 at 500k). The best endpoint
+rows in the entire 126-run inventory are W=10@200k (7.86 mm) and W=10@100k
+(7.96 mm) — ~1.2 mm below the previous pack top, with the eight lowest rows
+all W≥4 — and all four new curves are budget-flat after 100k–200k (W=4 drifts
+mildly to 9.05 mm at 500k, still CI-tied with W=5). The gain costs almost no
+motion quality: rot jerk rises only 0.20 → 0.23× GT (still deterministic-ACT
+over-smoothed) and W=10's XYZ jerk ties W=2 exactly. The mechanism is
+finite-difference EE velocity/acceleration at no sensing cost — the same
+temporal signal temporal ensembling exploits, and consistent with Q3's null
+result for a second camera frame. Caveats: one seed per arm (recovered-trio
+noise ~0.3–0.4 mm ≪ the 1.7 mm gap), different GPUs for W=10 vs the host arms,
+and W>2 is offline-only — the live 2-D state path raises `NotImplementedError`
+by design, and the §9.2.19 cross-frame sweep was not extended to the new arms.
+At native h30 (Fig. 15) the W=4 arm runs 21.0–22.1 mm across 100k–500k —
+CI-tied with the one/two-frame R50 arms at every matched budget — so the h10
+window gain compresses under full-chunk scoring: the lever buys short-horizon
+tracking, not long-horizon prediction.
+Full tables, protocol, and read-outs: §9.2.20 of the full report.
+
+![Q4 state-window accuracy sweep](figures/q4_state_window_accuracy.png)
+
+![Q4 state-window physical dynamics](figures/q4_state_window_physical_dynamics.png)
+
+*Fig. 36–37. Q4 state-window sweep W ∈ {0, 2, 3, 4, 5, 10} in two aligned 2×3 views: the six canonical co-primary metrics (Fig. 15 format) and rotational/translational velocity/acceleration/jerk with demonstrated references (Fig. 28 format). All panels share the five 100k–500k checkpoints; bands are 95% episode-bootstrap CIs.*
 
 ### Policy-family recommendation from the offline evidence
 
 | Need | Candidate | Reason |
 | --- | --- | --- |
 | simple, fast deterministic control | ACT-L1 | lowest inference cost; competitive h10/h30 endpoint |
-| best ACT full-chunk result | ACT R50-VAE (ImageNet-V1), roughly 600k | approximately 21.2 mm h30; strong h10 early checkpoint |
+| best ACT h10 endpoint (offline eval only) | ACT R50-VAE state-window W=10, 100k–200k | 7.86–7.96 mm h10 — best rows in the inventory, budget-flat; W=4 is the minimal sufficient window (8.31–8.82 mm); W>2 has no live 2-D state path yet |
+| best ACT full-chunk result | ACT R50-VAE (ImageNet-V1), roughly 600k | approximately 21.2 mm h30; strong h10 early checkpoint (W=4 scored at h30: 21.0–22.1 mm, CI-tied with the one/two-frame arms) |
 | best mature flow-VLM endpoint | π0.5 port, roughly 350k–700k | approximately 8.8–9.0 mm h10 and 21.7–21.9 mm h30 |
 | compute-efficient early VLM fine-tuning | official OpenPI h30 recipe | reaches approximately 23.2 mm h30 at 20k steps |
 | smaller VLA / h10-only emphasis | SmolVLA | reaches approximately 9.1 mm h10, but remains weak at h30 and high-jerk |
@@ -551,11 +644,12 @@ The decisive follow-up is a blinded, block-randomized closed-loop evaluation of 
 
 ## 10. Reproducibility and result coverage
 
-All **34 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point R50, 19-point π0.5-port h30, 18-point π0.5-port h10, and two 10-point SmolVLA sweeps. The tables retain all experimental families and every decision-relevant milestone; the full 92-row h10 and 88-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
+All **41 unique figures** from the full report are embedded above. The budget figures retain every checkpoint in the 30-point historical R18, 10-point one-frame R50, 5-point two-frame R50, 5-point no-proprio R50, 5-point W=3, W=4, W=5, and W=10 state-window R50 curves (plus the W=4 native-h30 curve in Fig. 15), 19-point π0.5-port h30, 18-point π0.5-port h10, two 10-point SmolVLA sweeps, and 3-point LingBot-VA curve. The adjacent-frame direct-MSE figure covers all 129 PyTorch checkpoints plus five official OpenPI/JAX checkpoints. The tables retain all experimental families and every decision-relevant milestone; the full 126-row h10 and 99-row h30 numeric inventories remain in the [full research record](RESEARCH_REPORT.md) and are reconstructible from the tracked evidence bundle.
 
 The repository-tracked [`repro/`](repro/) directory contains:
 
 - per-episode compressed JSON for 88 main-sweep physical-dynamics runs and 28 additional controlled-matrix runs;
+- adjacent-frame direct-MSE CSV plus compact per-episode evidence for all 134 checkpoints / 262 native-horizon rows;
 - the immutable 500-query frame list and its hash;
 - per-run training configurations;
 - dataset and checkpoint SHA-256 manifests;
@@ -568,11 +662,14 @@ Primary regeneration commands:
 uv run python examples/umi_relative_ee/act_flow_ablation/compile_unified_h10.py
 uv run python examples/umi_relative_ee/act_flow_ablation/compile_unified_h30.py
 uv run python examples/umi_relative_ee/act_flow_ablation/compile_physical_jerk.py
+uv run python examples/umi_relative_ee/act_flow_ablation/compile_cross_frame_mse.py
 
 MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
   examples/umi_relative_ee/act_flow_ablation/plot_unified_h10.py
 MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
   examples/umi_relative_ee/act_flow_ablation/plot_unified_h30.py
+MPLCONFIGDIR=/tmp/lerobot-matplotlib uv run --with matplotlib python \
+  examples/umi_relative_ee/act_flow_ablation/plot_cross_frame_mse.py
 ```
 
 For implementation details, incidents, exact launchers, and the full chronological audit trail, use [RESEARCH_REPORT.md](RESEARCH_REPORT.md).

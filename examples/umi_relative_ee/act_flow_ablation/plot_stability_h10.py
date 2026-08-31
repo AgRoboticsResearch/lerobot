@@ -9,6 +9,9 @@ kiwi stability tree) and renders:
     representative runs grouped by family.
   figures/stability_growth.png      — disagreement vs re-query interval
     (k = 1/5/10) with CI bands, family-colored.
+  figures/stability_budget_grid.png — Fig. 15-style 2×3 budget view: rotation
+    above XYZ, with columns for k = 1/5/10; curves for evaluated multi-budget
+    families and stars for single-budget references.
 
 Run via:
   /home/zfei/anaconda3/envs/py312/bin/python \
@@ -152,11 +155,146 @@ def fig_growth(rows: dict) -> None:
     print(f"wrote {out}")
 
 
+def _step_from_run(run: str) -> int:
+    return int(run.rsplit("_", 1)[1].replace("steps", ""))
+
+
+def fig_budget_grid(rows: dict) -> None:
+    """Cross-query stability in the same compact 2×3 grammar as report Fig. 15."""
+    curves = [
+        (
+            lambda run: run.startswith("act_r50_v1_vae_seed1000_"),
+            "#1f77b4",
+            "ACT R50-VAE (ImageNet-V1)",
+            "s",
+        ),
+        (
+            lambda run: run.startswith("pi05_port_seed1000_"),
+            "#ff7f0e",
+            "π0.5 port",
+            "^",
+        ),
+        (
+            lambda run: run.startswith("smolvla_rot6d_seed1000_"),
+            "#17becf",
+            "SmolVLA rot6d",
+            "D",
+        ),
+    ]
+    singles = [
+        ("act_umi_identity_rot6d_1459_3000000steps", 3_000_000),
+        ("act_r50_v1_vae_2frame_seed1000_0500000steps", 500_000),
+        ("act_r50_v1_vae_noproprio_seed1000_0500000steps", 500_000),
+        ("act_r18_l1_seed2000_100000steps", 100_000),
+        ("act_r50_vae_seed2000_100000steps", 80_000),
+        ("act_r18_flow_u_lr1e5_seed2000_100000steps", 50_000),
+        ("act_r18_diffusion_lr1e5_seed1000_100000steps", 100_000),
+        ("diffusion_r18_seed1000_100000steps", 100_000),
+        ("umi_official_dp_seed1000_30000steps", 30_000),
+        ("pi05_port_openpi_recipe_seed1000_020000steps", 20_000),
+        ("smolvla_axis_angle_seed1000_100000steps", 100_000),
+        ("smolvla_masked_seed1000_1000000steps", 1_000_000),
+    ]
+    metrics = (
+        (
+            "rotation_overlap_mean_deg",
+            "rotation_overlap_mean_lo",
+            "rotation_overlap_mean_hi",
+            "Rotational overlap disagreement (deg)",
+        ),
+        (
+            "xyz_overlap_mean_mm",
+            "xyz_overlap_mean_lo",
+            "xyz_overlap_mean_hi",
+            "XYZ overlap disagreement (mm)",
+        ),
+    )
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle(
+        "Cross-query prediction stability vs training budget — representative h10 sweep",
+        fontsize=14,
+    )
+    for col, k in enumerate((1, 5, 10)):
+        for row_index, (metric, lo_key, hi_key, ylabel) in enumerate(metrics):
+            ax = axes[row_index, col]
+            for select, color, label, marker in curves:
+                selected = sorted(
+                    (_step_from_run(run), per_k[k])
+                    for run, per_k in rows.items()
+                    if select(run)
+                )
+                if selected:
+                    xs = [step for step, _ in selected]
+                    ys = [float(result[metric]) for _, result in selected]
+                    ax.plot(
+                        xs,
+                        ys,
+                        marker=marker,
+                        ms=5,
+                        lw=1.7,
+                        color=color,
+                        label=label,
+                    )
+                    ax.fill_between(
+                        xs,
+                        [float(result[lo_key]) for _, result in selected],
+                        [float(result[hi_key]) for _, result in selected],
+                        color=color,
+                        alpha=0.12,
+                        lw=0,
+                    )
+            for run, step in singles:
+                if run not in rows:
+                    continue
+                result = rows[run][k]
+                value = float(result[metric])
+                label, color = family_of(run)
+                ax.errorbar(
+                    [step],
+                    [value],
+                    yerr=[
+                        [value - float(result[lo_key])],
+                        [float(result[hi_key]) - value],
+                    ],
+                    fmt="*",
+                    ms=9,
+                    capsize=2,
+                    lw=0.8,
+                    color=color,
+                    label=label,
+                    zorder=5,
+                )
+            ax.axhline(0, color="k", ls="--", lw=1.1, label="perfect agreement (0)")
+            ax.set_xscale("log")
+            upper = ax.get_ylim()[1]
+            ax.set_ylim(-0.04 * upper, upper)
+            ax.set_xlabel("training steps")
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"re-query interval k={k}")
+            ax.grid(alpha=0.3)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=6,
+        fontsize=8,
+        bbox_to_anchor=(0.5, 0.01),
+    )
+    fig.tight_layout(rect=(0, 0.14, 1, 0.96))
+    out = os.path.join(FIG_DIR, "stability_budget_grid.png")
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
 def main() -> None:
     rows = load()
     os.makedirs(FIG_DIR, exist_ok=True)
     fig_scores(rows)
     fig_growth(rows)
+    fig_budget_grid(rows)
 
 
 if __name__ == "__main__":

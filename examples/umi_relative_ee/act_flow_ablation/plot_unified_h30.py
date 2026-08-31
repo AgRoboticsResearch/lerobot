@@ -10,8 +10,9 @@ compile_unified_h30.py after all protocol assertions passed) and renders:
     model family across the six co-primary metrics, with 95% episode
     bootstrap CIs.
   figures/unified_h30_budget.png — full-chunk budget curves: historical
-    R18-VAE (30 checkpoints), fresh R50-VAE (ImageNet-V1) (100k-spaced), the π0.5-port h30
-    curve, and the SmolVLA 1M curves (full-width + masked) as they land,
+    R18-VAE (30 checkpoints), fresh one-frame and Q3 two-frame R50-VAE
+    (ImageNet-V1) curves, the Q4 state-window W=4 R50-VAE curve, the
+    π0.5-port h30 curve, and the SmolVLA 1M curves (full-width + masked),
     on acc@0.1 and XYZ endpoint.
   figures/unified_h30_jitter.png — within-chunk jitter (rotational and XYZ)
     for EVERY run of the sweep, 95% CIs, GT reference lines.
@@ -42,6 +43,7 @@ FIG_DIR = os.path.join(HERE, "figures")
 COLORS = {
     "hist": "#444444",
     "r50v1": "#1f77b4",
+    "2frame": "#1f9e89",
     "actl1": "#2ca02c",
     "r50vae": "#9467bd",
     "flow": "#d62728",
@@ -50,6 +52,8 @@ COLORS = {
     "smol1m": "#e377c2",
     "smolmask": "#7f7f7f",
     "openpi": "#17becf",
+    # Q4 state-window W=4 (NOT the Q4 cyan — openpi owns #17becf in this file)
+    "state4": "#bcbd22",
 }
 
 # Bar-chart representatives: (run, label, family). One row per surviving
@@ -87,6 +91,8 @@ PANELS = [
 # reference families after).
 FAMILY_PREFIXES = [
     ("act_umi_identity_rot6d_1459_", "hist", "R18-VAE hist"),
+    ("act_r50_v1_vae_2frame_", "2frame", "R50-VAE 2-frame (Q3)"),
+    ("act_r50_v1_vae_state4_", "state4", "R50-VAE state-W4 (Q4)"),
     ("act_r50_v1_vae_", "r50v1", "R50-VAE (ImageNet-V1)"),
     ("act_r18_l1_", "actl1", "ACT-L1"),
     ("act_r50_vae_", "r50vae", "R50-VAE (ImageNet-V2)"),
@@ -134,7 +140,7 @@ def fig_metrics(rows: dict[str, dict]) -> None:
         "(500 queries, endpoint = t+30, 95% episode bootstrap CI)",
         fontsize=12,
     )
-    for ax, (met, title, scale, _) in zip(axes.flat, PANELS):
+    for ax, (met, title, scale, _) in zip(axes.flat, PANELS, strict=True):
         labels, means, lows, highs, colors = [], [], [], [], []
         for run, label, fam in reps:
             r = rows[run]
@@ -147,9 +153,15 @@ def fig_metrics(rows: dict[str, dict]) -> None:
             highs.append(float(hi) * scale - v if hi else 0.0)
             colors.append(COLORS[fam])
         y = range(len(labels))
-        ax.barh(y, means, xerr=[lows, highs], color=colors, alpha=0.85,
-                error_kw=dict(lw=1, capsize=2, ecolor="#333333"))
-        ax.set_yticks(list(y), labels=[f"{l}  " for l in labels], fontsize=8)
+        ax.barh(
+            y,
+            means,
+            xerr=[lows, highs],
+            color=colors,
+            alpha=0.85,
+            error_kw={"lw": 1, "capsize": 2, "ecolor": "#333333"},
+        )
+        ax.set_yticks(list(y), labels=[f"{label}  " for label in labels], fontsize=8)
         ax.invert_yaxis()
         ax.set_title(title, fontsize=10)
         ax.grid(axis="x", alpha=0.3)
@@ -169,6 +181,8 @@ def budget_series(rows: dict[str, dict]) -> dict[str, list]:
 
     return {
         "hist": series("act_umi_identity_rot6d_1459_"),
+        "2frame": series("act_r50_v1_vae_2frame_seed1000_"),
+        "state4": series("act_r50_v1_vae_state4_seed1000_"),
         "r50v1": series("act_r50_v1_vae_1m_seed1000_"),
         "port": series("pi05_port_"),
         "smol1m": series("smolvla_rot6d_1m_seed1000_"),
@@ -186,6 +200,18 @@ def fig_budget(rows: dict[str, dict]) -> None:
     curves = [
         (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
         (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1), fresh 1M run", "s"),
+        (
+            s["2frame"],
+            COLORS["2frame"],
+            "ACT R50-VAE (ImageNet-V1), 2-frame (Q3, 5 ckpts)",
+            "x",
+        ),
+        (
+            s["state4"],
+            COLORS["state4"],
+            "ACT R50-VAE (ImageNet-V1), state-window W=4 (Q4, 5 ckpts)",
+            "P",
+        ),
         (s["port"], COLORS["port"], "π0.5 port h30", "^"),
         (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M, full-width", "D"),
         (s["smolmask"], COLORS["smolmask"], "SmolVLA rot6d 1M, masked", "v"),
@@ -224,13 +250,15 @@ def fig_budget(rows: dict[str, dict]) -> None:
         ax.set_ylabel(ylab)
         ax.grid(alpha=0.3)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=5, fontsize=8,
+    fig.legend(handles, labels, loc="lower center", ncol=6, fontsize=8,
                bbox_to_anchor=(0.5, 0.01))
     fig.tight_layout(rect=(0, 0.10, 1, 0.95))
     out = os.path.join(FIG_DIR, "unified_h30_budget.png")
     fig.savefig(out, dpi=200)
     print(
-        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1) + {len(s['port'])} port"
+        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1)"
+        f" + {len(s['2frame'])} two-frame + {len(s['state4'])} state-W4"
+        f" + {len(s['port'])} port"
         f" + {len(s['smol1m'])} smol-1M + {len(s['smolmask'])} masked points)"
     )
 
@@ -265,9 +293,10 @@ def fig_jitter(rows: dict[str, dict]) -> None:
             ("rot_jerk_deg", "Within-chunk rotational jerk (deg)", 1, gt_rot),
             ("xyz_jerk_m", "Within-chunk XYZ jerk (mm)", 1000, gt_xyz),
         ),
+        strict=True,
     ):
         means, lows, highs, colors = [], [], [], []
-        for _, _, run, r, (fam, _) in entries:
+        for _, _, _run, r, (fam, _) in entries:
             v = float(r[met]) * scale
             means.append(v)
             lo, hi = r.get(f"{met}__ci_low"), r.get(f"{met}__ci_high")
@@ -275,17 +304,28 @@ def fig_jitter(rows: dict[str, dict]) -> None:
             highs.append(float(hi) * scale - v if hi else 0.0)
             colors.append(COLORS[fam])
         y = range(len(labels))
-        ax.barh(y, means, xerr=[lows, highs], color=colors, alpha=0.85,
-                error_kw=dict(lw=1, capsize=2, ecolor="#333333"))
+        ax.barh(
+            y,
+            means,
+            xerr=[lows, highs],
+            color=colors,
+            alpha=0.85,
+            error_kw={"lw": 1, "capsize": 2, "ecolor": "#333333"},
+        )
         ax.set_xscale("log")
-        ax.set_xlim(min(means) * 0.45, max(m + h for m, h in zip(means, highs)) * 1.6)
+        ax.set_xlim(
+            min(means) * 0.45,
+            max(m + h for m, h in zip(means, highs, strict=True)) * 1.6,
+        )
         ax.axvline(gt, color="#000000", ls="--", lw=1.3)
         ax.text(gt * 1.06, -0.6, f"GT {gt:.3g}", fontsize=8, color="#000000")
         ax.set_title(title, fontsize=10)
         ax.grid(axis="x", alpha=0.3, which="both")
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-    axes[0].set_yticks(list(range(len(labels))), labels=[f"{l}  " for l in labels], fontsize=7)
+    axes[0].set_yticks(
+        list(range(len(labels))), labels=[f"{label}  " for label in labels], fontsize=7
+    )
     axes[0].invert_yaxis()
     fig.tight_layout(rect=(0, 0, 1, 0.965))
     out = os.path.join(FIG_DIR, "unified_h30_jitter.png")
@@ -314,6 +354,18 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
         for series, color, label, marker in (
             (s["hist"], COLORS["hist"], "ACT R18-VAE (historical, 30 ckpts)", "o"),
             (s["r50v1"], COLORS["r50v1"], "ACT R50-VAE (ImageNet-V1) (fresh 1M run)", "s"),
+            (
+                s["2frame"],
+                COLORS["2frame"],
+                "ACT R50-VAE (ImageNet-V1), 2-frame (Q3, 5 ckpts)",
+                "x",
+            ),
+            (
+                s["state4"],
+                COLORS["state4"],
+                "ACT R50-VAE (ImageNet-V1), state-window W=4 (Q4)",
+                "P",
+            ),
             (s["port"], COLORS["port"], "π0.5 port h30 (curve)", "^"),
             (s["smol1m"], COLORS["smol1m"], "SmolVLA rot6d 1M (full-width)", "D"),
             (s["smolmask"], COLORS["smolmask"], "SmolVLA masked 1M", "v"),
@@ -360,7 +412,9 @@ def fig_jitter_budget(rows: dict[str, dict]) -> None:
     out = os.path.join(FIG_DIR, "unified_h30_jitter_budget.png")
     fig.savefig(out, dpi=200)
     print(
-        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1) + {len(s['port'])} port"
+        f"wrote {out} ({len(s['hist'])} hist + {len(s['r50v1'])} R50-VAE (ImageNet-V1)"
+        f" + {len(s['2frame'])} two-frame + {len(s['state4'])} state-W4"
+        f" + {len(s['port'])} port"
         f" + {len(s['smol1m'])} smol-1M + {len(s['smolmask'])} masked points)"
     )
 

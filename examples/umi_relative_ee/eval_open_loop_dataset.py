@@ -112,6 +112,24 @@ def parse_args() -> argparse.Namespace:
         default="1,5,10",
         help="Comma-separated re-query intervals in frames for --stability_eval.",
     )
+    parser.add_argument(
+        "--cross_frame_mse_eval",
+        action="store_true",
+        help=(
+            "Direct adjacent-frame prediction-change mode: query independently at t and t+1, "
+            "compare the decoded chunks index-for-index over --eval_horizon (or the full chunk), "
+            "and report normalized-action, XYZ, rotation-vector, and gripper MSE. The two calls "
+            "use different deterministic seeds, so stochastic sampler variation is included."
+        ),
+    )
+    parser.add_argument(
+        "--cross_frame_mse_horizons",
+        default=None,
+        help=(
+            "Comma-separated horizons computed from the same t/t+1 prediction pair in "
+            "--cross_frame_mse_eval (for example 10,30). Overrides --eval_horizon."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -170,7 +188,7 @@ def predict_chunk_at_frame(
     postprocessor,
     device: torch.device,
     task: str,
-) -> tuple[torch.Tensor, float]:
+) -> tuple[torch.Tensor, torch.Tensor, float]:
     """Fetch, preprocess, and decode one query frame's predicted chunk.
 
     Execution core of the stability evaluation (the canonical loop keeps its
@@ -183,6 +201,7 @@ def predict_chunk_at_frame(
         batch[CAMERA_KEY] = batch[CAMERA_KEY].to(torch.float32) / 255.0
     if not batch.get("task"):
         batch["task"] = [task]
+    ground_truth = batch[ACTION][0, 1:].to(torch.float32).cpu()
     padding = batch.get("action_is_pad")
     if padding is not None and bool(padding.any()):
         raise RuntimeError(f"Internal sampling error: frame {frame_index} is padded")
@@ -204,7 +223,7 @@ def predict_chunk_at_frame(
             torch.cuda.synchronize(device)
         seconds = time.perf_counter() - start
         predicted = postprocessor(predicted_model).squeeze(0).to(torch.float32).cpu()
-    return predicted, seconds
+    return predicted, ground_truth, seconds
 
 
 def run_stability_eval(
@@ -258,11 +277,11 @@ def run_stability_eval(
         for interval in intervals:
             pair_index += 1
             seed = args.seed + pair_index  # same realization for both members
-            chunk_a, sec_a = predict_chunk_at_frame(
+            chunk_a, _, sec_a = predict_chunk_at_frame(
                 dataset, dataset_index, anchor_frame, seed, policy,
                 preprocessor, postprocessor, device, args.task,
             )
-            chunk_b, sec_b = predict_chunk_at_frame(
+            chunk_b, _, sec_b = predict_chunk_at_frame(
                 dataset, dataset_index + interval, anchor_frame + interval, seed, policy,
                 preprocessor, postprocessor, device, args.task,
             )
@@ -350,6 +369,228 @@ def run_stability_eval(
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     logger.info("Saved %s", report_path)
     print(json.dumps(report["summary"], indent=2))
+
+
+def run_cross_frame_mse_eval(
+    args,
+    metadata,
+    dataset,
+    policy,
+    preprocessor,
+    postprocessor,
+    device: torch.device,
+    model_path: str,
+    policy_config,
+    episode_indices: list[int],
+    query_min_action_offset: int,
+    query_max_action_offset: int,
+    dataset_root,
+) -> None:
+    """Direct same-index MSE between chunks independently predicted at t and t+1.
+
+    This intentionally performs no future-timestamp alignment and no anchor
+    compensation. It measures the total change in the decoded prediction,
+    including the changed current-pose anchor and stochastic sampler variation.
+    """
+    if args.cross_frame_mse_horizons:
+        horizons = sorted({int(value) for value in args.cross_frame_mse_horizons.split(",")})
+        if not horizons or horizons[0] <= 0:
+            raise ValueError("--cross_frame_mse_horizons must contain positive integers")
+    elif args.eval_horizon is not None:
+        horizons = [args.eval_horizon]
+    else:
+        horizons = [None]
+    maximum_horizon = None if horizons == [None] else max(horizons)
+    anchors = choose_query_indices(
+        metadata.episodes,
+        episode_indices,
+        query_min_action_offset,
+        query_max_action_offset + 1,
+        args.samples_per_episode,
+    )
+    if not anchors:
+        raise ValueError("No valid adjacent-frame MSE anchors were found")
+    logger.info(
+        "Cross-frame MSE eval: %d adjacent t/t+1 pairs on %d episodes, horizons=%s",
+        len(anchors),
+        len({episode for _, episode, _ in anchors}),
+        horizons,
+    )
+
+    samples: list[dict[str, float]] = []
+    deltas: list[torch.Tensor] = []
+    rotation_geodesics: list[torch.Tensor] = []
+    ground_truths: list[torch.Tensor] = []
+    inference_seconds: list[float] = []
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    for pair_index, (dataset_index, episode_index, anchor_frame) in enumerate(anchors):
+        seed_a = args.seed + 2 * pair_index
+        seed_b = seed_a + 1
+        chunk_a, ground_truth, sec_a = predict_chunk_at_frame(
+            dataset,
+            dataset_index,
+            anchor_frame,
+            seed_a,
+            policy,
+            preprocessor,
+            postprocessor,
+            device,
+            args.task,
+        )
+        chunk_b, _, sec_b = predict_chunk_at_frame(
+            dataset,
+            dataset_index + 1,
+            anchor_frame + 1,
+            seed_b,
+            policy,
+            preprocessor,
+            postprocessor,
+            device,
+            args.task,
+        )
+        inference_seconds += [sec_a, sec_b]
+        steps = min(len(chunk_a), len(chunk_b), len(ground_truth))
+        if maximum_horizon is not None and steps < maximum_horizon:
+            raise ValueError(
+                f"Checkpoint {model_path} provides only {steps} comparable steps; "
+                f"requested horizon {maximum_horizon}"
+            )
+        if maximum_horizon is not None:
+            steps = maximum_horizon
+        if steps <= 0:
+            continue
+        delta = chunk_a[:steps] - chunk_b[:steps]
+        samples.append(
+            {
+                "episode_index": episode_index,
+                "anchor_frame": anchor_frame,
+                "chunk_steps": int(steps),
+                "seed_t": seed_a,
+                "seed_t_plus_1": seed_b,
+            }
+        )
+        deltas.append(delta)
+        rotation_geodesics.append(rotation_error_deg(chunk_a[:steps], chunk_b[:steps]))
+        ground_truths.append(ground_truth[:steps])
+        if (pair_index + 1) % 50 == 0 or pair_index + 1 == len(anchors):
+            logger.info("Completed adjacent-frame pairs %d/%d", pair_index + 1, len(anchors))
+
+    metrics = (
+        "action_cross_frame_mse_normalized",
+        "xyz_cross_frame_mse_mm2_per_dim",
+        "rotvec_cross_frame_mse_deg2_per_dim",
+        "rotation_geodesic_cross_frame_mse_deg2",
+        "gripper_cross_frame_mse",
+    )
+    horizon_results = {}
+    for horizon in horizons:
+        horizon_key = "full" if horizon is None else str(horizon)
+        horizon_steps = min(len(deltas[0]), horizon) if horizon is not None else len(deltas[0])
+        scales = gt_quantile_scales([ground_truth[:horizon_steps] for ground_truth in ground_truths])
+        horizon_samples = []
+        for sample, delta, geodesic in zip(samples, deltas, rotation_geodesics, strict=True):
+            delta = delta[:horizon_steps]
+            normalized_delta = delta.to(torch.float32) / scales.to(torch.float32)
+            xyz_delta_mm = delta[:, :3] * 1000.0
+            rotvec_delta_deg = torch.rad2deg(delta[:, 3:6])
+            horizon_samples.append(
+                {
+                    **sample,
+                    "chunk_steps": horizon_steps,
+                    "action_cross_frame_mse_normalized": float((normalized_delta**2).mean()),
+                    "xyz_cross_frame_mse_mm2_per_dim": float((xyz_delta_mm**2).mean()),
+                    "rotvec_cross_frame_mse_deg2_per_dim": float((rotvec_delta_deg**2).mean()),
+                    "rotation_geodesic_cross_frame_mse_deg2": float(
+                        (geodesic[:horizon_steps] ** 2).mean()
+                    ),
+                    "gripper_cross_frame_mse": float((delta[:, 6] ** 2).mean()),
+                }
+            )
+        episode_rows: dict[int, list[dict[str, float]]] = defaultdict(list)
+        for sample in horizon_samples:
+            episode_rows[int(sample["episode_index"])].append(sample)
+        episode_means = {
+            episode: {
+                metric: float(np.mean([sample[metric] for sample in rows]))
+                for metric in metrics
+            }
+            for episode, rows in episode_rows.items()
+        }
+        episode_balanced = {
+            metric: float(np.mean([row[metric] for row in episode_means.values()]))
+            for metric in metrics
+        }
+        horizon_results[horizon_key] = {
+            "normalization": {
+                "definition": "per-dim decoded action difference / ((q99-q01)/2 of pooled anchor GT chunks)",
+                "per_dim_half_ranges": [float(scale) for scale in scales],
+            },
+            "summary": {
+                "num_episodes": len(episode_rows),
+                "num_pairs": len(horizon_samples),
+                "episode_balanced": episode_balanced,
+                "episode_balanced_95ci": bootstrap_episode_confidence_intervals(
+                    episode_means, metrics
+                ),
+                "per_episode": episode_means,
+            },
+            "samples": horizon_samples,
+        }
+
+    report = {
+        "mode": "cross_frame_mse",
+        "policy_type": policy_config.type,
+        "checkpoint": model_path,
+        "dataset_root": str(dataset_root),
+        "dataset_total_episodes": metadata.total_episodes,
+        "requested_episode_indices": episode_indices,
+        "pairs_per_episode": args.samples_per_episode,
+        "frame_interval": 1,
+        "eval_horizons": horizons,
+        "query_action_offset_bounds": {
+            "min": query_min_action_offset,
+            "max": query_max_action_offset,
+        },
+        "seed": args.seed,
+        "pair_seed_strategy": "independent deterministic seeds: seed+2*i at t, seed+2*i+1 at t+1",
+        "video_backend": args.video_backend,
+        "control_fps": float(metadata.fps),
+        "metric_definitions": {
+            "comparison": "decoded chunks predicted at t and t+1 compared directly index-for-index; no timestamp alignment or anchor compensation",
+            "action_cross_frame_mse_normalized": "mean squared difference over steps x 7 decoded action dimensions after division by pooled-GT q01-q99 half-ranges",
+            "xyz_cross_frame_mse_mm2_per_dim": "mean squared XYZ component difference over steps x 3, mm^2",
+            "rotvec_cross_frame_mse_deg2_per_dim": "mean squared raw rotation-vector component difference over steps x 3, deg^2",
+            "rotation_geodesic_cross_frame_mse_deg2": "mean squared SO(3) geodesic disagreement over steps, deg^2",
+            "gripper_cross_frame_mse": "mean squared gripper difference over steps",
+        },
+        "inference_latency_seconds": summarize_inference_latency(inference_seconds),
+        "cuda_peak_memory_bytes": (
+            torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+        ),
+        "confidence_interval_method": {
+            "unit": "episode",
+            "resamples": 10_000,
+            "confidence": 0.95,
+            "seed": 0,
+        },
+        "horizons": horizon_results,
+    }
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_name = f"{Path(model_path).parents[2].name}_{Path(model_path).parent.name}"
+    report_path = output_dir / f"{checkpoint_name}_cross_frame_mse_metrics.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    logger.info("Saved %s", report_path)
+    print(
+        json.dumps(
+            {
+                horizon: result["summary"]["episode_balanced"]
+                for horizon, result in horizon_results.items()
+            },
+            indent=2,
+        )
+    )
 
 
 def load_policy_and_processors(
@@ -695,6 +936,8 @@ def inference_step_field(policy_config: PreTrainedConfig) -> str:
 
 def main() -> None:
     args = parse_args()
+    if args.stability_eval and args.cross_frame_mse_eval:
+        raise ValueError("--stability_eval and --cross_frame_mse_eval are mutually exclusive")
     if args.output_dir is None:
         import datetime as _dt
 
@@ -767,6 +1010,22 @@ def main() -> None:
         return_uint8=True,
         video_backend=args.video_backend,
     )
+    if args.cross_frame_mse_eval:
+        return run_cross_frame_mse_eval(
+            args,
+            metadata,
+            dataset,
+            policy,
+            preprocessor,
+            postprocessor,
+            device,
+            model_path,
+            policy_config,
+            episode_indices,
+            query_min_action_offset,
+            query_max_action_offset,
+            dataset_root,
+        )
     if args.stability_eval:
         return run_stability_eval(
             args,

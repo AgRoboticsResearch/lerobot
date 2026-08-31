@@ -315,8 +315,12 @@ def main():
     repo_id = "sroiv2_strawberry_validation_rotvec"
     meta = ld.LeRobotDatasetMetadata(repo_id, root=args.dataset_root)
     action_horizon = args.action_horizon
-    ds = ld.LeRobotDataset(repo_id, root=args.dataset_root,
-                           delta_timestamps={"action": [t / meta.fps for t in range(action_horizon)]})
+    ds = ld.LeRobotDataset(
+        repo_id,
+        root=args.dataset_root,
+        delta_timestamps={"action": [t / meta.fps for t in range(action_horizon)]},
+        video_backend="pyav",
+    )
 
     # query frames: spread within each episode, leaving room for the chunk
     query = []

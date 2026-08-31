@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-"""§9.2.16 dedicated figure — LingBot-VA 3-point budget curve vs reference families.
+"""§9.2.16 LingBot-VA budget figures in the report-standard comparison format.
 
-Four panels over the three scored budgets (50k/100k/200k):
-  1. XYZ endpoint error (canonical h10, 95% bootstrap CI bands)
-  2. Action Acc@0.1
-  3. Within-chunk rotational 2nd difference (v2 jerk)
-  4. Physical rotational jerk (deg/s^3, dt = 1/30 s)
+Renders three views against the two budget-covered anchors, ACT R50-VAE
+(ImageNet-V1) and the π0.5 port:
+  1. Six canonical-h10 co-primary accuracy metrics.
+  2. Six canonical-h10 physical motion metrics (velocity/acceleration/jerk).
+  3. Three adjacent-frame direct prediction-change metrics at h10.
 
-References: the ACT R50-VAE (ImageNet-V1) 1-frame curve and the π0.5 port
-curve — the report's two budget-covered anchors.
-
-Data: unified_h10_run_summary.csv + physical_jerk_h10.csv (recompiled
-2026-08-26 with the three LingBot rows). Run via:
-  /home/zfei/anaconda3/envs/py312/bin/python \\
-    examples/umi_relative_ee/act_flow_ablation/plot_lingbot_budget.py
+LingBot-VA emits a 16-action chunk, so h30 evaluation is structurally
+unsupported. All panels include 95% episode-bootstrap CI bands.
 """
 from __future__ import annotations
 
 import csv
 import os
+import re
 
 import matplotlib
 
@@ -27,83 +23,156 @@ import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UNIFIED_CSV = "/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/results/unified_h10_run_summary.csv"
-PHYS_CSV = "/mnt/data1/projects/lerobot-arch-exp/reeval_v2metrics/results_physical_jerk/physical_jerk_h10.csv"
+PHYSICAL_CSV = os.path.join(HERE, "repro", "physical_dynamics_h10.csv")
+CROSS_FRAME_CSV = os.path.join(HERE, "repro", "cross_frame_mse.csv")
 FIG_DIR = os.path.join(HERE, "figures")
 
 C_LING = "#ff9896"
 C_ACT = "#1f77b4"
 C_PORT = "#ff7f0e"
 
+PANELS = [
+    ("xyz_end_m", "XYZ endpoint error (mm)", 1000),
+    ("rotation_end_deg", "Rotation endpoint error (deg)", 1),
+    ("xyz_l1_per_dim_m", "XYZ L1 per dimension (mm)", 1000),
+    ("rotvec_l1_per_dim_deg", "Rotation L1 per dimension (deg)", 1),
+    ("action_acc_at_0p5", "Action Acc@0.5", 1),
+    ("action_acc_at_0p1", "Action Acc@0.1", 1),
+]
 
-def load(path: str, prefix: str) -> list[tuple[int, dict]]:
-    with open(path) as f:
-        rows = [r for r in csv.DictReader(f) if r["run"].startswith(prefix)]
+PHYSICAL_PANELS = [
+    ("rot_vel_deg_s", "Rotational velocity (deg/s)"),
+    ("rot_accel_deg_s2", "Rotational acceleration (deg/s²)"),
+    ("rot_jerk_deg_s3", "Rotational jerk (deg/s³)"),
+    ("xyz_vel_mm_s", "XYZ velocity (mm/s)"),
+    ("xyz_accel_mm_s2", "XYZ acceleration (mm/s²)"),
+    ("xyz_jerk_mm_s3", "XYZ jerk (mm/s³)"),
+]
+
+CROSS_FRAME_PANELS = [
+    ("action_cross_frame_mse_normalized", "Normalized action MSE"),
+    ("xyz_cross_frame_mse_mm2_per_dim", "XYZ MSE (mm² per dim)"),
+    ("rotation_geodesic_cross_frame_mse_deg2", "Rotation geodesic MSE (deg²)"),
+]
+
+
+def load(path: str, pattern: str, horizon: int | None = None) -> list[tuple[int, dict]]:
+    with open(path) as handle:
+        rows = list(csv.DictReader(handle))
     key = "step" if "step" in rows[0] else "steps"
-    return sorted((int(r[key]), r) for r in rows)
-
-
-def curve(ax, series, metric, scale, color, label, marker, ls="-"):
-    xs = [s for s, _ in series]
-    ys = [float(r[metric]) * scale for _, r in series]
-    ax.plot(xs, ys, marker=marker, ms=5, lw=1.8, ls=ls, color=color, label=label)
-    if f"{metric}__ci_low" in series[0][1]:
-        ax.fill_between(
-            xs,
-            [float(r[f"{metric}__ci_low"]) * scale for _, r in series],
-            [float(r[f"{metric}__ci_high"]) * scale for _, r in series],
-            color=color, alpha=0.15, lw=0,
-        )
-    elif f"{metric}_lo" in series[0][1]:
-        ax.fill_between(
-            xs,
-            [float(r[f"{metric}_lo"]) * scale for _, r in series],
-            [float(r[f"{metric}_hi"]) * scale for _, r in series],
-            color=color, alpha=0.15, lw=0,
-        )
-
-
-def main() -> None:
-    ling_u = load(UNIFIED_CSV, "lingbot_va_axis_angle_seed1000_")
-    act_u = load(UNIFIED_CSV, "act_r50_v1_vae_seed1000_")
-    port_u = load(UNIFIED_CSV, "pi05_port_seed1000_")
-    ling_p = load(PHYS_CSV, "lingbot_va_axis_angle_seed1000_")
-    act_p = load(PHYS_CSV, "act_r50_v1_vae_seed1000_")
-    port_p = load(PHYS_CSV, "pi05_port_seed1000_")
-    gt_jerk = float(act_p[0][1]["gt_rot_jerk_deg_s3"])
-
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-    fig.suptitle(
-        "LingBot-VA (video-action, 16-frame chunk) vs reference budget curves — canonical h10",
-        fontsize=12,
+    return sorted(
+        (int(row[key]), row)
+        for row in rows
+        if re.fullmatch(pattern, row["run"])
+        and (horizon is None or int(row["horizon"]) == horizon)
     )
-    curve(axes[0][0], act_u, "xyz_end_m", 1000, C_ACT, "ACT R50-VAE 1-frame", "s")
-    curve(axes[0][0], port_u, "xyz_end_m", 1000, C_PORT, "π0.5 port", "^")
-    curve(axes[0][0], ling_u, "xyz_end_m", 1000, C_LING, "LingBot-VA", "*")
-    axes[0][0].set_title("XYZ endpoint error (mm)", fontsize=10)
-    curve(axes[0][1], act_u, "action_acc_at_0p1", 1, C_ACT, "ACT R50-VAE 1-frame", "s")
-    curve(axes[0][1], port_u, "action_acc_at_0p1", 1, C_PORT, "π0.5 port", "^")
-    curve(axes[0][1], ling_u, "action_acc_at_0p1", 1, C_LING, "LingBot-VA", "*")
-    axes[0][1].set_title("Action Acc@0.1", fontsize=10)
-    curve(axes[1][0], act_u, "rot_jerk_deg", 1, C_ACT, "ACT R50-VAE 1-frame", "s")
-    curve(axes[1][0], port_u, "rot_jerk_deg", 1, C_PORT, "π0.5 port", "^")
-    curve(axes[1][0], ling_u, "rot_jerk_deg", 1, C_LING, "LingBot-VA", "*")
-    axes[1][0].axhline(float(act_u[0][1]["gt_rot_jerk_deg"]), color="k", ls="--", lw=1.2, label="demonstrated")
-    axes[1][0].set_title("Within-chunk rotational 2nd-diff (deg/step²)", fontsize=10)
-    curve(axes[1][1], act_p, "rot_jerk_deg_s3", 1, C_ACT, "ACT R50-VAE 1-frame", "s")
-    curve(axes[1][1], port_p, "rot_jerk_deg_s3", 1, C_PORT, "π0.5 port", "^")
-    curve(axes[1][1], ling_p, "rot_jerk_deg_s3", 1, C_LING, "LingBot-VA", "*")
-    axes[1][1].axhline(gt_jerk, color="k", ls="--", lw=1.2, label=f"demonstrated ({gt_jerk:,.0f})")
-    axes[1][1].set_title("Physical rotational jerk (deg/s³)", fontsize=10)
+
+
+def curve(ax, series, metric, scale, color, label, marker):
+    if not series:
+        raise ValueError(f"No rows available for {label}: {metric}")
+    xs = [step for step, _ in series]
+    ys = [float(row[metric]) * scale for _, row in series]
+    ax.plot(xs, ys, marker=marker, ms=5, lw=1.8, color=color, label=label)
+    if f"{metric}__ci_low" in series[0][1]:
+        low_key, high_key = f"{metric}__ci_low", f"{metric}__ci_high"
+    elif f"{metric}_lo" in series[0][1]:
+        low_key, high_key = f"{metric}_lo", f"{metric}_hi"
+    else:
+        return
+    ax.fill_between(
+        xs,
+        [float(row[low_key]) * scale for _, row in series],
+        [float(row[high_key]) * scale for _, row in series],
+        color=color,
+        alpha=0.15,
+        lw=0,
+    )
+
+
+def style_axes(axes) -> None:
     for ax in axes.flat:
         ax.set_xscale("log")
         ax.set_xlabel("training steps")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
+
+
+def add_curves(ax, act, port, ling, metric, scale=1) -> None:
+    curve(ax, act, metric, scale, C_ACT, "ACT R50-VAE 1-frame", "s")
+    curve(ax, port, metric, scale, C_PORT, "π0.5 port", "^")
+    curve(ax, ling, metric, scale, C_LING, "LingBot-VA", "*")
+
+
+def fig_accuracy() -> int:
+    ling = load(UNIFIED_CSV, r"lingbot_va_axis_angle_seed1000_\d+steps")
+    act = load(UNIFIED_CSV, r"act_r50_v1_vae_seed1000_\d{7}steps")
+    port = load(UNIFIED_CSV, r"pi05_port_seed1000_\d{7}steps")
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig.suptitle(
+        "LingBot-VA vs budget-covered anchors — six canonical co-primary metrics at h10",
+        fontsize=12,
+    )
+    for ax, (metric, title, scale) in zip(axes.flat, PANELS, strict=True):
+        add_curves(ax, act, port, ling, metric, scale)
+        ax.set_title(title, fontsize=10)
+    style_axes(axes)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     out = os.path.join(FIG_DIR, "lingbot_budget.png")
     fig.savefig(out, dpi=200)
     plt.close(fig)
-    print(f"wrote {out} ({len(ling_u)} lingbot vs {len(act_u)} ACT / {len(port_u)} port points)")
+    print(f"wrote {out}")
+    return len(ling)
+
+
+def fig_physical() -> None:
+    ling = load(PHYSICAL_CSV, r"lingbot_va_axis_angle_seed1000_\d+steps")
+    act = load(PHYSICAL_CSV, r"act_r50_v1_vae_seed1000_\d{7}steps")
+    port = load(PHYSICAL_CSV, r"pi05_port_seed1000_\d{7}steps")
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig.suptitle(
+        "LingBot-VA physical motion dynamics vs budget-covered anchors, canonical h10 (dt = 1/30 s)",
+        fontsize=12,
+    )
+    for ax, (metric, title) in zip(axes.flat, PHYSICAL_PANELS, strict=True):
+        add_curves(ax, act, port, ling, metric)
+        gt = float(act[0][1][f"gt_{metric}"])
+        ax.axhline(gt, color="k", ls="--", lw=1.2, label=f"demonstrated ({gt:,.1f})")
+        ax.set_title(title, fontsize=10)
+    style_axes(axes)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    out = os.path.join(FIG_DIR, "lingbot_physical_dynamics.png")
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
+def fig_cross_frame() -> None:
+    ling = load(CROSS_FRAME_CSV, r"lingbot_va_axis_angle_seed1000_\d+steps", horizon=10)
+    act = load(CROSS_FRAME_CSV, r"act_r50_v1_vae_seed1000_\d{7}steps", horizon=10)
+    port = load(CROSS_FRAME_CSV, r"pi05_port_seed1000_\d{7}steps", horizon=10)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    fig.suptitle(
+        "LingBot-VA adjacent-frame prediction consistency at h10 — direct change from query t to t+1; lower is more stable",
+        fontsize=12,
+    )
+    for ax, (metric, title) in zip(axes, CROSS_FRAME_PANELS, strict=True):
+        add_curves(ax, act, port, ling, metric)
+        ax.set_yscale("log")
+        ax.set_title(title, fontsize=10)
+    style_axes(axes)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    out = os.path.join(FIG_DIR, "lingbot_cross_frame_mse.png")
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
+def main() -> None:
+    lingbot_points = fig_accuracy()
+    fig_physical()
+    fig_cross_frame()
+    print(f"Fig. 35 suite uses {lingbot_points} LingBot-VA checkpoints")
 
 
 if __name__ == "__main__":
