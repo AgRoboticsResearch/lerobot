@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-r"""    
+r"""
 Deploy ACT policy trained with UMI-style processor pipeline on Piper 6-DOF arm.
 
 Uses synchronous control (no subprocess), same pattern as deploy_relative_ee_processor_so101.py.
@@ -62,13 +62,19 @@ except ModuleNotFoundError:
     # Supports direct execution from inside examples/umi_relative_ee.
     from control_logger import ControlLogger, make_control_logger  # type: ignore[no-redef]
 
+try:
+    from examples.umi_relative_ee.deploy_dataset_recorder import make_deploy_dataset_recorder
+except ModuleNotFoundError:
+    # Supports direct execution from inside examples/umi_relative_ee.
+    from deploy_dataset_recorder import make_deploy_dataset_recorder  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
 
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 HOME_POSE_DEG = np.array([0.0, 50.60, -50.40, -1.21, 10.00, 0.00])
 SAFE_POSE_DEG = np.array([0.0, -2.08, 1.8, 1.35, 17.16, 0.0])
-START_POSE_DEG = np.array([0.0, 79.2, -31.3, 0.0,   -45.85, 0.0])
+START_POSE_DEG = np.array([0.0, 79.2, -31.3, 0.0, -45.85, 0.0])
 
 # External DM4310 gripper (MIT mode, radians)
 GRIPPER_OPEN_RAD = 0
@@ -78,13 +84,31 @@ GRIPPER_CLOSED_RAD = -0.91
 GRIPPER_OPEN_MM = 0.0
 GRIPPER_CLOSED_MM = 55.0
 
-DEFAULT_URDF_PATH = os.path.normpath(os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "sroi-piper",
-    "src", "utils", "piper_urdf", "piper_sroiv2.urdf",
-)))
-DEFAULT_PIPER_SRC_PATH = os.path.normpath(os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "sroi-piper", "src",
-)))
+DEFAULT_URDF_PATH = os.path.normpath(
+    os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "..",
+            "sroi-piper",
+            "src",
+            "utils",
+            "piper_urdf",
+            "piper_sroiv2.urdf",
+        )
+    )
+)
+DEFAULT_PIPER_SRC_PATH = os.path.normpath(
+    os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "..",
+            "sroi-piper",
+            "src",
+        )
+    )
+)
 DEFAULT_DEPLOY_FRAME = "camera_link"
 
 
@@ -104,8 +128,13 @@ def _timed_phase(name: str):
 
 # Recognized key names — normalized to lowercase single chars or special tokens.
 _KEY_MAP = {
-    "q": "q", "r": "r", "s": "s", ".": "dot", "h": "h",
-    "space": "space", "esc": "esc",
+    "q": "q",
+    "r": "r",
+    "s": "s",
+    ".": "dot",
+    "h": "h",
+    "space": "space",
+    "esc": "esc",
 }
 
 
@@ -146,6 +175,7 @@ class KeyboardCommandHandler:
 
     def connect(self) -> None:
         from pynput import keyboard as pk
+
         self._listener = pk.Listener(on_press=self._on_press)
         self._listener.daemon = True
         self._listener.start()
@@ -223,12 +253,14 @@ def ee_pose_aa_from_fk(kinematics, joints_deg: np.ndarray, gripper_norm: float) 
     ee_T = kinematics.forward_kinematics(joints_deg)
     pos = ee_T[:3, 3]
     from scipy.spatial.transform import Rotation
+
     aa = Rotation.from_matrix(ee_T[:3, :3]).as_rotvec()
     return np.concatenate([pos, aa, [gripper_norm]]).astype(np.float32)
 
 
-def move_to_pose(piper, gripper, target_deg, *, label, gripper_kp=0.0, gripper_kd=0.0,
-                 duration=3.0, open_gripper=True):
+def move_to_pose(
+    piper, gripper, target_deg, *, label, gripper_kp=0.0, gripper_kd=0.0, duration=3.0, open_gripper=True
+):
     """Move arm to an absolute joint pose (degrees) and (optionally) open the gripper.
 
     Sends the target to the Piper and lets its internal controller smooth the
@@ -249,9 +281,14 @@ def move_to_pose(piper, gripper, target_deg, *, label, gripper_kp=0.0, gripper_k
 def move_to_safe(piper, gripper, gripper_kp, gripper_kd, duration=3.0):
     """Move arm to safe pose and open gripper before disable."""
     move_to_pose(
-        piper, gripper, SAFE_POSE_DEG,
-        label="safe", gripper_kp=gripper_kp, gripper_kd=gripper_kd,
-        duration=duration, open_gripper=True,
+        piper,
+        gripper,
+        SAFE_POSE_DEG,
+        label="safe",
+        gripper_kp=gripper_kp,
+        gripper_kd=gripper_kd,
+        duration=duration,
+        open_gripper=True,
     )
 
 
@@ -277,6 +314,7 @@ def resync_ik_safety(ik_pipeline, kinematics, piper):
 # Visualization helpers (from visualize_predictions.py)
 # ---------------------------------------------------------------------------
 
+
 def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
     """Return T_opt_cam (optical→cam) and T_cam_ee (cam→ee) at the neutral pose.
 
@@ -287,6 +325,7 @@ def get_kinematic_transforms(urdf_path: str) -> tuple[np.ndarray, np.ndarray]:
     3x RobotKinematics approach.
     """
     import placo
+
     flags = placo.Flags.ignore_collisions | placo.Flags.collision_as_visual
     robot = placo.RobotWrapper(str(urdf_path), flags)
     robot.update_kinematics()
@@ -308,7 +347,9 @@ def rot6d_to_matrix(action_10d: np.ndarray) -> np.ndarray:
 
 
 def relative_actions_to_3d_points(
-    T_rel_list: list[np.ndarray], T_opt_cam: np.ndarray, T_cam_ee: np.ndarray,
+    T_rel_list: list[np.ndarray],
+    T_opt_cam: np.ndarray,
+    T_cam_ee: np.ndarray,
 ) -> np.ndarray:
     positions = [(T_opt_cam @ T_cam_ee)[:3, 3].copy()]
     for T_rel in T_rel_list:
@@ -325,15 +366,16 @@ def project_points_to_image(points_3d: np.ndarray, K: np.ndarray) -> np.ndarray:
 
 
 def draw_trajectory_on_image(
-    img: np.ndarray, points_2d: np.ndarray, gripper: np.ndarray | None = None,
+    img: np.ndarray,
+    points_2d: np.ndarray,
+    gripper: np.ndarray | None = None,
 ) -> np.ndarray:
     img_draw = img.copy()
     n = len(points_2d)
     if n == 0:
         return img_draw
     colors = [
-        (int(255 * i / max(1, n - 1)), int(255 * (1 - i / max(1, n - 1))), 0)
-        for i in range(max(1, n - 1))
+        (int(255 * i / max(1, n - 1)), int(255 * (1 - i / max(1, n - 1))), 0) for i in range(max(1, n - 1))
     ]
     h, w = img.shape[:2]
     for i in range(len(points_2d) - 1):
@@ -366,6 +408,7 @@ def unnormalize_actions(tensor: torch.Tensor, stats: dict) -> torch.Tensor:
 def auto_detect_realsense_serial() -> str | None:
     try:
         import pyrealsense2 as rs
+
         ctx = rs.context()
         devices = ctx.query_devices()
         if len(devices) > 0:
@@ -426,9 +469,7 @@ def add_policy_task(batch: dict, policy, task: str | None) -> None:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Deploy UMI-style relative EE policy on Piper arm"
-    )
+    parser = argparse.ArgumentParser(description="Deploy UMI-style relative EE policy on Piper arm")
     parser.add_argument("--pretrained_path", type=str, required=True)
     parser.add_argument("--task", type=str, default=None, help="Language task required by SmolVLA")
     parser.add_argument("--can_port", type=str, default="can0")
@@ -440,37 +481,70 @@ def parse_args():
         choices=["external", "builtin"],
         help="external (DM4310 serial) or builtin (PiperInterface)",
     )
-    parser.add_argument("--cameras", type=str, default=None,
-                        help='YAML camera config. serial_number_or_name auto-detected if omitted. e.g. "{camera: {type: intelrealsense, fps: 30, width: 640, height: 480}}"')
+    parser.add_argument(
+        "--cameras",
+        type=str,
+        default=None,
+        help='YAML camera config. serial_number_or_name auto-detected if omitted. e.g. "{camera: {type: intelrealsense, fps: 30, width: 640, height: 480}}"',
+    )
     parser.add_argument("--urdf_path", type=str, default=DEFAULT_URDF_PATH)
     parser.add_argument("--deploy_frame", type=str, default=DEFAULT_DEPLOY_FRAME)
     parser.add_argument("--n_action_steps", type=int, default=30)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--warm_start", action="store_true")
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--no_vis", action="store_true",
-                        help="Disable camera + trajectory visualization")
+    parser.add_argument("--no_vis", action="store_true", help="Disable camera + trajectory visualization")
     parser.add_argument("--num_steps", type=int, default=0)
     parser.add_argument("--ee_bounds_min", type=float, nargs=3, default=[-0.5, -0.5, -0.1])
     parser.add_argument("--ee_bounds_max", type=float, nargs=3, default=[0.5, 0.5, 0.6])
     parser.add_argument("--max_ee_step_m", type=float, default=0.05)
     parser.add_argument("--gripper_kp", type=float, default=5.0)
     parser.add_argument("--gripper_kd", type=float, default=0.5)
-    parser.add_argument("--dry_run", action="store_true",
-                        help="No arm/gripper — camera + inference + trajectory overlay only")
-    parser.add_argument("--camera_info_path", type=str, default=None,
-                        help="camera_info.json for intrinsics (dry_run trajectory projection)")
-    parser.add_argument("--initial_state", type=float, nargs=7, default=None,
-                        help="Initial 7D aa state [x,y,z,wx,wy,wz,gripper] for dry_run")
-    parser.add_argument("--update_state", action="store_true",
-                        help="Chain predictions: last predicted action becomes next state (dry_run)")
     parser.add_argument(
-        "--log", nargs="?", default=None, const="",
-        help="Log every control tick for offline analysis. Off by default. "
-             "Bare '--log' writes to logs/sync_<timestamp>.csv (+ .npz/.json); "
-             "'--log PATH' uses PATH as the stem (suffixes added automatically).",
+        "--dry_run", action="store_true", help="No arm/gripper — camera + inference + trajectory overlay only"
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--camera_info_path",
+        type=str,
+        default=None,
+        help="camera_info.json for intrinsics (dry_run trajectory projection)",
+    )
+    parser.add_argument(
+        "--initial_state",
+        type=float,
+        nargs=7,
+        default=None,
+        help="Initial 7D aa state [x,y,z,wx,wy,wz,gripper] for dry_run",
+    )
+    parser.add_argument(
+        "--update_state",
+        action="store_true",
+        help="Chain predictions: last predicted action becomes next state (dry_run)",
+    )
+    parser.add_argument(
+        "--log",
+        nargs="?",
+        default=None,
+        const="",
+        help="Log every control tick for offline analysis. Off by default. "
+        "Bare '--log' writes to logs/sync_<timestamp>.csv (+ .npz/.json); "
+        "'--log PATH' uses PATH as the stem (suffixes added automatically).",
+    )
+    parser.add_argument(
+        "--save_dataset",
+        nargs="?",
+        default=None,
+        const="",
+        help="Record the inference-time stream (joints, EE poses, gripper, camera "
+        "frames, predictions + chunk provenance) to a LeRobotDataset, one "
+        "episode per INFERENCE engagement. Off by default. Bare '--save_dataset' "
+        "writes to outputs/deploy_datasets/sync_<timestamp>; '--save_dataset PATH' "
+        "uses PATH as the dataset root (must not exist). Ignored with --dry_run.",
+    )
+    args = parser.parse_args()
+    if args.save_dataset is not None and os.path.exists(args.save_dataset):
+        parser.error(f"--save_dataset path already exists: {args.save_dataset}")
+    return args
 
 
 def run_dry_run(args):
@@ -491,11 +565,12 @@ def run_dry_run(args):
     camera_matrix = None
     if args.camera_info_path:
         import json
+
         with open(args.camera_info_path) as f:
             info = json.load(f)
         K_flat = info["K"]
         camera_matrix = np.array(K_flat, dtype=np.float64).reshape(3, 3)
-        logger.info(f"Loaded camera matrix: fx={camera_matrix[0,0]:.1f}")
+        logger.info(f"Loaded camera matrix: fx={camera_matrix[0, 0]:.1f}")
 
     # Connect camera
     cameras_config = parse_cameras_config(args.cameras)
@@ -510,15 +585,20 @@ def run_dry_run(args):
     if camera_matrix is None:
         try:
             import pyrealsense2 as rs
+
             for cam in cameras.values():
                 if hasattr(cam, "rs_pipeline") and cam.rs_pipeline is not None:
                     profile = cam.rs_pipeline.get_active_profile()
-                    intrinsics = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-                    camera_matrix = np.array([
-                        [intrinsics.fx, 0, intrinsics.ppx],
-                        [0, intrinsics.fy, intrinsics.ppy],
-                        [0, 0, 1],
-                    ])
+                    intrinsics = (
+                        profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+                    )
+                    camera_matrix = np.array(
+                        [
+                            [intrinsics.fx, 0, intrinsics.ppx],
+                            [0, intrinsics.fy, intrinsics.ppy],
+                            [0, 0, 1],
+                        ]
+                    )
                     logger.info(f"Auto-detected RealSense intrinsics: fx={intrinsics.fx:.1f}")
                     break
         except Exception:
@@ -552,9 +632,7 @@ def run_dry_run(args):
                 img = camera.read()
                 img_float = img.astype(np.float32) / 255.0
                 img_chw = np.transpose(img_float, (2, 0, 1))
-                batch[f"observation.images.{cam_name}"] = (
-                    torch.from_numpy(img_chw).unsqueeze(0).to(device)
-                )
+                batch[f"observation.images.{cam_name}"] = torch.from_numpy(img_chw).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 processed = preprocessor(batch)
@@ -567,16 +645,19 @@ def run_dry_run(args):
             # Chain state if requested
             if args.update_state:
                 from scipy.spatial.transform import Rotation
+
                 T_ref = np.eye(4)
                 T_ref[:3, :3] = Rotation.from_rotvec(current_state[3:6]).as_matrix()
                 T_ref[:3, 3] = current_state[:3]
                 T_rel_last = rot6d_to_matrix(actions_rel[-1])
                 T_abs_last = T_ref @ T_rel_last
-                current_state = np.concatenate([
-                    T_abs_last[:3, 3],
-                    Rotation.from_matrix(T_abs_last[:3, :3]).as_rotvec(),
-                    [actions_rel[-1, 9]],
-                ]).astype(np.float32)
+                current_state = np.concatenate(
+                    [
+                        T_abs_last[:3, 3],
+                        Rotation.from_matrix(T_abs_last[:3, :3]).as_rotvec(),
+                        [actions_rel[-1, 9]],
+                    ]
+                ).astype(np.float32)
 
             # Project trajectory
             if not args.no_vis:
@@ -598,7 +679,7 @@ def run_dry_run(args):
             elapsed = time.perf_counter() - t0
             fps_actual = 1.0 / max(elapsed, 1e-6)
             if step_count % 10 == 0:
-                logger.info(f"Step {step_count}: {elapsed*1000:.0f}ms ({fps_actual:.0f} fps)")
+                logger.info(f"Step {step_count}: {elapsed * 1000:.0f}ms ({fps_actual:.0f} fps)")
             step_count += 1
 
             key = cv2.waitKey(1) if not args.no_vis else 0
@@ -622,6 +703,8 @@ def main():
     logging.basicConfig(level=logging.INFO, force=True)
 
     if args.dry_run:
+        if args.save_dataset is not None:
+            logger.warning("--save_dataset is ignored in --dry_run mode")
         run_dry_run(args)
         return
 
@@ -650,6 +733,7 @@ def main():
             viz_T_opt_cam, viz_T_cam_ee = get_kinematic_transforms(args.urdf_path)
         if args.camera_info_path:
             import json
+
             with open(args.camera_info_path) as f:
                 info = json.load(f)
             camera_matrix = np.array(info["K"], dtype=np.float64).reshape(3, 3)
@@ -728,15 +812,20 @@ def main():
     if not args.no_vis and camera_matrix is None:
         try:
             import pyrealsense2 as rs
+
             for cam in cameras.values():
                 if hasattr(cam, "rs_pipeline") and cam.rs_pipeline is not None:
                     profile = cam.rs_pipeline.get_active_profile()
-                    intrinsics = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-                    camera_matrix = np.array([
-                        [intrinsics.fx, 0, intrinsics.ppx],
-                        [0, intrinsics.fy, intrinsics.ppy],
-                        [0, 0, 1],
-                    ])
+                    intrinsics = (
+                        profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+                    )
+                    camera_matrix = np.array(
+                        [
+                            [intrinsics.fx, 0, intrinsics.ppx],
+                            [0, intrinsics.fy, intrinsics.ppy],
+                            [0, 0, 1],
+                        ]
+                    )
                     logger.info(f"Auto-detected RealSense intrinsics: fx={intrinsics.fx:.1f}")
                     break
         except Exception:
@@ -766,12 +855,16 @@ def main():
     step_count = 0
     ctrl_log: ControlLogger | None = None
     action_queue = []
+    # --save_dataset recorder (None when off) + the latest raw frame per camera
+    # (kept so the dataset records the uint8 image the policy saw, not the viz copy).
+    recorder = None
+    raw_images: dict[str, np.ndarray] = {}
     chunk_traj_3d = None
     # UMI relative-EE chunk provenance for the --log (anchor + raw relative per chunk).
     chunk_id = 0
-    chunk_ref_ee = None       # 7D EE pose that anchored the current chunk (T_anchor)
-    chunk_rel = None          # raw per-step relative model output [T, D] for the current chunk
-    chunk_idx = 0             # position within the current chunk (advances per pop)
+    chunk_ref_ee = None  # 7D EE pose that anchored the current chunk (T_anchor)
+    chunk_rel = None  # raw per-step relative model output [T, D] for the current chunk
+    chunk_idx = 0  # position within the current chunk (advances per pop)
 
     logger.info(f"Starting control loop at {args.fps} Hz")
     print(_KEYMAP_HELP)
@@ -779,6 +872,14 @@ def main():
     ctrl_log = make_control_logger(args, prefix="sync")
     if ctrl_log is not None:
         ctrl_log.start()
+    recorder = make_deploy_dataset_recorder(
+        args,
+        prefix="sync",
+        cameras=cameras,
+        fps=args.fps,
+        arm_joint_names=ARM_JOINTS,
+        task=args.task,
+    )
     tick = 0
 
     def log_tick() -> None:
@@ -787,6 +888,8 @@ def main():
         Reads the per-tick `diag` dict + loop locals; called at the end of BOTH
         the PAUSED and INFERENCE branches so every tick is logged.
         """
+        if recorder is not None:
+            recorder.note_loop_state(state.name)
         if ctrl_log is None:
             return
         if state == LoopState.PAUSED:
@@ -801,7 +904,9 @@ def main():
             tick_dt_ms=(time.perf_counter() - t0) * 1000.0,
             state=state.name,
             queue=len(action_queue),
-            e2e_ms=None, wire_ms=None, server_ms=None,
+            e2e_ms=None,
+            wire_ms=None,
+            server_ms=None,
             **diag,
         )
 
@@ -815,13 +920,23 @@ def main():
                 t0 = time.perf_counter()
                 tick += 1
                 diag = {
-                    "popped": False, "ik_ok": False, "skip_reason": "no_action",
-                    "action_timestep": None, "action_ee": None, "ik_joints_rad": None,
-                    "current_ee": None, "current_joints_rad": None,
-                    "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
+                    "popped": False,
+                    "ik_ok": False,
+                    "skip_reason": "no_action",
+                    "action_timestep": None,
+                    "action_ee": None,
+                    "ik_joints_rad": None,
+                    "current_ee": None,
+                    "current_joints_rad": None,
+                    "ee_delta_m": None,
+                    "joint_delta_max_rad": None,
+                    "gripper": None,
                     "work_ms": None,
-                    "chunk_id": None, "chunk_ref_ee": None,
-                    "action_abs": None, "action_agg": None, "action_rel": None,
+                    "chunk_id": None,
+                    "chunk_ref_ee": None,
+                    "action_abs": None,
+                    "action_agg": None,
+                    "action_rel": None,
                 }
 
                 # ── 8a. Drain keyboard queue ────────────────────────────
@@ -834,10 +949,14 @@ def main():
                     elif key == "q":
                         logger.info("q — moving to START pose (control paused)")
                         move_to_pose(
-                            piper, gripper, START_POSE_DEG,
+                            piper,
+                            gripper,
+                            START_POSE_DEG,
                             label="start",
-                            gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
-                            duration=2.0, open_gripper=True,
+                            gripper_kp=args.gripper_kp,
+                            gripper_kd=args.gripper_kd,
+                            duration=2.0,
+                            open_gripper=True,
                         )
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
@@ -847,10 +966,14 @@ def main():
                     elif key == "r":
                         logger.info("r — moving to SAFE pose (control paused)")
                         move_to_pose(
-                            piper, gripper, SAFE_POSE_DEG,
+                            piper,
+                            gripper,
+                            SAFE_POSE_DEG,
                             label="safe",
-                            gripper_kp=args.gripper_kp, gripper_kd=args.gripper_kd,
-                            duration=3.0, open_gripper=True,
+                            gripper_kp=args.gripper_kp,
+                            gripper_kd=args.gripper_kd,
+                            duration=3.0,
+                            open_gripper=True,
                         )
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
@@ -898,6 +1021,7 @@ def main():
                 # ── 8c. Read cameras into batch (viz deferred until 8e) ──
                 for cam_name, camera in cameras.items():
                     img = camera.read()  # (H, W, 3) RGB uint8
+                    raw_images[cam_name] = img
                     img_float = img.astype(np.float32) / 255.0
                     img_chw = np.transpose(img_float, (2, 0, 1))
                     batch[f"observation.images.{cam_name}"] = (
@@ -916,9 +1040,7 @@ def main():
 
                         viz_pred_rel = None
                         if not args.no_vis and camera_matrix is not None and action_stats is not None:
-                            viz_pred_rel = unnormalize_actions(
-                                pred_norm.clone(), action_stats
-                            ).cpu().numpy()
+                            viz_pred_rel = unnormalize_actions(pred_norm.clone(), action_stats).cpu().numpy()
                             if viz_pred_rel.ndim == 3:
                                 viz_pred_rel = viz_pred_rel[0]
 
@@ -932,10 +1054,7 @@ def main():
                         logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
                         logger.info(f"  First action_aa: {actions_aa[0]}")
                         logger.info(f"  Last action_aa:  {actions_aa[-1]}")
-                    action_queue = [
-                        actions_aa[i]
-                        for i in range(min(args.n_action_steps, len(actions_aa)))
-                    ]
+                    action_queue = [actions_aa[i] for i in range(min(args.n_action_steps, len(actions_aa)))]
                     # UMI chunk provenance for the --log: this chunk is anchored at the
                     # current EE pose (ee_aa), and chunk_rel is its raw relative model
                     # output [T, D] (pred_norm, before the postprocessor made it absolute).
@@ -948,9 +1067,7 @@ def main():
                     chunk_traj_3d = None
                     if viz_pred_rel is not None:
                         T_rel_list = [rot6d_to_matrix(a) for a in viz_pred_rel]
-                        chunk_traj_3d = relative_actions_to_3d_points(
-                            T_rel_list, viz_T_opt_cam, viz_T_cam_ee
-                        )
+                        chunk_traj_3d = relative_actions_to_3d_points(T_rel_list, viz_T_opt_cam, viz_T_cam_ee)
 
                 # Pop one action (queue advances in both states so overlay cadence
                 # matches inference cadence — typically one new chunk per n_action_steps).
@@ -1003,8 +1120,7 @@ def main():
                     "ee.gripper_pos": float(action_aa[6]),
                 }
                 observation_dict = {
-                    f"{name}.pos": float(current_joints[i])
-                    for i, name in enumerate(ARM_JOINTS)
+                    f"{name}.pos": float(current_joints[i]) for i, name in enumerate(ARM_JOINTS)
                 }
 
                 if step_count < 5 or step_count % 100 == 0:
@@ -1023,9 +1139,7 @@ def main():
                     diag["skip_reason"] = "ik_failed"
 
                 if not ik_failed:
-                    joint_values = np.array(
-                        [result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS]
-                    )
+                    joint_values = np.array([result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS])
                     if step_count < 5 or step_count % 100 == 0:
                         logger.info(f"  IK result joints: {joint_values}")
                         logger.info(f"  joint delta: {joint_values - current_joints}")
@@ -1042,13 +1156,26 @@ def main():
                         piper.write_gripper(pos_mm)
 
                     diag.update(
-                        ik_ok=True, skip_reason=None, ik_joints_rad=joint_values,
+                        ik_ok=True,
+                        skip_reason=None,
+                        ik_joints_rad=joint_values,
                         gripper=gripper_value,
                         ee_delta_m=float(np.linalg.norm(action_aa[:3] - ee_aa[:3])),
                         joint_delta_max_rad=float(np.max(np.abs(joint_values - current_joints))),
                     )
 
                 step_count += 1
+
+                # --save_dataset: one frame per executed tick (before the single-chunk
+                # PAUSED flip so the final action of a chunk lands in the episode).
+                if recorder is not None:
+                    recorder.record_tick(
+                        images=raw_images,
+                        current_joints=current_joints,
+                        current_ee=ee_aa,
+                        diag=diag,
+                        gripper_raw=(grip_pos_rad if gripper is not None else grip_pos_mm),
+                    )
 
                 # Single-chunk mode: return to PAUSED after executing the whole chunk
                 if last_of_chunk:
@@ -1064,15 +1191,14 @@ def main():
                 log_tick()
 
                 if step_count % 100 == 0:
-                    logger.info(
-                        f"Step {step_count}: EE pos [{ee_aa[0]:.3f}, {ee_aa[1]:.3f}, {ee_aa[2]:.3f}]"
-                    )
+                    logger.info(f"Step {step_count}: EE pos [{ee_aa[0]:.3f}, {ee_aa[1]:.3f}, {ee_aa[2]:.3f}]")
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception as e:
         logger.error(f"Error during control loop: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         cv2.destroyAllWindows()
@@ -1081,6 +1207,11 @@ def main():
                 camera.disconnect()
             except Exception:
                 pass
+        if recorder is not None:
+            try:
+                recorder.close()
+            except Exception:
+                logger.exception("Failed to save inference-time dataset")
         if ctrl_log is not None:
             try:
                 ctrl_log.close()

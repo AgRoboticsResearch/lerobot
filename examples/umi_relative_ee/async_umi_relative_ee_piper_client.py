@@ -16,9 +16,9 @@ import pickle  # nosec
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +98,12 @@ except ModuleNotFoundError:
     # Supports direct execution from inside examples/umi_relative_ee.
     from control_logger import ControlLogger, make_control_logger  # type: ignore[no-redef]
 
+try:
+    from examples.umi_relative_ee.deploy_dataset_recorder import make_deploy_dataset_recorder
+except ModuleNotFoundError:
+    # Supports direct execution from inside examples/umi_relative_ee.
+    from deploy_dataset_recorder import make_deploy_dataset_recorder  # type: ignore[no-redef]
+
 # Trajectory-projection helpers reused verbatim from visualize_predictions.py so the
 # overlay is pixel-identical to its camera-mode projection. Optional: if that module
 # cannot be imported, _PROJECTION_AVAILABLE flips False and the client runs HUD-only.
@@ -106,18 +112,18 @@ try:
     from examples.umi_relative_ee.visualize_predictions import (
         DEFAULT_EXTRINSICS,
         aa_pose_to_matrix,
-        project_future,
         draw_traj_on_image,
         load_tip_kin,
+        project_future,
     )
 except ModuleNotFoundError:
     try:
         from visualize_predictions import (  # type: ignore[no-redef]
             DEFAULT_EXTRINSICS,
             aa_pose_to_matrix,
-            project_future,
             draw_traj_on_image,
             load_tip_kin,
+            project_future,
         )
     except Exception:  # optional projection dependency unavailable -> HUD-only
 
@@ -156,6 +162,7 @@ def auto_detect_realsense_intrinsics(cameras: dict) -> np.ndarray | None:
         pass
     return None
 
+
 _ASYNC_KEYMAP_HELP = """
 ╔══════════════════════════════════════════════════════════════╗
 ║              ASYNC UMI PIPER CONTROLS                       ║
@@ -188,9 +195,7 @@ def _loop_telemetry(loop_dt: deque[float]) -> str:
     return f"loop~{mean_ms:.0f}ms ({hz:.0f}Hz) spike~{spike_ms:.0f}ms"
 
 
-def _draw_hud_text(
-    frame: np.ndarray, txt: str, org: tuple[int, int], *, font_scale: float = 0.5
-) -> None:
+def _draw_hud_text(frame: np.ndarray, txt: str, org: tuple[int, int], *, font_scale: float = 0.5) -> None:
     """Draw a HUD line over a filled black backdrop, then a single yellow pass.
 
     Replaces the old thick-black-outline + thin-yellow double-draw with a clean
@@ -207,9 +212,7 @@ def _draw_hud_text(
         (0, 0, 0),
         -1,
     )
-    cv2.putText(
-        frame, txt, org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), 1, cv2.LINE_AA
-    )
+    cv2.putText(frame, txt, org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), 1, cv2.LINE_AA)
 
 
 def _to_np(t) -> np.ndarray | None:
@@ -272,8 +275,9 @@ class ActionBuffer:
                     action = self.aggregate_fn(existing, inc)  # blended ABSOLUTE
                     if self.on_merge is not None:
                         try:  # audit: confirm ensemble blends absolute targets, not ΔT's
-                            self.on_merge(timestep, existing, inc, action,
-                                          getattr(item, "reference_ee", None), chunk_id)
+                            self.on_merge(
+                                timestep, existing, inc, action, getattr(item, "reference_ee", None), chunk_id
+                            )
                         except Exception:  # noqa: BLE001
                             pass
                 else:
@@ -559,8 +563,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk_size_threshold", type=float, default=0.5)
     parser.add_argument(
         "--aggregate_fn_name",
-        choices=["weighted_average", "latest_only", "average", "conservative",
-                 "weighted_average_so3", "conservative_so3", "average_so3"],
+        choices=[
+            "weighted_average",
+            "latest_only",
+            "average",
+            "conservative",
+            "weighted_average_so3",
+            "conservative_so3",
+            "average_so3",
+        ],
         default="latest_only",
     )
     parser.add_argument("--fps", type=int, default=30)
@@ -583,31 +594,57 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gripper_kd", type=float, default=0.5)
     parser.add_argument("--no_vis", action="store_true")
     parser.add_argument(
-        "--dryrun", action="store_true",
+        "--dryrun",
+        action="store_true",
         help="No arm/gripper/IK: connect only the camera + server, feed a FIXED identity EE state, "
-             "and visualize the predicted trajectory (like async_client_with_only_camera.py). "
-             "Skips all real robot control; does not affect the normal deploy path.",
+        "and visualize the predicted trajectory (like async_client_with_only_camera.py). "
+        "Skips all real robot control; does not affect the normal deploy path.",
     )
     parser.add_argument(
-        "--initial_state", type=float, nargs=7, default=None,
+        "--initial_state",
+        type=float,
+        nargs=7,
+        default=None,
         help="--dryrun only: fixed 7D EE state [x,y,z,wx,wy,wz,gripper] fed every tick "
-             "(default: identity + 0.5 gripper).",
+        "(default: identity + 0.5 gripper).",
     )
-    parser.add_argument("--extrinsics_config",
-                        default=str(DEFAULT_EXTRINSICS) if DEFAULT_EXTRINSICS else None,
-                        help="camera_gripper_extrinsics JSON for the projected trajectory overlay "
-                             "(default: sibling camera_gripper_extrinsics_sroi_v2_d405.json)")
-    parser.add_argument("--camera_info_path", default=None,
-                        help="camera_info_color.json intrinsics K (default: auto-detect from RealSense)")
-    parser.add_argument("--output_dir", default="outputs/debug/async_piper_deploy",
-                        help="Headless: save the annotated camera feed to <output_dir>/camera_live.mp4")
+    parser.add_argument(
+        "--extrinsics_config",
+        default=str(DEFAULT_EXTRINSICS) if DEFAULT_EXTRINSICS else None,
+        help="camera_gripper_extrinsics JSON for the projected trajectory overlay "
+        "(default: sibling camera_gripper_extrinsics_sroi_v2_d405.json)",
+    )
+    parser.add_argument(
+        "--camera_info_path",
+        default=None,
+        help="camera_info_color.json intrinsics K (default: auto-detect from RealSense)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="outputs/debug/async_piper_deploy",
+        help="Headless: save the annotated camera feed to <output_dir>/camera_live.mp4",
+    )
     parser.add_argument("--debug_visualize_queue_size", action="store_true")
     parser.add_argument(
-        "--log", nargs="?", default=None, const="",
+        "--log",
+        nargs="?",
+        default=None,
+        const="",
         help="Log every control tick for offline analysis. Off by default. "
-             "Bare '--log' writes to logs/async_<timestamp>.csv (+ .npz/.json); "
-             "'--log PATH' uses PATH as the stem (the .csv/.npz/.json suffixes are "
-             "added automatically).",
+        "Bare '--log' writes to logs/async_<timestamp>.csv (+ .npz/.json); "
+        "'--log PATH' uses PATH as the stem (the .csv/.npz/.json suffixes are "
+        "added automatically).",
+    )
+    parser.add_argument(
+        "--save_dataset",
+        nargs="?",
+        default=None,
+        const="",
+        help="Record the inference-time stream (joints, EE poses, gripper, camera "
+        "frames, predictions + chunk provenance) to a LeRobotDataset, one "
+        "episode per INFERENCE engagement. Off by default. Bare '--save_dataset' "
+        "writes to outputs/deploy_datasets/async_<timestamp>; '--save_dataset PATH' "
+        "uses PATH as the dataset root (must not exist). Ignored with --dryrun.",
     )
     args = parser.parse_args()
     if not 0 <= args.chunk_size_threshold <= 1:
@@ -616,6 +653,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--actions_per_chunk must be positive")
     if args.fps <= 0:
         parser.error("--fps must be positive")
+    if args.save_dataset is not None and Path(args.save_dataset).exists():
+        parser.error(f"--save_dataset path already exists: {args.save_dataset}")
     return args
 
 
@@ -661,9 +700,13 @@ def execute_ee_action(
         logger.warning(
             "Rejected invalid EE action: shape=%s finite=%s", action_aa.shape, np.isfinite(action_aa).all()
         )
-        return {"ok": False, "skip_reason": "invalid_action", "joints_rad": None,
-                "ee_action": action_aa.copy() if action_aa.shape == (7,) else None,
-                "gripper": gripper_value}
+        return {
+            "ok": False,
+            "skip_reason": "invalid_action",
+            "joints_rad": None,
+            "ee_action": action_aa.copy() if action_aa.shape == (7,) else None,
+            "gripper": gripper_value,
+        }
 
     action_dict = {
         "ee.x": float(action_aa[0]),
@@ -679,8 +722,13 @@ def execute_ee_action(
         result = ik_pipeline((action_dict, observation_dict))
     except Exception as exc:
         logger.warning("IK rejected action: %s", exc)
-        return {"ok": False, "skip_reason": "ik_failed", "joints_rad": None,
-                "ee_action": action_aa.copy(), "gripper": gripper_value}
+        return {
+            "ok": False,
+            "skip_reason": "ik_failed",
+            "joints_rad": None,
+            "ee_action": action_aa.copy(),
+            "gripper": gripper_value,
+        }
 
     joint_values = np.array([result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS])
     piper.write_joints(joint_values)
@@ -693,11 +741,18 @@ def execute_ee_action(
         gripper.send_command(kp=kp, kd=kd, position=position)
     else:
         piper.write_gripper(gripper_norm_to_builtin(gripper_value))
-    return {"ok": True, "skip_reason": None, "joints_rad": joint_values,
-            "ee_action": action_aa.copy(), "gripper": gripper_value}
+    return {
+        "ok": True,
+        "skip_reason": None,
+        "joints_rad": joint_values,
+        "ee_action": action_aa.copy(),
+        "gripper": gripper_value,
+    }
 
 
-def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_client: "UmiAsyncPolicyClient") -> None:
+def _run_dryrun(
+    args: argparse.Namespace, action_buffer: ActionBuffer, policy_client: UmiAsyncPolicyClient
+) -> None:
     """Camera + server only: feed a FIXED identity EE state, never touch the robot.
 
     Mirrors async_client_with_only_camera.py: same gRPC send/receive, same trajectory
@@ -729,8 +784,9 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
             tip_kin = load_tip_kin(args.extrinsics_config)
             logger.info("Loaded hand-eye extrinsics for trajectory overlay: %s", args.extrinsics_config)
         except Exception as exc:
-            logger.warning("Could not load extrinsics %s: %s — trajectory overlay disabled",
-                           args.extrinsics_config, exc)
+            logger.warning(
+                "Could not load extrinsics %s: %s — trajectory overlay disabled", args.extrinsics_config, exc
+            )
     if tip_kin is not None and K is not None:
         logger.info("trajectory projection on: fx=%.1f cx=%.1f cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
 
@@ -769,7 +825,8 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
             queue_empty = action_buffer.size() == 0
             ready = action_buffer.ready_for_observation(args.chunk_size_threshold)
             should_send = (step == 0) or (
-                policy_client.can_send() and ready
+                policy_client.can_send()
+                and ready
                 and (queue_empty or last_sent_timestep != action_buffer.latest_action + 1)
             )
             if should_send:
@@ -791,8 +848,11 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
             if timed_action is not None:
                 action = timed_action.get_action().detach().cpu().numpy()
                 if action.shape != (7,) or not np.isfinite(action).all():
-                    logger.warning("Invalid action from server: shape=%s finite=%s",
-                                   action.shape, np.isfinite(action).all())
+                    logger.warning(
+                        "Invalid action from server: shape=%s finite=%s",
+                        action.shape,
+                        np.isfinite(action).all(),
+                    )
                 else:
                     if policy_client.merge_count != last_seen_merges:
                         last_seen_merges = policy_client.merge_count
@@ -802,7 +862,8 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
                         first_chunk_seen = True
                         logger.info(
                             "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
-                            np.round(action, 3), last_e2e_ms or -1.0,
+                            np.round(action, 3),
+                            last_e2e_ms or -1.0,
                         )
 
             if live_display or save_mp4:
@@ -813,8 +874,7 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
                         if queued:
                             abs_actions = [qa.get_action().detach().cpu().numpy() for qa in queued]
                             poses = np.stack(
-                                [aa_pose_to_matrix(current_ee)]
-                                + [aa_pose_to_matrix(a) for a in abs_actions]
+                                [aa_pose_to_matrix(current_ee)] + [aa_pose_to_matrix(a) for a in abs_actions]
                             )
                             px, py = project_future(poses, 0, K, tip_kin)
                             img_rgb = draw_traj_on_image(img_rgb, np.column_stack([px, py]), "pred")
@@ -848,7 +908,9 @@ def _run_dryrun(args: argparse.Namespace, action_buffer: ActionBuffer, policy_cl
             if step % 30 == 0:
                 logger.info(
                     "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s",
-                    step, action_buffer.size(), first_chunk_seen,
+                    step,
+                    action_buffer.size(),
+                    first_chunk_seen,
                     None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
                     None if last_action is None else np.round(last_action, 3).tolist(),
                 )
@@ -889,6 +951,8 @@ def run(args: argparse.Namespace) -> None:
     # Dry-run: camera + server only, fixed identity state, no robot control. Branching here
     # (before any hardware import/connect) keeps the real deploy path below completely intact.
     if args.dryrun:
+        if args.save_dataset is not None:
+            logger.warning("--save_dataset is ignored in --dryrun mode")
         _run_dryrun(args, action_buffer, policy_client)
         return
 
@@ -899,6 +963,7 @@ def run(args: argparse.Namespace) -> None:
     gripper_connected = False
     step_count = 0
     ctrl_log: ControlLogger | None = None
+    recorder = None  # --save_dataset recorder (None when off)
     frames: list[np.ndarray] = []
     first_chunk_seen = False
     last_action: np.ndarray | None = None
@@ -971,9 +1036,9 @@ def run(args: argparse.Namespace) -> None:
             import json
 
             try:
-                K = np.array(
-                    json.loads(Path(args.camera_info_path).read_text())["K"], dtype=float
-                ).reshape(3, 3)
+                K = np.array(json.loads(Path(args.camera_info_path).read_text())["K"], dtype=float).reshape(
+                    3, 3
+                )
                 logger.info("Loaded intrinsics K from %s (fx=%.1f)", args.camera_info_path, K[0, 0])
             except Exception as exc:
                 logger.warning("Could not load --camera_info_path %s: %s", args.camera_info_path, exc)
@@ -983,8 +1048,11 @@ def run(args: argparse.Namespace) -> None:
                 tip_kin = load_tip_kin(args.extrinsics_config)
                 logger.info("Loaded hand-eye extrinsics for trajectory overlay: %s", args.extrinsics_config)
             except Exception as exc:
-                logger.warning("Could not load extrinsics %s: %s — trajectory overlay disabled",
-                               args.extrinsics_config, exc)
+                logger.warning(
+                    "Could not load extrinsics %s: %s — trajectory overlay disabled",
+                    args.extrinsics_config,
+                    exc,
+                )
         if tip_kin is not None and K is not None:
             logger.info("trajectory projection on: fx=%.1f cx=%.1f cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
         elif K is not None and not args.no_vis:
@@ -1031,10 +1099,25 @@ def run(args: argparse.Namespace) -> None:
                     m = np.abs(denom) > 1e-9
                     if m.any():
                         w = float(np.mean((ag[m] - ic[m]) / denom[m]))
-                ctrl_log.log_merge(timestep=int(timestep), chunk_id=int(chunk_id), weight=w,
-                                   existing_abs=ex, incoming_abs=ic, aggregated_abs=ag, ref_ee=rf)
+                ctrl_log.log_merge(
+                    timestep=int(timestep),
+                    chunk_id=int(chunk_id),
+                    weight=w,
+                    existing_abs=ex,
+                    incoming_abs=ic,
+                    aggregated_abs=ag,
+                    ref_ee=rf,
+                )
 
             action_buffer.on_merge = _on_merge
+        recorder = make_deploy_dataset_recorder(
+            args,
+            prefix="async",
+            cameras=cameras,
+            fps=args.fps,
+            arm_joint_names=ARM_JOINTS,
+            task=args.task,
+        )
         tick = 0
 
         with KeyboardCommandHandler() as keyboard:
@@ -1042,11 +1125,20 @@ def run(args: argparse.Namespace) -> None:
                 loop_started = time.perf_counter()
                 tick += 1
                 diag = {
-                    "popped": False, "ik_ok": False, "skip_reason": "no_action",
-                    "action_timestep": None, "action_ee": None, "ik_joints_rad": None,
-                    "ee_delta_m": None, "joint_delta_max_rad": None, "gripper": None,
-                    "chunk_id": None, "chunk_ref_ee": None,
-                    "action_abs": None, "action_agg": None, "action_rel": None,
+                    "popped": False,
+                    "ik_ok": False,
+                    "skip_reason": "no_action",
+                    "action_timestep": None,
+                    "action_ee": None,
+                    "ik_joints_rad": None,
+                    "ee_delta_m": None,
+                    "joint_delta_max_rad": None,
+                    "gripper": None,
+                    "chunk_id": None,
+                    "chunk_ref_ee": None,
+                    "action_abs": None,
+                    "action_agg": None,
+                    "action_rel": None,
                 }
                 # True only on the tick a fresh chunk's first action is popped (when
                 # last_e2e_ms is (re)measured). e2e_ms is logged only then, so the JSON
@@ -1117,9 +1209,11 @@ def run(args: argparse.Namespace) -> None:
 
                 current_joints = np.asarray(piper.read_joints())
                 if gripper is not None:
-                    gripper_norm = gripper_external_to_norm(gripper.position)
+                    grip_pos_rad = gripper.position
+                    gripper_norm = gripper_external_to_norm(grip_pos_rad)
                 else:
-                    gripper_norm = gripper_builtin_to_norm(piper.read_gripper())
+                    grip_pos_mm = piper.read_gripper()
+                    gripper_norm = gripper_builtin_to_norm(grip_pos_mm)
                 gripper_norm = float(np.clip(gripper_norm, 0.0, 1.0))
                 current_ee = ee_pose_aa_from_fk(
                     kinematics,
@@ -1169,7 +1263,8 @@ def run(args: argparse.Namespace) -> None:
                             first_chunk_seen = True
                             logger.info(
                                 "✓ SERVER RETURNED A VALID CHUNK — first action=%s  (e2e %.0f ms)",
-                                np.round(last_action, 3), last_e2e_ms or -1.0,
+                                np.round(last_action, 3),
+                                last_e2e_ms or -1.0,
                             )
                         res = execute_ee_action(
                             timed_action.get_action(),
@@ -1196,14 +1291,29 @@ def run(args: argparse.Namespace) -> None:
                             action_rel=_to_np(getattr(timed_action, "relative_action", None)),
                         )
                         if res["ee_action"] is not None:
-                            diag["ee_delta_m"] = float(
-                                np.linalg.norm(res["ee_action"][:3] - current_ee[:3])
-                            )
+                            diag["ee_delta_m"] = float(np.linalg.norm(res["ee_action"][:3] - current_ee[:3]))
                         if res["joints_rad"] is not None:
                             diag["joint_delta_max_rad"] = float(
                                 np.max(np.abs(res["joints_rad"] - current_joints))
                             )
                         step_count += 1
+
+                        # --save_dataset: one frame per executed tick (before the
+                        # single-chunk PAUSED flip so the chunk's final action lands
+                        # in the episode).
+                        if recorder is not None:
+                            recorder.record_tick(
+                                images=images,
+                                current_joints=current_joints,
+                                current_ee=current_ee,
+                                diag=diag,
+                                gripper_raw=(grip_pos_rad if gripper is not None else grip_pos_mm),
+                                latencies={
+                                    "e2e_ms": last_e2e_ms if e2e_this_tick else None,
+                                    "wire_ms": policy_client.last_wire_ms,
+                                    "server_ms": policy_client.last_server_ms,
+                                },
+                            )
                         if single_chunk:
                             single_actions_executed += 1
                             if action_buffer.size() == 0 and single_actions_executed > 0:
@@ -1244,7 +1354,10 @@ def run(args: argparse.Namespace) -> None:
                             hud.append(f"last_action={np.round(last_action, 3).tolist()}")
                         if last_e2e_ms is not None:
                             hud.append(f"e2e~{last_e2e_ms:.0f}ms")
-                        if policy_client.last_wire_ms is not None and policy_client.last_server_ms is not None:
+                        if (
+                            policy_client.last_wire_ms is not None
+                            and policy_client.last_server_ms is not None
+                        ):
                             net_ms = policy_client.last_wire_ms - policy_client.last_server_ms
                             hud.append(
                                 f"wire~{policy_client.last_wire_ms:.0f}ms  "
@@ -1262,7 +1375,9 @@ def run(args: argparse.Namespace) -> None:
                 if step_count % 30 == 0:
                     logger.info(
                         "step %d: queue=%d first_chunk=%s e2e=%s last_action=%s %s",
-                        step_count, action_buffer.size(), first_chunk_seen,
+                        step_count,
+                        action_buffer.size(),
+                        first_chunk_seen,
                         None if last_e2e_ms is None else f"{last_e2e_ms:.0f}ms",
                         None if last_action is None else np.round(last_action, 3).tolist(),
                         _loop_telemetry(loop_dt),
@@ -1275,11 +1390,11 @@ def run(args: argparse.Namespace) -> None:
                 tick_dt = time.perf_counter() - loop_started
                 loop_dt.append(tick_dt)
 
+                if recorder is not None:
+                    recorder.note_loop_state(state.name)
                 if ctrl_log is not None:
                     if not diag["popped"]:
-                        diag["skip_reason"] = (
-                            "paused" if state == LoopState.PAUSED else "underrun"
-                        )
+                        diag["skip_reason"] = "paused" if state == LoopState.PAUSED else "underrun"
                     ctrl_log.log(
                         step=step_count,
                         tick=tick,
@@ -1338,6 +1453,11 @@ def run(args: argparse.Namespace) -> None:
         if piper_connected:
             piper.disconnect()
         policy_client.stop()
+        if recorder is not None:
+            try:
+                recorder.close()
+            except Exception:
+                logger.exception("Failed to save inference-time dataset")
         if ctrl_log is not None:
             try:
                 ctrl_log.close()
