@@ -349,7 +349,17 @@ class OpenCVCamera(Camera):
         ret, frame = self.videocapture.read()
 
         if not ret:
-            raise RuntimeError(f"{self} read failed (status={ret}).")
+            # A file source at EOF loops back to its first frame — replaying a
+            # video should behave like a camera that never runs out of frames
+            # (the async read loop consumes faster than realtime, so a finite
+            # file would otherwise kill the thread mid-run). Device cameras
+            # (integer index) keep the hard failure.
+            if isinstance(self.index_or_path, int):
+                raise RuntimeError(f"{self} read failed (status={ret}).")
+            self.videocapture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.videocapture.read()
+            if not ret:
+                raise RuntimeError(f"{self} read failed (status={ret}) after rewind to frame 0.")
 
         return frame
 

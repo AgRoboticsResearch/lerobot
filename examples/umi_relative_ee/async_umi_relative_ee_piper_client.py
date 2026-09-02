@@ -10,6 +10,7 @@ policy server.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import pickle  # nosec
@@ -224,6 +225,35 @@ def _to_np(t) -> np.ndarray | None:
     return np.asarray(t, dtype=float).ravel()
 
 
+def _build_rtc_extras(
+    args: argparse.Namespace, action_buffer: ActionBuffer, policy_client: UmiAsyncPolicyClient
+) -> dict | None:
+    """RTC payload for the next observation, or None to predict unguided.
+
+    None (unguided) whenever --rtc is off or the buffer has no un-executed tail
+    (first chunk, or after a pause/clear) — matching RTCInferenceEngine's first
+    chunk. The leftover targets are the ABSOLUTE 7D EE values the queue would
+    still execute; the server re-anchors them into the current EE frame.
+    """
+    if not getattr(args, "rtc", False):
+        return None
+    queued = action_buffer.snapshot()
+    if not queued:
+        return None
+    leftover = np.stack(
+        [np.asarray(item.get_action().detach().cpu().numpy(), dtype=np.float32) for item in queued]
+    )
+    delay = args.rtc_inference_delay
+    if policy_client.last_wire_ms is not None:
+        delay = max(0, int(round(policy_client.last_wire_ms / 1000.0 * args.fps)))
+    return {
+        "rtc_prev_actions_absolute": leftover,
+        "rtc_execution_horizon": args.rtc_execution_horizon,
+        "rtc_max_guidance_weight": args.rtc_max_guidance_weight,
+        "rtc_inference_delay": delay,
+    }
+
+
 @dataclass
 class ActionBuffer:
     """Thread-safe timeline of overlapping absolute EE action chunks."""
@@ -251,7 +281,15 @@ class ActionBuffer:
             if reject_chunks_before is not None:
                 self.minimum_chunk_timestamp = reject_chunks_before
 
-    def merge(self, incoming: list[TimedAction]) -> bool:
+    def merge(self, incoming: list[TimedAction], *, replace: bool = False) -> bool:
+        """Merge an incoming chunk into the timeline.
+
+        ``replace=True`` (RTC chunks) discards the queued tail before inserting:
+        the guided chunk supersedes the leftover it was steered to continue, so
+        the two strategies must not blend or chain. Actions whose timesteps were
+        already executed are still dropped below, which realizes the
+        executed-during-inference delay skip for free.
+        """
         if not incoming:
             return False
         incoming = sorted(incoming, key=lambda item: item.get_timestep())
@@ -261,6 +299,8 @@ class ActionBuffer:
             if incoming[0].get_timestamp() < self.minimum_chunk_timestamp:
                 return False
 
+            if replace:
+                self._actions = {}
             current = {step: item.get_action() for step, item in self._actions.items()}
             future: dict[int, TimedAction] = {}
             self._chunk_counter += 1
@@ -358,6 +398,9 @@ class UmiAsyncPolicyClient:
         # Number of accepted chunk merges; clients use it to detect the first pop after a
         # merge for an honest send->execute-first-action (e2e) latency.
         self.merge_count: int = 0
+        # Optional hook fired by the receiver for every received chunk (full
+        # absolute predictions incl. the unexecuted tail) — ControlLogger.log_chunk.
+        self.on_chunk: Callable | None = None
         # Single-worker pool that uploads observations OFF the control thread, so a slow
         # network transfer can't delay motor ticks. Only one upload is in flight at a time
         # (request_pending stays set until the response clears it), so max_workers=1 both
@@ -445,6 +488,7 @@ class UmiAsyncPolicyClient:
         timestep: int,
         must_go: bool,
         force: bool = False,
+        rtc_extras: dict | None = None,
     ) -> bool:
         if not self.can_send(force=force):
             return False
@@ -453,6 +497,8 @@ class UmiAsyncPolicyClient:
             OBS_STATE: state_pair.astype(np.float32, copy=False),
             **{f"observation.images.{name}": image for name, image in images.items()},
         }
+        if rtc_extras:
+            raw_observation.update(rtc_extras)
         if task:
             raw_observation["task"] = task
         observation = TimedObservation(
@@ -510,7 +556,10 @@ class UmiAsyncPolicyClient:
                 actions = pickle.loads(payload)  # nosec
                 if not isinstance(actions, list):
                     raise TypeError(f"Expected list[TimedAction], got {type(actions)}")
-                accepted = self.action_buffer.merge(actions)
+                # RTC chunks replace the queued tail they were guided to continue;
+                # ordinary chunks keep the ensemble/append semantics.
+                replace = any(getattr(item, "rtc_guided", False) for item in actions)
+                accepted = self.action_buffer.merge(actions, replace=replace)
                 if accepted:
                     self.merge_count += 1
                 # Race fix: only clear the pending flag if this response matches the
@@ -529,6 +578,19 @@ class UmiAsyncPolicyClient:
                     wire_ms = (time.time() - actions[0].get_timestamp()) * 1000.0
                     self.last_wire_ms = wire_ms
                     self.last_server_ms = getattr(actions[0], "server_elapsed_ms", None)
+                    if self.on_chunk is not None:
+                        # audit: keep the full predicted chunk incl. its unexecuted tail
+                        with contextlib.suppress(Exception):
+                            self.on_chunk(
+                                first_ts=actions[0].get_timestep(),
+                                last_ts=actions[-1].get_timestep(),
+                                n=len(actions),
+                                replace=replace,
+                                wire_ms=wire_ms,
+                                abs_actions=np.stack(
+                                    [item.get_action().detach().cpu().numpy() for item in actions]
+                                ),
+                            )
                     logger.info(
                         "Received chunk %s:%s (%s actions, wire=%.0fms, server=%s, accepted=%s, queue=%s)",
                         actions[0].get_timestep(),
@@ -579,9 +641,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--policy_load_timeout", type=float, default=300.0)
     parser.add_argument("--request_timeout", type=float, default=10.0)
 
+    parser.add_argument(
+        "--rtc",
+        action="store_true",
+        help="Real-Time Chunking: attach the un-executed absolute EE targets of the running "
+        "chunk to each observation; the server re-anchors them into the current EE frame and "
+        "guides the new chunk's denoising toward that tail (replaces the queued tail on "
+        "arrival, no ensemble blending). Off by default — the ordinary async path is "
+        "unchanged.",
+    )
+    parser.add_argument("--rtc_execution_horizon", type=int, default=10)
+    parser.add_argument("--rtc_max_guidance_weight", type=float, default=10.0)
+    parser.add_argument(
+        "--rtc_inference_delay",
+        type=int,
+        default=4,
+        help="Fallback guidance inference delay (actions) until wire latency is known; "
+        "afterwards the delay is derived from the measured wire time.",
+    )
+
     parser.add_argument("--can_port", default="can0")
     parser.add_argument("--gripper_port", default="/dev/ttyACM0")
     parser.add_argument("--gripper_type", choices=["external", "builtin"], default="external")
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="Use the piper-sim MuJoCo drop-in interfaces (gRPC) instead of CAN hardware. "
+        "Keeps the rest of the deploy loop identical.",
+    )
+    parser.add_argument("--sim_addr", type=str, default="localhost:50052")
+    parser.add_argument(
+        "--autostart",
+        type=float,
+        default=0.0,
+        help="Engage async control automatically after this many seconds (0 = wait for 's'). "
+        "For headless runs without a keyboard.",
+    )
+    parser.add_argument(
+        "--no_keyboard",
+        action="store_true",
+        help="Skip the pynput keyboard handler (headless runs; pair with --autostart).",
+    )
     parser.add_argument("--cameras", required=True)
     parser.add_argument("--urdf_path", default=DEFAULT_URDF_PATH)
     parser.add_argument("--deploy_frame", default=DEFAULT_DEPLOY_FRAME)
@@ -658,13 +758,14 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def make_ik_pipeline(args: argparse.Namespace, kinematics: RobotKinematics) -> RobotProcessorPipeline:
+def make_ik_pipeline(
+    args: argparse.Namespace, kinematics: RobotKinematics, ee_safety: EEBoundsAndSafety
+) -> RobotProcessorPipeline:
+    """Bounds-clamp (ee_safety, built by the caller so it can read back the
+    post-clamp target via ``last_position``) then IK."""
     return RobotProcessorPipeline(
         steps=[
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
-                max_ee_step_m=args.max_ee_step_m,
-            ),
+            ee_safety,
             InverseKinematicsEEToJoints(
                 kinematics=kinematics,
                 motor_names=ARM_JOINTS,
@@ -683,6 +784,7 @@ def execute_ee_action(
     gripper,
     current_joints: np.ndarray,
     ik_pipeline: RobotProcessorPipeline,
+    ee_safety: EEBoundsAndSafety,
     args: argparse.Namespace,
 ) -> dict:
     """Run IK + write joints/gripper.
@@ -692,6 +794,9 @@ def execute_ee_action(
       skip_reason   str|None — "invalid_action" | "ik_failed" | None
       joints_rad    np.ndarray(6,) | None — the IK joint command written
       ee_action     np.ndarray(7,) | None — the popped absolute-EE target
+      ee_action_clamped np.ndarray(7,) | None — the bounds-clipped target
+                    actually fed to IK (equals ee_action when no clamp
+                    engages; None on rejected ticks)
       gripper       float | None — normalized gripper command (0..1)
     """
     action_aa = action.numpy()
@@ -705,6 +810,7 @@ def execute_ee_action(
             "skip_reason": "invalid_action",
             "joints_rad": None,
             "ee_action": action_aa.copy() if action_aa.shape == (7,) else None,
+            "ee_action_clamped": None,
             "gripper": gripper_value,
         }
 
@@ -727,6 +833,7 @@ def execute_ee_action(
             "skip_reason": "ik_failed",
             "joints_rad": None,
             "ee_action": action_aa.copy(),
+            "ee_action_clamped": None,
             "gripper": gripper_value,
         }
 
@@ -741,11 +848,18 @@ def execute_ee_action(
         gripper.send_command(kp=kp, kd=kd, position=position)
     else:
         piper.write_gripper(gripper_norm_to_builtin(gripper_value))
+    # Post-clamp target read back from the safety step (it ran inside the
+    # pipeline; on success last_position IS this tick's clipped target).
+    clamped_pos = ee_safety.last_position
+    ee_action_clamped = (
+        np.concatenate([clamped_pos, action_aa[3:]]) if clamped_pos is not None else None
+    )
     return {
         "ok": True,
         "skip_reason": None,
         "joints_rad": joint_values,
         "ee_action": action_aa.copy(),
+        "ee_action_clamped": ee_action_clamped,
         "gripper": gripper_value,
     }
 
@@ -839,6 +953,7 @@ def _run_dryrun(
                     timestep=observation_timestep,
                     must_go=queue_empty or step == 0,
                     force=(step == 0),
+                    rtc_extras=_build_rtc_extras(args, action_buffer, policy_client),
                 )
                 if sent:
                     last_sent_timestep = observation_timestep
@@ -942,6 +1057,21 @@ def _run_dryrun(
         logger.info("Dry-run done after %d ticks; first_chunk_seen=%s", step, first_chunk_seen)
 
 
+class _NullKeyboard:
+    """No-op stand-in for KeyboardCommandHandler on headless runs (--no_keyboard)."""
+
+    def poll(self):  # noqa: ANN201
+        return None
+
+    def drain(self) -> None: ...
+
+    def __enter__(self) -> _NullKeyboard:
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
 def run(args: argparse.Namespace) -> None:
     action_buffer = ActionBuffer(get_aggregate_function(args.aggregate_fn_name))
     policy_client = UmiAsyncPolicyClient(args, action_buffer)
@@ -980,26 +1110,42 @@ def run(args: argparse.Namespace) -> None:
         logger.info("Headless: saving frames to %s/camera_live.mp4", args.output_dir)
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     try:
-        if DEFAULT_PIPER_SRC_PATH not in sys.path:
+        if DEFAULT_PIPER_SRC_PATH not in sys.path and not args.sim:
             sys.path.insert(0, DEFAULT_PIPER_SRC_PATH)
-        from modules.piper_interface import PiperInterface
+        if args.sim:
+            from piper_sim.client import PiperInterface
+        else:
+            from modules.piper_interface import PiperInterface
+
+        if args.sim and Path(args.urdf_path) == Path(DEFAULT_URDF_PATH):
+            # Prefer piper-sim's packaged sroiv2 URDF so IK == sim model.
+            from piper_sim.model import packaged_urdf_path
+
+            args.urdf_path = str(packaged_urdf_path())
 
         kinematics = RobotKinematics(
             urdf_path=args.urdf_path,
             target_frame_name=args.deploy_frame,
             joint_names=ARM_JOINTS,
         )
-        ik_pipeline = make_ik_pipeline(args, kinematics)
+        ee_safety = EEBoundsAndSafety(
+            end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
+            max_ee_step_m=args.max_ee_step_m,
+        )
+        ik_pipeline = make_ik_pipeline(args, kinematics, ee_safety)
 
-        piper = PiperInterface(can_port=args.can_port)
+        piper = PiperInterface(address=args.sim_addr) if args.sim else PiperInterface(can_port=args.can_port)
         piper.connect()
         piper_connected = True
-        logger.info("Piper arm connected on %s", args.can_port)
+        logger.info("Piper arm connected on %s", args.sim_addr if args.sim else args.can_port)
 
         if args.gripper_type == "external":
-            from modules.gripper import Gripper
+            if args.sim:
+                from piper_sim.client import Gripper
+            else:
+                from modules.gripper import Gripper
 
-            gripper = Gripper(port=args.gripper_port)
+            gripper = Gripper(address=args.sim_addr) if args.sim else Gripper(port=args.gripper_port)
             gripper.connect()
             gripper_connected = True
             gripper.send_command(kp=args.gripper_kp, kd=args.gripper_kd, position=0.0)
@@ -1110,6 +1256,9 @@ def run(args: argparse.Namespace) -> None:
                 )
 
             action_buffer.on_merge = _on_merge
+            # Keep every incoming chunk (full predicted trajectory, incl. the
+            # tail that later merges replace) for per-tick detail plots.
+            policy_client.on_chunk = ctrl_log.log_chunk
         recorder = make_deploy_dataset_recorder(
             args,
             prefix="async",
@@ -1120,7 +1269,16 @@ def run(args: argparse.Namespace) -> None:
         )
         tick = 0
 
-        with KeyboardCommandHandler() as keyboard:
+        if args.rtc:
+            logger.info(
+                "RTC enabled (horizon=%d, weight=%.1f, fallback delay=%d): guided chunks replace "
+                "the queued tail; ensemble blending does not apply to them",
+                args.rtc_execution_horizon,
+                args.rtc_max_guidance_weight,
+                args.rtc_inference_delay,
+            )
+        keyboard_ctx = _NullKeyboard() if args.no_keyboard else KeyboardCommandHandler()
+        with keyboard_ctx as keyboard:
             while args.num_steps == 0 or step_count < args.num_steps:
                 loop_started = time.perf_counter()
                 tick += 1
@@ -1130,6 +1288,7 @@ def run(args: argparse.Namespace) -> None:
                     "skip_reason": "no_action",
                     "action_timestep": None,
                     "action_ee": None,
+                    "action_ee_clamped": None,
                     "ik_joints_rad": None,
                     "ee_delta_m": None,
                     "joint_delta_max_rad": None,
@@ -1146,6 +1305,18 @@ def run(args: argparse.Namespace) -> None:
                 e2e_this_tick = False
 
                 key = keyboard.poll()
+                # Headless autostart: engage exactly like pressing 's' once.
+                if (
+                    args.autostart > 0
+                    and state == LoopState.PAUSED
+                    and (time.perf_counter() - loop_t0) >= args.autostart
+                ):
+                    action_buffer.clear(reject_chunks_before=time.time())
+                    policy_client.invalidate_pending_request()
+                    state = LoopState.INFERENCE
+                    force_request = True
+                    single_chunk = False
+                    logger.info("Autostart: async control engaged")
                 while key is not None:
                     if key == "esc":
                         state = LoopState.SHUTDOWN
@@ -1244,6 +1415,7 @@ def run(args: argparse.Namespace) -> None:
                             timestep=observation_timestep,
                             must_go=queue_empty or force_request,
                             force=force_request,
+                            rtc_extras=_build_rtc_extras(args, action_buffer, policy_client),
                         )
                         if sent:
                             last_sent_timestep = observation_timestep
@@ -1272,12 +1444,14 @@ def run(args: argparse.Namespace) -> None:
                             gripper=gripper,
                             current_joints=current_joints,
                             ik_pipeline=ik_pipeline,
+                            ee_safety=ee_safety,
                             args=args,
                         )
                         diag.update(
                             popped=True,
                             action_timestep=timed_action.get_timestep(),
                             action_ee=res["ee_action"],
+                            action_ee_clamped=res.get("ee_action_clamped"),
                             ik_joints_rad=res["joints_rad"],
                             ik_ok=res["ok"],
                             skip_reason=res["skip_reason"],
@@ -1415,6 +1589,7 @@ def run(args: argparse.Namespace) -> None:
                         joint_delta_max_rad=diag["joint_delta_max_rad"],
                         gripper=diag["gripper"],
                         action_ee=diag["action_ee"],
+                        action_ee_clamped=diag["action_ee_clamped"],
                         current_ee=current_ee,
                         ik_joints_rad=diag["ik_joints_rad"],
                         current_joints_rad=current_joints,
@@ -1427,7 +1602,11 @@ def run(args: argparse.Namespace) -> None:
     except Exception:
         logger.exception("Async Piper client failed")
     finally:
-        cv2.destroyAllWindows()
+        if not args.no_vis:
+            # Headless cv2 builds (no GUI backend) raise here; only one was ever
+            # created when visualization is on.
+            with contextlib.suppress(cv2.error):
+                cv2.destroyAllWindows()
         for camera in cameras.values():
             try:
                 camera.disconnect()

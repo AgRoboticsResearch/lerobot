@@ -749,12 +749,15 @@ def main():
     logger.info(f"URDF: {args.urdf_path}, frame: {args.deploy_frame}")
 
     # ── 3. Build IK pipeline (7D aa absolute → 6 joint positions) ──────
+    # ee_safety built separately so the post-clamp target is readable back
+    # (last_position) for the control log's action_ee_clamped field.
+    ee_safety = EEBoundsAndSafety(
+        end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
+        max_ee_step_m=args.max_ee_step_m,
+    )
     ik_pipeline = RobotProcessorPipeline(
         steps=[
-            EEBoundsAndSafety(
-                end_effector_bounds={"min": args.ee_bounds_min, "max": args.ee_bounds_max},
-                max_ee_step_m=args.max_ee_step_m,
-            ),
+            ee_safety,
             InverseKinematicsEEToJoints(
                 kinematics=kinematics,
                 motor_names=ARM_JOINTS,
@@ -925,6 +928,7 @@ def main():
                     "skip_reason": "no_action",
                     "action_timestep": None,
                     "action_ee": None,
+                    "action_ee_clamped": None,
                     "ik_joints_rad": None,
                     "current_ee": None,
                     "current_joints_rad": None,
@@ -1139,6 +1143,9 @@ def main():
                     diag["skip_reason"] = "ik_failed"
 
                 if not ik_failed:
+                    clamped_pos = ee_safety.last_position
+                    if clamped_pos is not None:
+                        diag["action_ee_clamped"] = np.concatenate([clamped_pos, action_aa[3:]])
                     joint_values = np.array([result.get(f"{name}.pos", 0.0) for name in ARM_JOINTS])
                     if step_count < 5 or step_count % 100 == 0:
                         logger.info(f"  IK result joints: {joint_values}")

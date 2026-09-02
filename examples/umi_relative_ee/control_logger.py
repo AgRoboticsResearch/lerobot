@@ -43,13 +43,23 @@ class ControlLogger:
       action_abs      7D absolute EE target from that chunk (T_anchor ∘ ΔT), pre-ensemble
       action_agg      7D aggregated absolute target actually executed (post weighted_average)
       action_rel      raw relative action ΔT (model output; SYNC: in-process, ASYNC: server-reported)
+      action_ee_clamped 7D post-clamp absolute EE target actually fed to the IK
+                      pipeline (position bounds-clipped by EEBoundsAndSafety,
+                      which also warns on the console when clipping engages;
+                      equals action_ee when no clamp is active; None on
+                      rejected ticks)
 
     And, for async runs only, a fourth sibling records each ensemble blend:
       <stem>_merge.csv  one row per (chunk × overlapping timestep): the existing
                         absolute target, the incoming chunk's absolute target +
                         anchor, the weight, and the resulting aggregated target —
                         so you can confirm the ensemble averages ABSOLUTE targets
-                        (same base frame), not relative ΔT's directly.
+                        (same base frame), not relative ΔT's averaged directly.
+
+    A fifth sibling (async, log_chunk) records every incoming chunk including
+    its unexecuted tail:
+      <stem>_chunks.npz  per chunk: first/last timestep, n actions, replace flag,
+                         wire_ms, and the full [max_n, 7] absolute predictions.
     """
 
     SCALAR_FIELDS: tuple[str, ...] = (
@@ -58,7 +68,7 @@ class ControlLogger:
         "ee_delta_m", "joint_delta_max_rad", "gripper", "e2e_ms", "wire_ms", "server_ms",
     )
     ARRAY_FIELDS: tuple[str, ...] = (
-        "action_ee", "current_ee", "ik_joints_rad", "current_joints_rad",
+        "action_ee", "action_ee_clamped", "current_ee", "ik_joints_rad", "current_joints_rad",
         "chunk_ref_ee", "action_abs", "action_agg", "action_rel",
     )
     # Per-blend columns for the async temporal-ensemble audit log (<stem>_merge.csv).
@@ -74,6 +84,7 @@ class ControlLogger:
         self.meta["fps_target"] = fps
         self._rows: list[dict] = []
         self._merge_rows: list[dict] = []
+        self._chunk_rows: list[dict] = []
         self._loop_t0: float | None = None
         # Rewrite the files every N ticks so a SIGKILL / OOM / timeout still leaves
         # recent data on disk (within ~flush_every ticks), not just on graceful close.
@@ -106,6 +117,20 @@ class ControlLogger:
         if self._loop_t0 is None:
             return
         self._merge_rows.append(fields)
+
+    def log_chunk(self, **fields) -> None:
+        """Record one incoming action chunk, including the unexecuted tail.
+
+        Called by the async receiver for every accepted response with the FULL
+        absolute 7D chunk (``abs_actions`` [n,7] — the whole predicted
+        trajectory, most of which is later replaced before execution), its
+        timestep span, whether it replaced the queue (RTC) and the wire time.
+        Written to ``<stem>_chunks.npz`` so per-tick detail plots can overlay
+        each prediction against the commanded/achieved timeline.
+        """
+        if self._loop_t0 is None:
+            return
+        self._chunk_rows.append(fields)
 
     @staticmethod
     def _vec_width(rows: list[dict], name: str) -> int:
@@ -224,6 +249,27 @@ class ControlLogger:
                         else:
                             out[k] = v
                     writer.writerow(out)
+
+        # --- <stem>_chunks.npz: every incoming chunk incl. its unexecuted tail ---
+        # Snapshot first: _chunk_rows is appended by the async receiver thread.
+        chunk_rows = list(self._chunk_rows)
+        if chunk_rows:
+            max_n = max(int(r.get("n") or 0) for r in chunk_rows)
+            abs_stack = np.full((len(chunk_rows), max_n, 7), np.nan)
+            for i, r in enumerate(chunk_rows):
+                a = r.get("abs_actions")
+                if a is not None:
+                    a = np.asarray(a, dtype=float).reshape(-1, 7)
+                    abs_stack[i, : len(a)] = a
+            np.savez(
+                f"{self.stem}_chunks.npz",
+                first_ts=np.array([float(r.get("first_ts")) for r in chunk_rows]),
+                last_ts=np.array([float(r.get("last_ts")) for r in chunk_rows]),
+                n=np.array([float(r.get("n")) for r in chunk_rows]),
+                replace=np.array([1.0 if r.get("replace") else 0.0 for r in chunk_rows]),
+                wire_ms=np.array([float(r.get("wire_ms") or np.nan) for r in chunk_rows]),
+                abs=abs_stack,
+            )
         return True
 
     def flush(self) -> None:
@@ -236,10 +282,11 @@ class ControlLogger:
             return
         s = self.meta.get("summary", {})
         merge_note = f", {len(self._merge_rows)} ensemble blends" if self._merge_rows else ""
+        chunk_note = f", {len(self._chunk_rows)} chunks captured" if self._chunk_rows else ""
         logger.info(
             "Control log saved: %s.{csv,npz,json} (%s ticks, %s/%s IK-ok, %s underruns%s)",
             self.stem, s.get("n_ticks"), s.get("n_ik_ok"), s.get("n_popped"),
-            s.get("n_underrun"), merge_note,
+            s.get("n_underrun"), merge_note + chunk_note,
         )
 
 

@@ -231,6 +231,10 @@ class TimedAction(TimedData):
     # relative deltas directly.
     reference_ee: Action | None = None      # 7D absolute EE pose that anchored the chunk (T_anchor)
     relative_action: Action | None = None   # raw per-step relative action ΔT (model output)
+    # Set by the UMI relative-EE policy server when the chunk was RTC-guided
+    # (observation carried rtc_prev_actions_absolute); clients use it to apply
+    # replace-instead-of-ensemble merge semantics. None = ordinary chunk.
+    rtc_guided: bool | None = None
     # Client-side provenance, set by the async Piper client's ActionBuffer when it
     # merges/ensembles chunks (None on the server side). ``action`` above is the
     # post-blend absolute target; ``last_incoming_abs`` is the latest chunk's

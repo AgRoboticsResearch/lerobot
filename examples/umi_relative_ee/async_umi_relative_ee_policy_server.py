@@ -10,6 +10,15 @@ the checkpointed UMI processor needs two adjacent control-loop poses.
 This server accepts that two-pose state directly, runs the checkpointed
 preprocessor and policy, postprocesses the *whole* action chunk with one
 chunk-start reference, and returns timestamped absolute 7D EE targets.
+
+RTC (Real-Time Chunking): a client may attach ``rtc_prev_actions_absolute``
+(the un-executed ABSOLUTE 7D EE targets of the still-running chunk) plus
+``rtc_execution_horizon`` / ``rtc_max_guidance_weight`` / ``rtc_inference_delay``
+to any observation. The server re-anchors that tail into the current EE frame
+(``reanchor_umi_rtc_prefix``), normalizes it with the checkpoint statistics,
+and passes it as the RTC guidance prefix to Pi0.5/SmolVLA denoising — the same
+contract as ``RTCInferenceEngine``. Observations without the key take the
+original unguided path unchanged (including ``torch.inference_mode``).
 """
 
 from __future__ import annotations
@@ -23,6 +32,7 @@ from concurrent import futures
 from typing import Any
 
 import grpc
+import numpy as np
 import torch
 
 from lerobot.async_inference.configs import PolicyServerConfig
@@ -34,9 +44,26 @@ from lerobot.async_inference.helpers import (
     resize_robot_observation_image,
 )
 from lerobot.async_inference.policy_server import PolicyServer
+from lerobot.configs import RTCAttentionSchedule
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.rtc import RTCConfig, reanchor_umi_rtc_prefix
+from lerobot.processor import NormalizerProcessorStep, UmiRelativeActionsStep
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+# Observation-dict key carrying the client's un-executed absolute EE targets.
+RTC_PREV_ACTIONS_KEY = "rtc_prev_actions_absolute"
+RTC_POLICIES = ("pi05", "pi0", "smolvla")
+
+
+def _fit_prefix_length(prefix: torch.Tensor, target_steps: int) -> torch.Tensor:
+    """Trim or zero-pad the re-anchored RTC prefix to exactly ``target_steps``."""
+    if prefix.shape[0] >= target_steps:
+        return prefix[:target_steps]
+    pad = torch.zeros(
+        (target_steps - prefix.shape[0], prefix.shape[-1]), dtype=prefix.dtype, device=prefix.device
+    )
+    return torch.cat([prefix, pad], dim=0)
 
 
 class UmiRelativeEEPolicyServer(PolicyServer):
@@ -130,6 +157,77 @@ class UmiRelativeEEPolicyServer(PolicyServer):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def _rtc_preprocessor_steps(self) -> tuple[UmiRelativeActionsStep | None, NormalizerProcessorStep | None]:
+        """(umi_step, normalizer_step) of the loaded preprocessor, cached per preprocessor identity.
+
+        The cache key is the preprocessor object itself, so it stays valid across
+        checkpoint-reuse requests and refreshes automatically after a reload.
+        """
+        cache = getattr(self, "_rtc_steps_cache", None)
+        if cache is not None and cache[0] is self.preprocessor:
+            return cache[1], cache[2]
+        umi = next(
+            (s for s in self.preprocessor.steps if isinstance(s, UmiRelativeActionsStep) and s.enabled),
+            None,
+        )
+        normalizer = next(
+            (s for s in self.preprocessor.steps if isinstance(s, NormalizerProcessorStep)),
+            None,
+        )
+        self._rtc_steps_cache = (self.preprocessor, umi, normalizer)
+        return umi, normalizer
+
+    def _ensure_rtc_config(self, core_policy, execution_horizon: int, max_guidance_weight: float) -> None:
+        """Install/refresh the RTC config + processor on the core policy (token-cached)."""
+        token = (id(core_policy), execution_horizon, max_guidance_weight)
+        if (
+            getattr(self, "_rtc_init_token", None) == token
+            and getattr(core_policy, "rtc_processor", None) is not None
+        ):
+            return
+        core_policy.config.rtc_config = RTCConfig(
+            enabled=False,
+            execution_horizon=execution_horizon,
+            max_guidance_weight=max_guidance_weight,
+            prefix_attention_schedule=RTCAttentionSchedule.EXP,
+        )
+        core_policy.init_rtc_processor()
+        self._rtc_init_token = token
+
+    def _parse_rtc_request(self, observation_t: TimedObservation) -> dict[str, Any] | None:
+        """Extract RTC guidance extras from the observation payload, if any.
+
+        Returns None (and the caller takes the ordinary unguided path) when the
+        key is absent, the policy does not support RTC, or the payload is
+        malformed. Never raises.
+        """
+        raw = observation_t.get_observation()
+        prev_abs = raw.get(RTC_PREV_ACTIONS_KEY) if isinstance(raw, dict) else None
+        if prev_abs is None:
+            return None
+        if self.policy_type not in RTC_POLICIES:
+            self.logger.warning(
+                "Observation carried %s but policy %s has no RTC hook; predicting unguided",
+                RTC_PREV_ACTIONS_KEY,
+                self.policy_type,
+            )
+            return None
+        try:
+            prev = torch.as_tensor(np.asarray(prev_abs, dtype=np.float32))
+            if prev.ndim == 3:
+                prev = prev[0]
+            if prev.ndim != 2 or prev.shape[-1] != 7 or prev.shape[0] == 0:
+                raise ValueError(f"expected [T,7] or [B,T,7] absolute EE targets, got {tuple(prev.shape)}")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Invalid %s payload (%s); predicting unguided", RTC_PREV_ACTIONS_KEY, exc)
+            return None
+        return {
+            "prev_abs": prev,
+            "execution_horizon": max(1, int(raw.get("rtc_execution_horizon", 10))),
+            "max_guidance_weight": float(raw.get("rtc_max_guidance_weight", 10.0)),
+            "inference_delay": max(0, int(raw.get("rtc_inference_delay", 0))),
+        }
+
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
         """Reject only duplicate timesteps.
 
@@ -192,13 +290,56 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             raise RuntimeError("Policy instructions must be sent before inference")
 
         started = time.perf_counter()
+        rtc_request = self._parse_rtc_request(observation_t)
         observation = self._prepare_umi_observation(observation_t)
         t_prepared = time.perf_counter()
 
-        with torch.inference_mode():
+        # The RTC guidance differentiates the denoiser via autograd.grad, which
+        # cannot run under inference_mode (inference tensors carry no grad_fn);
+        # torch.no_grad() works because the RTC processor re-enables grad
+        # internally. The unguided path keeps the original inference_mode.
+        grad_context = torch.no_grad() if rtc_request is not None else torch.inference_mode()
+        with grad_context:
             processed = self.preprocessor(observation)
             t_preprocessed = time.perf_counter()
-            predicted = self.policy.predict_action_chunk(processed)
+
+            predict_kwargs: dict[str, Any] = {}
+            core_policy = None
+            if rtc_request is not None:
+                core_policy = self.policy.get_base_model() if hasattr(self.policy, "get_base_model") else self.policy
+                umi_step, normalizer_step = self._rtc_preprocessor_steps()
+                cached_state = umi_step.get_cached_state() if umi_step is not None else None
+                if umi_step is None or normalizer_step is None or cached_state is None:
+                    self.logger.warning(
+                        "RTC requested but the preprocessor lacks a cached UMI EE state; predicting unguided"
+                    )
+                else:
+                    self._ensure_rtc_config(
+                        core_policy,
+                        rtc_request["execution_horizon"],
+                        rtc_request["max_guidance_weight"],
+                    )
+                    prefix = reanchor_umi_rtc_prefix(
+                        prev_actions_absolute=rtc_request["prev_abs"],
+                        current_state=cached_state,
+                        normalizer_step=normalizer_step,
+                        policy_device=str(self.device),
+                    )
+                    prefix = _fit_prefix_length(prefix, rtc_request["execution_horizon"])
+                    predict_kwargs = {
+                        "prev_chunk_left_over": prefix,
+                        "inference_delay": rtc_request["inference_delay"],
+                        "execution_horizon": rtc_request["execution_horizon"],
+                    }
+                    core_policy.config.rtc_config.enabled = True
+            try:
+                if predict_kwargs:
+                    predicted = self.policy.predict_action_chunk(processed, **predict_kwargs)
+                else:
+                    predicted = self.policy.predict_action_chunk(processed)
+            finally:
+                if predict_kwargs and core_policy is not None:
+                    core_policy.config.rtc_config.enabled = False
             t_inferred = time.perf_counter()
             if predicted.ndim == 2:
                 predicted = predicted.unsqueeze(0)
@@ -250,9 +391,12 @@ class UmiRelativeEEPolicyServer(PolicyServer):
                 timed.reference_ee = ref_ee
             if rel_per_step is not None and i < rel_per_step.shape[0]:
                 timed.relative_action = rel_per_step[i]
+            if predict_kwargs:
+                # Tag RTC chunks so the client can apply replace semantics.
+                timed.rtc_guided = True
         self.logger.info(
             "Observation %s -> %s absolute EE actions in %.1fms "
-            "(prepare %.1fms, preprocess %.1fms, infer %.1fms, postprocess %.1fms)",
+            "(prepare %.1fms, preprocess %.1fms, infer %.1fms, postprocess %.1fms)%s",
             observation_t.get_timestep(),
             len(result),
             server_elapsed_ms,
@@ -260,6 +404,7 @@ class UmiRelativeEEPolicyServer(PolicyServer):
             (t_preprocessed - t_prepared) * 1000,
             (t_inferred - t_preprocessed) * 1000,
             (t_postprocessed - t_inferred) * 1000,
+            " [RTC guided]" if predict_kwargs else "",
         )
         return result
 

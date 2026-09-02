@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +34,12 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.utils.rotation import Rotation
+
+logger = logging.getLogger(__name__)
+
+# Minimum seconds between two "target clipped to bounds" warnings, so a policy
+# commanding outside the workspace for minutes does not spam the console.
+_CLIP_WARN_INTERVAL_S = 5.0
 
 
 @ProcessorStepRegistry.register("ee_reference_and_delta")
@@ -191,15 +199,30 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     This step ensures that the target end-effector pose remains within a safe operational workspace.
     It also moderates the command to prevent large, sudden movements between consecutive steps.
 
+    Clipping is not silent: whenever the bounds actually change the target, a
+    (throttled) warning is emitted so operators see that the policy is commanding
+    outside the safe workspace. ``last_position`` exposes the last clipped
+    position accepted downstream, so callers can log the post-clamp target next
+    to the raw one.
+
     Attributes:
         end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
         max_ee_step_m: The maximum allowed change in position (in meters) between steps.
         _last_pos: Internal state storing the last commanded position.
+        _clip_count: Internal counter of targets changed by clipping.
+        _clip_warn_t: Internal monotonic timestamp of the last clip warning.
     """
 
     end_effector_bounds: dict
     max_ee_step_m: float = 0.05
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
+    _clip_count: int = field(default=0, init=False, repr=False)
+    _clip_warn_t: float | None = field(default=None, init=False, repr=False)
+
+    @property
+    def last_position(self) -> np.ndarray | None:
+        """Last bounds-clipped EE position accepted downstream (None before the first)."""
+        return None if self._last_pos is None else self._last_pos.copy()
 
     def action(self, action: RobotAction) -> RobotAction:
         x = action["ee.x"]
@@ -218,8 +241,25 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
 
-        # Clip position
-        pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
+        # Clip position — loudly: a silent clamp would hide that the policy is
+        # commanding targets outside the safe workspace.
+        clipped = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
+        if not np.array_equal(clipped, pos):
+            self._clip_count += 1
+            now = time.monotonic()
+            if self._clip_warn_t is None or now - self._clip_warn_t >= _CLIP_WARN_INTERVAL_S:
+                self._clip_warn_t = now
+                excess_mm = np.abs(clipped - pos) * 1000.0
+                axes = "".join("xyz"[i] for i in range(3) if excess_mm[i] > 0)
+                logger.warning(
+                    "EEBoundsAndSafety: target outside workspace bounds — clipped "
+                    "(axis %s, excess %s mm, target %s m); %d targets clipped so far",
+                    axes,
+                    np.round(excess_mm[excess_mm > 0], 1).tolist(),
+                    np.round(pos, 3).tolist(),
+                    self._clip_count,
+                )
+        pos = clipped
 
         # Check for jumps in position
         if self._last_pos is not None:
@@ -242,6 +282,8 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     def reset(self):
         """Resets the last known position and orientation."""
         self._last_pos = None
+        self._clip_count = 0
+        self._clip_warn_t = None
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
