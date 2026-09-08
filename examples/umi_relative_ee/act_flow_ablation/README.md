@@ -16,6 +16,10 @@ filesystem has little free space and must not hold new checkpoint sweeps.
 The complete decision log, literature analysis, experiment results, failures,
 and lessons learned are consolidated in [`RESEARCH_REPORT.md`](RESEARCH_REPORT.md).
 
+The separate [task-independent embodiment experiment](../task_independent_embodiment/README.md)
+reuses frozen ACT-R18 and this corpus to compare runtime IK, residual control,
+and hindsight-trained image-free Piper controllers in simulation.
+
 `act_r18_l1`, `act_r18_flow_*`, and `act_r18_diffusion_lr1e5` are the decisive
 objective controls. All omit
 the collapsed ACT VAE and share the same ResNet-18, observation transformer,

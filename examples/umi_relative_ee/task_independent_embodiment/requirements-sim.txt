@@ -1,0 +1,7 @@
+# The existing LeRobot environment supplies torch, torchvision, datasets, pyarrow, av, and processors.
+# Keep simulator packages isolated; setup_env.sh also installs the local piper-sim source.
+mujoco==3.12.0
+placo==0.9.15
+scipy>=1.14,<2
+matplotlib>=3.9,<4
+pytest>=8,<10
