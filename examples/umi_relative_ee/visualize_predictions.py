@@ -357,6 +357,50 @@ def draw_traj_on_image(img_rgb, pts2d, mode="pred"):
     return img
 
 
+def draw_gripper_jaw_dots(
+    img_rgb: np.ndarray,
+    rel_poses: np.ndarray,
+    grip: np.ndarray,
+    K: np.ndarray,
+    tip_kin,
+    n_points: int = 30,
+    jaw_width_m: float = 0.043,
+) -> np.ndarray:
+    """Draw the predicted gripper-jaw closing as gradient dots on the camera image.
+
+    For chunk step j the composed tool transform is T_j = T_opt_cam @ rel_poses[j]
+    @ T_cam_ee (same composition as project_future, rotations included). The jaw
+    reference points are T_j applied to ±jaw_width_m * g_j / 2 along the tip-frame
+    Y axis — the physical jaw gap offset expressed in the tool frame (the hand-eye
+    mount is a pure pitch about Y, so tip-frame Y IS the jaw-opening axis) — and
+    each point is projected through the pinhole model with its own depth, so the
+    dot pair tilts correctly with any predicted roll/yaw. g = 0 lands both dots
+    exactly on the projected tip. Colors fade green->red over the chunk steps.
+    """
+    img = img_rgb.copy()
+    T_opt_cam, T_cam_ee = tip_kin
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    axis = np.array([0.0, 1.0, 0.0])
+    n = min(n_points, len(grip), len(rel_poses))
+    for j in range(n):
+        g = float(grip[j])
+        if not np.isfinite(g):
+            continue
+        T_j = T_opt_cam @ rel_poses[j] @ T_cam_ee
+        jaw_axis = T_j[:3, :3] @ axis  # jaw-opening axis at step j, optical frame
+        t = j / max(n - 1, 1)
+        col = (int(255 * t), int(255 * (1 - t)), 0)  # RGB (image array is RGB-ordered)
+        for sign in (-1, 1):
+            p = T_j[:3, 3] + sign * (jaw_width_m * g / 2.0) * jaw_axis
+            if p[2] <= 1e-3:
+                continue
+            u = fx * p[0] / p[2] + cx
+            v = fy * p[1] / p[2] + cy
+            if np.isfinite(u) and np.isfinite(v):
+                cv2.circle(img, (int(round(u)), int(round(v))), 3, col, -1)
+    return img
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -722,6 +766,24 @@ def main():
         help="camera_info_color.json for intrinsics K (auto-found under dataset meta/ if omitted)",
     )
     parser.add_argument(
+        "--gripper_viz",
+        action="store_true",
+        help="Draw the predicted gripper-jaw closing as gradient dots along the projected "
+        "tip path (needs --project; prediction only — GT jaws are visible in the image).",
+    )
+    parser.add_argument(
+        "--jaw_width_m",
+        type=float,
+        default=0.043,
+        help="Physical gripper jaw gap in meters at g=1 (fully open); g=0 maps to 0 (closed).",
+    )
+    parser.add_argument(
+        "--gripper_viz_points",
+        type=int,
+        default=30,
+        help="Leading chunk steps to draw gripper-jaw dots for.",
+    )
+    parser.add_argument(
         "--num_steps",
         type=int,
         default=None,
@@ -776,6 +838,8 @@ def main():
         parser.error("--dataset_root is required for dataset mode (use --cameras for live camera mode)")
     if not args.episode_indices:
         parser.error("--episode_indices is required for dataset mode")
+    if args.gripper_viz and not args.project:
+        parser.error("--gripper_viz needs --project (jaw dots anchor on the projected tip path)")
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
@@ -961,6 +1025,11 @@ def main():
                 gt_poses = np.stack([T_ref_inv @ aa_pose_to_matrix(a) for a in gt_chunk])
                 gpx, gpy = project_future(gt_poses, 0, K, tip_kin)
                 img_rgb = draw_traj_on_image(img_rgb, np.column_stack([gpx, gpy]), "gt")
+            if args.gripper_viz:
+                img_rgb = draw_gripper_jaw_dots(
+                    img_rgb, pred_poses, pred_rel[:, 9], K, tip_kin,
+                    n_points=args.gripper_viz_points, jaw_width_m=args.jaw_width_m,
+                )
 
         info = {
             "ep": ep_idx,
