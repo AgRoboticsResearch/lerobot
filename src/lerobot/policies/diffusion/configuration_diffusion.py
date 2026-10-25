@@ -99,9 +99,11 @@ class DiffusionConfig(PreTrainedConfig):
     """
 
     # Inputs / output structure.
-    n_obs_steps: int = 2
-    horizon: int = 64
-    n_action_steps: int = 32
+    # SROI 草莓采摘口径(与 ACT 训练对齐): 单帧观测、horizon 32(U-Net 下采样因子 8 的整除约束,
+    # ≈ACT chunk 30)、执行 10(30Hz 下重规划 0.33s,余 22 步垫场)。
+    n_obs_steps: int = 1
+    horizon: int = 32
+    n_action_steps: int = 10
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -111,14 +113,19 @@ class DiffusionConfig(PreTrainedConfig):
         }
     )
 
-    # The original implementation doesn't sample frames for the last 7 steps,
-    # which avoids excessive padding and leads to improved training results.
-    drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
+    # SROI UMI 相对 EE 口径: state 从 action 派生、动作/状态转相对位姿表示,
+    # 旋转 6D 统计量强制 identity(平移归一化、旋转/夹爪原值直通)。
+    # 数据集工厂按这两个开关计算相对统计量并重写 action/state 特征。
+    use_umi_relative_ee: bool = True
+    umi_rot6d_identity_norm: bool = True
+
+    # 尾部保留真值帧数: = horizon - n_action_steps - n_obs_steps + 1 = 32-10-1+1。
+    drop_n_last_frames: int = 22
 
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    resize_shape: tuple[int, int] | None = None
+    resize_shape: tuple[int, int] | None = (240, 320)
     crop_ratio: float = 1.0
     crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True

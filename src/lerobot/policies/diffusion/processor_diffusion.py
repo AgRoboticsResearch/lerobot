@@ -25,7 +25,12 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
+    UmiAbsoluteActionsStep,
+    UmiDeriveStateFromActionStep,
+    UmiRelativeActionsStep,
+    UmiRelativeStateStep,
     UnnormalizerProcessorStep,
+    make_umi_cache_key,
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -64,10 +69,18 @@ def make_diffusion_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    # SROI UMI 相对 EE 链(与 act/processor_act.py 同款;框架口径=相对动作空间,无开关):
+    #   state 从 action 派生 → 动作转相对位姿 → 拼装 20D 相对 state(含速度)。
+    cache_key = make_umi_cache_key()
+    relative_step = UmiRelativeActionsStep(cache_key=cache_key)
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        UmiDeriveStateFromActionStep(),
+        relative_step,
+        UmiRelativeStateStep(),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -77,6 +90,12 @@ def make_diffusion_pre_post_processors(
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        # 推理端: 相对动作 → 绝对动作(参考帧由 relative_step 的缓存维护)。
+        UmiAbsoluteActionsStep(
+            cache_key=cache_key,
+            relative_step=relative_step,
+            single_action_reference_steps=config.n_action_steps,
         ),
         DeviceProcessorStep(device="cpu"),
     ]
