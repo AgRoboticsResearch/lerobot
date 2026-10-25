@@ -61,7 +61,7 @@ DEFAULT_PIPER_SRC_PATH = os.path.normpath(os.path.abspath(os.path.join(
 
 # Working range in radians, copied from deploy_umi_relative_ee_piper.py.
 GRIPPER_OPEN_RAD = 0
-GRIPPER_CLOSED_RAD = -0.91
+GRIPPER_CLOSED_RAD = 0.95
 
 
 def deg_to_rad(deg: float) -> float:

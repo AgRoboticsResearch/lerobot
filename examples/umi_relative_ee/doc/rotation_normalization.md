@@ -169,3 +169,124 @@ override. This mirrors `detached-umi-policy`'s
 | openpi quantile formula | `openpi/src/openpi/transforms.py:137-145` |
 | openpi mode switch (non-PI0 → quantile) | `openpi/src/openpi/training/config.py:187` |
 | openpi stats keyed only by state/actions | `openpi/scripts/compute_norm_stats.py:102` |
+
+---
+
+# 中文翻译
+
+> 以下为原文的完整中文翻译（AI 生成）。代码块、命令、参数、路径、URL、公式和数值保持原样；正文、标题、表格说明和列表文字译为中文。
+
+# 旋转归一化：UMI identity 与我们的逐维缩放
+
+> **状态：** 分析 + 正在运行的 A/B 实验（2026-07-31）。本文记录了我们的 `umi_relative_ee` 流程与标准 UMI 实质分歧的唯一一处，说明为什么它是全量数据旋转“抖动”的一个候选原因，以及记录在 [`rot6d_identity_norm_experiment.md`](./rot6d_identity_norm_experiment.md) 中的可逆实验。
+
+## 摘要
+
+UMI 让 6D 旋转动作分量保持**不缩放（identity）**，只对位置和夹爪做归一化。我们对**全部 10 个维度统一缩放**——包括 6 个旋转维度——使用逐维 MIN_MAX（ACT/SmolVLA）或 QUANTILES（π0.5）。π0.5 的分位数归一化器是为**关节空间**动作设计的，从未在 6D 旋转表示上验证过。对于*相对、接近 identity* 的旋转，这种逐维缩放会过度加权接近恒定的旋转分量，很可能是全量数据运行中观察到的旋转抖动的一个促成因素。
+
+## 分歧所在
+
+### 我们的流程——对全部 10 个动作维度统一逐维缩放
+
+UMI 统计量是在**整个 10D 动作上扁平**计算的，没有按子字段拆分，因此 6 个 `rot6d` 维度和位置一样获得各自的统计量：
+
+- `src/lerobot/datasets/umi_relative_ee_stats.py:75-86` —— 一个作用于
+  `[pos(3), rot6d(6), gripper(1)]` 的 `RunningQuantileStats`。
+- `src/lerobot/processor/normalize_processor.py:329` —— normalizer 按 **FeatureType**（`ACTION`）选择一种模式，然后将该单一模式应用于每个维度。
+- 各策略的模式：
+  - π0.5：`src/lerobot/policies/pi05/configuration_pi05.py:80` → `QUANTILES`
+    （q01/q99 → [-1,1]）。
+  - ACT：`src/lerobot/policies/act/configuration_act.py:172` → `MIN_MAX`。
+  - SmolVLA：`src/lerobot/policies/smolvla/configuration_smolvla.py:142` → `MIN_MAX`。
+- 20D 状态也以相同方式处理；其 `rot6d` 分量位于维度
+  `[3:9]` 和 `[13:19]`。
+
+### 标准 UMI——旋转保持 identity
+
+UMI **按子字段**缩放：位置 → 范围 [-1,1]，**rot6d → identity
+（scale=1, offset=0）**，夹爪 → 范围 [-1,1]：
+
+- `detached-umi-policy/diffusion_policy/dataset/umi_dataset.py:221-227`
+  （位置/夹爪使用 `get_range_normalizer_from_stat`，
+  6D 旋转使用 `get_identity_normalizer_from_stat`）。
+- 旋转矩阵元素本来就被限制在 [-1,1] 内（两行正交单位向量），因此缩放它们是不必要的，并且会扭曲其几何结构。
+
+### openpi / π0.5——动作空间中完全没有旋转
+
+openpi 中的每个动作空间都是**关节空间**（关节角 + 一个标量夹爪）：
+Aloha 14D、DROID 8D、Libero 7D、基础 π0.5 填充到 32D。整个流程中没有任何四元数、轴角、欧拉角或 6D 旋转。
+
+- π0.5 / π0-FAST 的默认归一化是**逐维分位数**：
+  `(x - q01)/(q99 - q01) * 2 - 1` → [-1,1]
+  （`openpi/src/openpi/transforms.py:137-145`，模式切换位于
+  `openpi/src/openpi/training/config.py:187`：`use_quantile_norm = model_type != PI0`）。
+- 统计量按扁平方式计算，仅以 `"state"`/`"actions"` 为键，每个维度一个统计量
+  （`openpi/scripts/compute_norm_stats.py:102`）。
+
+**含义：** 我们的 LeRobot π0.5 路径与 openpi 的默认模式一致，所以*并非*选错了模式——该模式*对 π0.5 而言*是正确的。不匹配之处在于，我们把 6D 旋转表示输入给了一个为分布良好、相互独立的关节维度调校、且从未针对旋转设计的归一化器。
+
+## 为什么逐维缩放会损害*相对* rot6d
+
+`rot6d` 是旋转矩阵的前两行。相对动作
+`T_curr⁻¹ @ T_future` 在一个 chunk 的大部分时间内都**接近 identity**（每帧运动很小），因此其 `rot6d` 紧密聚集在 `[1, 0, 0, 0, 1, 0]` 附近：
+
+- 对角维度（`rot6d[0]`、`rot6d[4]`）位于 **+1** 附近，分布**很窄**，
+- 非对角维度位于 **0** 附近。
+
+对其应用**逐维分位数/min-max**缩放：
+
+- 对角方向的 “1” 分量具有很薄的 `[q01, q99]` 区间（例如约 [0.7, 0.99]），
+  分位数缩放会把它**拉伸到整个 [-1,1]**——对一个接近恒定的信号做大幅乘性放大。
+- 在回归 / flow-matching loss 中，每个维度的有效权重是
+  `1/(q99 - q01)`（对于 mean/std 则是 `1/std`）。接近恒定的对角维度获得
+  **最大**权重；而真正编码夹爪*朝哪个方向*旋转的非对角维度获得
+  **最小**权重。
+
+净效果：loss 被“将接近恒定的 `[1, 1]` 对角分量预测到很多有效数字”所主导，而承载真实旋转方向的分量相对而言拟合不足。模型会向 identity 塌缩，并在有信息量的轴上表现嘈杂——也就是旋转抖动。UMI 的 identity 归一化让每个分量保持自然尺度，权重均衡，永远不会造成这种失衡。
+
+这与已有的调试结果一致：
+
+- 单 episode 过拟合可达到约 0.9° 的旋转下限（尽管权重设置不佳，记忆仍然胜出）。
+- 全量数据泛化停滞在约 4.6–5.6°，而 LoRA rank **不是**瓶颈。
+- loss 加权 / 目标分布问题会严重损害泛化，同时让过拟合保持完好——正是这种特征。
+
+> **注意：** 失衡的严重程度取决于相对旋转聚集得有多紧（offset-1 的目标接近 identity，offset-30 则不那么接近，而且统计量是在整个 chunk 上汇总的）。其原理——对耦合旋转表示做逐维仿射缩放会扭曲分量权重，在接近 identity 的数据上最严重——无论具体情况如何都成立；开放的问题是，该效应在这个数据集上有多大。测量成本很低。
+
+## 不必尝试切换模式
+
+将 π0.5 → π0（分位数 → mean/std）**不能**解决这个问题：mean/std 有同样的逐维加权缺陷（`1/std` 会像 `1/(q99 - q01)` 一样放大低方差的对角分量）。问题在于对旋转表示做逐维仿射缩放，与具体是哪种仿射无关。修复方法是让旋转子字段保持 identity，而不是换一个全局模式。
+
+## 实验（可逆、最小改动）
+
+在归一化**之前**，将统计量中的 `rot6d` 切片强制设为 identity。这能精确复现 UMI 的行为，且无需任何架构改动：
+
+- **动作（10D）：** 维度 `[3:9]` → `q01 = -1, q99 = 1`（π0.5） / `min = -1, max = 1`
+  （ACT、SmolVLA）。
+- **状态（20D）：** 维度 `[3:9]` 和 `[13:19]` → 同上。
+
+最省事的钩子：覆盖 `compute_umi_relative_ee_stats` 返回值中的这些切片
+（`src/lerobot/datasets/umi_relative_ee_stats.py`，约第 93 行的 `return`）。将其放在一个配置标志之后，以便无需改代码即可按运行切换。
+
+判定标准：用策略无关的 `eval_open_loop_dataset.py` 在全部 100 个验证 episode 上比较配对 checkpoint（每个 episode 取 10 个均匀间隔的有效查询）。主要指标是 episode 均衡的 chunk 内旋转二阶差分/加速度代理（目前存储在 legacy 键 `rot_jerk_deg` 下）；chunk 末端旋转误差是次要的准确性指标。平滑度的显著降低（目标：相对至少 20%，超出随机种子噪声）支持抖动假设，前提是配对的 checkpoint 使用了相同的动作填充/噪声目标。RTC 评估仍是独立的 SmolVLA/π0.5 部署指标，不支持 ACT。
+
+填充/噪声这一限定很重要，因为后来的一次实现审计发现，SmolVLA 历史上为 10-D UMI 动作采样了无约束的 32-D latent，但只在十个真实维度上计算训练 loss。参见
+[`within_chunk_jitter_analysis.md`](./within_chunk_jitter_analysis.md) 了解 OpenPI 对比、GPU 消融，以及两种一致的固定宽度公式。
+现在，SmolVLA、π0 和 π0.5 的推理默认会在整个 flow ODE 中屏蔽 22 个未使用的坐标，包括暴露给 RTC 的速度。这适用于现有 checkpoint，无需重新训练。仅在历史复现时于 UMI 评估器中使用 `--legacy_full_action_noise`；训练侧的填充目标仍是一个推迟的重新训练 A/B。
+
+### 长期形态
+
+一个按子字段的归一化器步骤（位置 → range，**旋转 → identity**，夹爪 → range），使 identity 处理显式化，而不是通过统计量覆盖实现。这完全对应 `detached-umi-policy` 的 `UmiDataset.get_normalizer`。
+
+## 证据索引
+
+| 论断 | 位置 |
+| --- | --- |
+| 我们的统计量在 10D 上扁平计算 | `src/lerobot/datasets/umi_relative_ee_stats.py:75-86` |
+| 我们的 normalizer：每个 FeatureType 一种模式，逐维 | `src/lerobot/processor/normalize_processor.py:329` |
+| π0.5 动作模式 = QUANTILES | `src/lerobot/policies/pi05/configuration_pi05.py:80` |
+| ACT 动作模式 = MIN_MAX（UMI 路径） | `src/lerobot/policies/act/configuration_act.py:172` |
+| SmolVLA 动作模式 = MIN_MAX（UMI 路径） | `src/lerobot/policies/smolvla/configuration_smolvla.py:142` |
+| UMI：rot6d → identity，pos/gripper → range | `detached-umi-policy/diffusion_policy/dataset/umi_dataset.py:221-227` |
+| openpi 分位数公式 | `openpi/src/openpi/transforms.py:137-145` |
+| openpi 模式切换（非 PI0 → 分位数） | `openpi/src/openpi/training/config.py:187` |
+| openpi 统计量仅以 state/actions 为键 | `openpi/scripts/compute_norm_stats.py:102` |

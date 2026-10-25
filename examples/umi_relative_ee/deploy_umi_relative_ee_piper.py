@@ -19,12 +19,22 @@ Usage:
         --gripper_type external \
         --cameras "{camera: {type: intelrealsense, serial_number_or_name: '230322274337', fps: 30, width: 640, height: 480}}" \
         --warm_start
+
+    # Hand-held USB camera, no robot: inference + trajectory overlay only.
+    # The USB 1600x1200 frame is converted to the D405 640x480 view.
+    python deploy_umi_relative_ee_piper.py \
+        --pretrained_path outputs/.../pretrained_model \
+        --dry_run --usb_camera --device cuda --num_steps 300
 """
 
 import argparse
+import glob
+import importlib.util
 import logging
 import os
 import queue
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -39,7 +49,8 @@ import yaml
 from lerobot.cameras import CameraConfig
 
 # Ensure RealSenseCameraConfig is importable for parse_cameras_config
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.opencv import OpenCVCamera
+from lerobot.cameras.opencv.configuration_opencv import Cv2Backends, OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.configs.policies import PreTrainedConfig
@@ -70,9 +81,10 @@ HOME_POSE_DEG = np.array([0.0, 50.60, -50.40, -1.21, 10.00, 0.00])
 SAFE_POSE_DEG = np.array([0.0, -2.08, 1.8, 1.35, 17.16, 0.0])
 START_POSE_DEG = np.array([0.0, 79.2, -31.3, 0.0,   -45.85, 0.0])
 
-# External DM4310 gripper (MIT mode, radians)
-GRIPPER_OPEN_RAD = 0
-GRIPPER_CLOSED_RAD = -0.91
+# External DM4310 gripper (MIT mode, radians) — physical range of THIS rig
+# (2026-10-09 calibration): 0 rad = fully open, +0.95 rad = fully closed.
+GRIPPER_OPEN_RAD = 0.0
+GRIPPER_CLOSED_RAD = 0.95
 
 # Built-in Piper gripper (mm) — typical range
 GRIPPER_OPEN_MM = 0.0
@@ -203,7 +215,11 @@ class LoopState(Enum):
 
 
 def gripper_norm_to_external(gripper_norm: float, kp: float, kd: float) -> tuple:
-    pos = gripper_norm * (GRIPPER_CLOSED_RAD - GRIPPER_OPEN_RAD) + GRIPPER_OPEN_RAD
+    # Dataset/policy convention is 1.0=open, 0.0=closed (verified 2026-10-09:
+    # episode starts ~0.996 in open-approach, ends ~0.05 grasped), the OPPOSITE
+    # of what the old mapping assumed. This rig: 0 rad=open, +0.95=closed, so
+    # close(0) -> +0.95 and open(1) -> 0.
+    pos = (1.0 - gripper_norm) * (GRIPPER_CLOSED_RAD - GRIPPER_OPEN_RAD) + GRIPPER_OPEN_RAD
     return kp, kd, pos
 
 
@@ -212,7 +228,9 @@ def gripper_norm_to_builtin(gripper_norm: float) -> float:
 
 
 def gripper_external_to_norm(pos_rad: float) -> float:
-    return (pos_rad - GRIPPER_OPEN_RAD) / (GRIPPER_CLOSED_RAD - GRIPPER_OPEN_RAD)
+    # Feedback direction must match the dataset too: physical open (0 rad) is
+    # norm 1.0, physical closed (+0.95) is norm 0.0.
+    return 1.0 - (pos_rad - GRIPPER_OPEN_RAD) / (GRIPPER_CLOSED_RAD - GRIPPER_OPEN_RAD)
 
 
 def gripper_builtin_to_norm(pos_mm: float) -> float:
@@ -398,6 +416,153 @@ def parse_cameras_config(cameras_str: str | None) -> dict[str, CameraConfig]:
     return cameras
 
 
+# ---------------------------------------------------------------------------
+# USB (DECXIN) camera -> D405 view
+#
+# The USB image is remapped to the D405 640x480 pixel grid by the validated
+# converter written for this rig.  It is loaded from the cheap-camera
+# experiment folder so there is a single source of truth for the calibration.
+# Geometry only: no color correction is applied.
+# ---------------------------------------------------------------------------
+D405_VIEW_SCRIPT = os.environ.get(
+    "SROI_D405_VIEW_SCRIPT",
+    os.path.expanduser("~/部署便宜相机实验/scripts/转换到D405视角.py"),
+)
+USB_CAMERA_KEY = "camera"  # must match observation.images.camera in the checkpoint
+
+_D405_VIEW_CACHE = None
+
+
+def _load_d405_view_module():
+    """Load the validated D405-view converter module (cached)."""
+    global _D405_VIEW_CACHE
+    if _D405_VIEW_CACHE is None:
+        if not os.path.exists(D405_VIEW_SCRIPT):
+            raise FileNotFoundError(
+                f"D405 view converter not found: {D405_VIEW_SCRIPT}\n"
+                "Set SROI_D405_VIEW_SCRIPT to the path of 转换到D405视角.py."
+            )
+        spec = importlib.util.spec_from_file_location("sroi_d405_view", D405_VIEW_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _D405_VIEW_CACHE = module
+    return _D405_VIEW_CACHE
+
+
+def _v4l2_text(dev: str, *args: str) -> str:
+    try:
+        return subprocess.run(
+            ["v4l2-ctl", "-d", dev, *args],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _supports_1600x1200_mjpg(dev: str) -> bool:
+    txt = _v4l2_text(dev, "--list-formats-ext")
+    return "1600x1200" in txt and "MJPG" in txt
+
+
+def find_usb_camera(explicit: str | None = None) -> str:
+    """Find the DECXIN V4L2 capture node (1600x1200 MJPG). Nodes renumber on replug."""
+    if explicit and explicit != "auto":
+        if not os.path.exists(explicit):
+            raise FileNotFoundError(
+                f"{explicit} does not exist; run `v4l2-ctl --list-devices`"
+            )
+        return explicit
+
+    candidates = sorted(
+        glob.glob("/dev/video*"),
+        key=lambda p: int(re.sub(r"\D", "", p) or 0),
+    )
+    # The UVC metadata node exposes no capture formats, so the capability check
+    # also filters it out.
+    for dev in candidates:
+        if "DECXIN" in _v4l2_text(dev, "-D").upper() and _supports_1600x1200_mjpg(dev):
+            return dev
+    for dev in candidates:
+        if _supports_1600x1200_mjpg(dev):
+            logger.warning("DECXIN not found by name; using first 1600x1200 MJPG node: %s", dev)
+            return dev
+
+    raise RuntimeError(
+        "No 1600x1200 MJPG V4L2 camera found. Run:\n"
+        "  v4l2-ctl --list-devices\n"
+        "  v4l2-ctl --list-formats-ext -d /dev/videoN"
+    )
+
+
+class D405ViewCamera(OpenCVCamera):
+    """OpenCVCamera that outputs the D405 640x480 view (one geometric remap).
+
+    Overrides only the post-processing hook, which runs in the camera's
+    background read thread after LeRobot has validated the raw 1600x1200 frame
+    and converted BGR -> RGB.  read/async_read/read_latest/warmup are inherited.
+    """
+
+    def __init__(self, config: OpenCVCameraConfig, converter):
+        super().__init__(config)
+        self._converter = converter
+
+    def _postprocess_image(self, image):
+        rgb = super()._postprocess_image(image)
+        return self._converter(rgb)  # (480, 640, 3) RGB
+
+    def connect(self, warmup: bool = True) -> None:
+        super().connect(warmup=warmup)
+        # Public size attributes describe the frames consumers receive.
+        self.width, self.height = self._converter.out_size
+
+    def __str__(self):
+        return f"D405ViewCamera({self.index_or_path})"
+
+
+def build_usb_camera(device: str | None = None):
+    """Build (but do not connect) the USB camera converted to the D405 view."""
+    module = _load_d405_view_module()
+    dev = find_usb_camera(device)
+    config = OpenCVCameraConfig(
+        index_or_path=str(dev),  # cv2 rejects pathlib.Path here
+        fps=30,
+        width=1600,
+        height=1200,
+        fourcc="MJPG",           # YUYV cannot sustain 30 fps at this resolution
+        backend=Cv2Backends.V4L2,
+        warmup_s=2,
+    )
+    logger.info(
+        "USB camera: %s 1600x1200 MJPG @ 30 fps -> D405 view 640x480 (K405 fx=%.3f)",
+        dev, module.K405[0, 0],
+    )
+    return D405ViewCamera(config, module.Converter((1600, 1200)))
+
+
+def build_cameras(args):
+    """Build either the existing RealSense/OpenCV set or the converted USB camera."""
+    if args.usb_camera is not None:
+        if args.cameras:
+            raise ValueError("--cameras and --usb_camera are mutually exclusive.")
+        return {USB_CAMERA_KEY: build_usb_camera(args.usb_camera)}
+    cameras_config = parse_cameras_config(args.cameras)
+    if not cameras_config:
+        raise ValueError("No cameras configured. Use --cameras or --usb_camera.")
+    return make_cameras_from_configs(cameras_config)
+
+
+def resolve_camera_matrix(args, camera_matrix):
+    """The converted USB view already lives on the D405 pixel grid."""
+    if camera_matrix is None and args.usb_camera is not None:
+        K405 = _load_d405_view_module().K405
+        logger.info(
+            "USB camera mode: using D405 intrinsics for trajectory overlay (fx=%.3f)",
+            K405[0, 0],
+        )
+        return K405.copy()
+    return camera_matrix
+
+
 def load_policy_and_processors(model_path: str, device: torch.device):
     """Load any supported policy and its checkpointed relative-EE processors."""
     policy_config = PreTrainedConfig.from_pretrained(model_path)
@@ -442,6 +607,12 @@ def parse_args():
     )
     parser.add_argument("--cameras", type=str, default=None,
                         help='YAML camera config. serial_number_or_name auto-detected if omitted. e.g. "{camera: {type: intelrealsense, fps: 30, width: 640, height: 480}}"')
+    parser.add_argument(
+        "--usb_camera", nargs="?", const="auto", default=None, metavar="DEVICE",
+        help="Use the DECXIN USB camera, converted to the D405 640x480 view. "
+             "Bare flag auto-detects the 1600x1200 MJPG node; pass /dev/videoN to force. "
+             "Mutually exclusive with --cameras.",
+    )
     parser.add_argument("--urdf_path", type=str, default=DEFAULT_URDF_PATH)
     parser.add_argument("--deploy_frame", type=str, default=DEFAULT_DEPLOY_FRAME)
     parser.add_argument("--n_action_steps", type=int, default=30)
@@ -498,13 +669,11 @@ def run_dry_run(args):
         logger.info(f"Loaded camera matrix: fx={camera_matrix[0,0]:.1f}")
 
     # Connect camera
-    cameras_config = parse_cameras_config(args.cameras)
-    if not cameras_config:
-        raise ValueError("No cameras configured. Use --cameras to specify.")
-    cameras = make_cameras_from_configs(cameras_config)
+    cameras = build_cameras(args)
     for cam_name, camera in cameras.items():
         camera.connect()
         logger.info(f"Camera connected: {cam_name}")
+    camera_matrix = resolve_camera_matrix(args, camera_matrix)
 
     # Auto-detect RealSense intrinsics if not provided
     if camera_matrix is None:
@@ -716,13 +885,11 @@ def main():
     time.sleep(2.0)
 
     # ── 6. Connect cameras ─────────────────────────────────────────────
-    cameras_config = parse_cameras_config(args.cameras)
-    if not cameras_config:
-        raise ValueError("No cameras configured. Use --cameras to specify.")
-    cameras = make_cameras_from_configs(cameras_config)
+    cameras = build_cameras(args)
     for cam_name, camera in cameras.items():
         camera.connect()
         logger.info(f"Camera connected: {cam_name}")
+    camera_matrix = resolve_camera_matrix(args, camera_matrix)
 
     # Auto-detect RealSense intrinsics if needed
     if not args.no_vis and camera_matrix is None:
