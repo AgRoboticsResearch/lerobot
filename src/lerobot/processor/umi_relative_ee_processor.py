@@ -22,7 +22,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
-
+# 轴角意思是rpy的旋转角？用轴角描述坐标系旋转应该是需要指定顺序的吧？而3x3的旋转矩阵对于任何一个确定的旋转都是唯一的？
 def axis_angle_to_matrix(axis_angle: Tensor) -> Tensor:
     """Convert axis-angle vectors to rotation matrices with Rodrigues' formula."""
     theta = axis_angle.norm(dim=-1, keepdim=True).clamp(min=1e-7)
@@ -37,7 +37,8 @@ def axis_angle_to_matrix(axis_angle: Tensor) -> Tensor:
         1 - torch.cos(theta).unsqueeze(-1)
     ) * (skew @ skew)
 
-
+# 这两个轴角和旋转矩阵之间的互换函数应该都是现成的吧？
+# 我想做几个小的输入输出测试来验证它的正确性
 def matrix_to_axis_angle(matrix: Tensor) -> Tensor:
     """Convert rotation matrices to axis-angle vectors."""
     vector = torch.stack(
@@ -54,7 +55,11 @@ def matrix_to_axis_angle(matrix: Tensor) -> Tensor:
     result = vector / (sin_theta_twice.unsqueeze(-1) + 1e-8) * theta.unsqueeze(-1)
     return torch.where((sin_theta_twice < 1e-7).unsqueeze(-1), vector / 2, result)
 
-
+# 旋转矩阵到6d数的正逆变换
+# 这个变换是其他论文中已经采用过的是吗？
+# 之所以用六个数是因为六个数相比于九个数更容易被学习到吗？
+# 但是我们当前的例子中，不存在那种角度跳变的极端情况，单个chunk内收尾坐标系的变化不大，这种情况下会不会采用传统一点的方法更容易获得好结果？
+# 是否有此前的实验记录？已经给出了不同方法尝试之后的结论？
 def matrix_to_rot6d(matrix: Tensor) -> Tensor:
     """Return the first two matrix rows (the UMI row-based rot6d convention)."""
     return matrix[..., :2, :].clone().reshape(*matrix.shape[:-2], 6)
@@ -68,7 +73,7 @@ def rot6d_to_matrix(rot6d: Tensor) -> Tensor:
     row2 = torch.cross(row0, row1, dim=-1)
     return torch.stack([row0, row1, row2], dim=-2)
 
-
+# 正向和逆向的主推理公式具体的输入输出是什么？
 def absolute_aa_to_relative_rot6d(reference: Tensor, target: Tensor) -> Tensor:
     """Compute ``inverse(T_reference) @ T_target`` for 7D absolute poses."""
     reference_rotation = axis_angle_to_matrix(reference[..., 3:6])
@@ -94,9 +99,16 @@ def relative_rot6d_to_absolute_aa(relative: Tensor, reference: Tensor) -> Tensor
         [absolute_translation, matrix_to_axis_angle(absolute_rotation), relative[..., 9:10]], dim=-1
     )
 
-
+# to_umi_relative_actions
+# to_umi_absolute_actions
+# to_umi_relative_state
+# 这三个函数具体在做什么？我想知道它和其他函数的关系，以及精确的输入和输出是什么
 def to_umi_relative_actions(actions: Tensor, state: Tensor) -> Tensor:
-    """Convert a batch of absolute 7D action chunks to relative 10D chunks."""
+    """
+    Convert a batch of absolute 7D action chunks to relative 10D chunks.
+    
+    把整个 Batch 的 7D 绝对动作块 转变为 相对起始状态的 10D 动作块
+    """
     if actions.shape[-1] != 7 or state.shape[-1] != 7:
         raise ValueError(
             "UMI relative EE requires 7D [xyz, axis-angle, gripper] input; "
@@ -141,50 +153,111 @@ def make_umi_cache_key() -> str:
 
 
 @ProcessorStepRegistry.register("umi_derive_state_from_action")
+# ProcessorStepRegistry = ProcessorStep 类的注册表
+# 把字符串名映射到类，允许通过字符串名称进行实例化
+# 装饰器自动把下面形成的类注册进去，类和 umi_derive_state_from_action 这个名字绑定
 @dataclass
+# @class 这种写法叫做装饰器
+# 从下往上执行，下面的类构造完成之后，这个类经过装饰器变成 dataclass
+# 这个 dataclass 是 python 自带的，专门为数据类设计
+# dataclass 会自动生成 __init__ __repr__ __eq__ 这些特殊方法
+# __init__ 就是在实例化的时候会自动调用的特殊方法
+# __repr__ 用于给开发者返回可读的字符串（打印这个类的时候打印什么东西）
+# __eq__ 定义 == 行为（两个实例判等的时候怎么才算相等）
 class UmiDeriveStateFromActionStep(ProcessorStep):
-    """Build state from ``action[t-1:t+1]`` and remove the leading action."""
-
+# ProcessorStep 单步数据处理模块的基类，要求补全其中的基本功能
+# UmiDeriveStateFromActionStep = UMI 风格的 从动作推导状态的 单步数据处理模块
+    """
+    Build state from ``action[t-1:t+1]`` and remove the leading action.
+        
+    从 action[t-1] 和 action[t] 推导出状态,本代码中直接取时间步0和1当作状态
+    然后把 action 序列中的时间步0的值删掉,保留后续部分
+    """
     enabled: bool = True
-
+    
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+    # 特殊方法 __call__ 让实例可以像函数一样被调用，比如：
+    # step = UmiDeriveStateFromActionStep() 创建实例
+    # new_transition = step(transition) 调用实例，传入旧的 EnvTransition 获得新的 EnvTransition
+    # EnvTransition Lerobot框架中的数据容器，里面装着观测值、状态值、奖励之类的东西
         action = transition.get(TransitionKey.ACTION)
+        # 从传入的 transition 中取其中 action 键的值，值的类型是 Tensor
+        # TransitionKey 来自Lerobot框架，通过 TransitionKey.ACTION 这种形式存放 原始键 的名字
         if not self.enabled or action is None or action.ndim < 3:
+        # 三个不处理的判断条件
+        # 重点解释为什么 action 的维度需要大于等于3
+        # 对于 action 要求以 action[B,T,D] 的形式存在
+        # B：Batch数，T：单条动作的时间步，D：单条动作的动作维度
             return transition
+            # 对于不满足条件的情况直接返回原始值
         result = deepcopy(transition)
+        # 对于符合条件的情况，深拷贝整个 transition 对象，是 ProcessorStep 进行数据处理的过程中约定俗成的做法
+        
+        # 取出来的东西套一层字典，相当于拷贝一份，不去修改 result 里面的值
         observation = dict(result.get(TransitionKey.OBSERVATION) or {})
+        # 取 result 中 TransitionKey.OBSERVATION 键的值
+        # 这个值也是一个字典，但是为了避免修改原对象，所以这里套 dict() 拷贝一份
         observation[OBS_STATE] = action[..., :2, :]
+        # 使用 TransitionKey.OBSERVATION 键取出的值是一个字典，里面还有类似于 observation.state observation.image 这样的键
+        # 把其中的 observation.state 键用 action 中的部分片段来赋值
+        # ... 表示取前面的所有维度，此处如果 action 是3维，那么写 ：也一样
+        # 这里表示取全部 Batch维，取时间维度的0和1,取动作维度的所有维
         result[TransitionKey.OBSERVATION] = observation
         result[TransitionKey.ACTION] = action[..., 1:, :]
+        # 这里把 result 中的两个键换了新的值
+        # TransitionKey.OBSERVATION 键是整体替换，因为值本身就是一个字典
+        # TransitionKey.ACTION 键在原值的基础上去掉 T=0 那些，保留其他的
 
         complementary = dict(result.get(TransitionKey.COMPLEMENTARY_DATA, {}))
+        # TransitionKey.COMPLEMENTARY_DATA 键用于提供附加信息，其值也是一个字典
+        # 可能 TransitionKey.COMPLEMENTARY_DATA 的值当中有 action_is_pad 键
         for container in (result, complementary):
+        # container 在 result 和 complementary 两个元素中遍历
+        # action_is_pad 键可能直接放在 result 中，也可能放在 complementary 中
             padding = container.get("action_is_pad")
+            # 查看是否存在 action_is_pad 键
+            # action_is_pad 键的值标记了哪些时间步是 padding 的（也就是自动填充的）
             if isinstance(padding, Tensor) and padding.ndim >= 2:
+            # action_is_pad 通常是 [B, T]，和 action 的时间维对齐
+            # 这里检查它是 Tensor 且至少有 2 维，才能按时间维裁
                 container["action_is_pad"] = padding[..., 1:]
+                # 前面去掉了动作当中的 T=0,那么 action_is_pad 键的值也要相应修改
         if complementary:
             result[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        # 如果 result 中的 TransitionKey.COMPLEMENTARY_DATA 存在，那么经过上述处理之后应当更新一下
+        # 因为动作被去掉了 T=0 的列，那么标记 padding 的时间步也要前移一位
         return result
-
+    
     def get_config(self) -> dict[str, Any]:
+    # 该方法用于让整个框架了解该 Step 是怎么构造的
+    # 由于该 Step 中只增加了 enabled 这个成员，所以返回这个字典
         return {"enabled": self.enabled}
 
     def transform_features(self, features):
+    # features 是 pipeline 的特征描述表，告诉框架每个键的类型和形状
+    # 这里没有改变特征的定义，所以直接返回
         return features
 
 
 @ProcessorStepRegistry.register("umi_relative_actions")
 @dataclass
 class UmiRelativeActionsStep(ProcessorStep):
-    """Convert 7D absolute chunks to 10D UMI-relative chunks and cache the base."""
-
+    """
+    Convert 7D absolute chunks to 10D UMI-relative chunks and cache the base.
+    
+    把 7D 绝对动作的 chunk 转变成 10D 相对动作的 chunk
+    缓存每个动作块的起始位姿作为计算的基准
+    """
     enabled: bool = True
     cache_key: str = "umi_relative_ee"
     _last_state: Tensor | None = field(default=None, init=False, repr=False)
+    # 这三个都叫做实例变量
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+    # 传入的是完整的 EnvTransition 对象
+    # 经过条件判断后，对其中的 action 做相对变化的操作
         observation = transition.get(TransitionKey.OBSERVATION, {})
-        raw_state = observation.get(OBS_STATE) if observation else None
+        raw_state = observation.get(OBS_STATE) if observation else None 
         state = raw_state[..., -1, :] if raw_state is not None and raw_state.ndim >= 3 else raw_state
         if state is not None:
             self._last_state = state.detach().cpu().clone()
@@ -197,6 +270,7 @@ class UmiRelativeActionsStep(ProcessorStep):
         return result
 
     def get_cached_state(self) -> Tensor | None:
+    # 新的方法，获取缓存的状态（7D绝对动作）
         return self._last_state
 
     def reset(self) -> None:
@@ -220,7 +294,11 @@ class UmiRelativeActionsStep(ProcessorStep):
 @ProcessorStepRegistry.register("umi_relative_state")
 @dataclass
 class UmiRelativeStateStep(ProcessorStep):
-    """Convert two absolute 7D poses to a flattened relative 20D state."""
+    """
+    Convert two absolute 7D poses to a flattened relative 20D state.
+    
+    将两个绝对7D位姿转换为展平的20D相对状态
+    """
 
     enabled: bool = True
     _previous_state: Tensor | None = field(default=None, init=False, repr=False)
