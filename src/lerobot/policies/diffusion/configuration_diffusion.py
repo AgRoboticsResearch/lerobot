@@ -130,8 +130,9 @@ class DiffusionConfig(PreTrainedConfig):
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(10,)),
     })
 
-    # 尾部保留真值帧数: = horizon - n_action_steps - n_obs_steps + 1 = 32-10-1+1。
-    drop_n_last_frames: int = 22
+    # 尾部保留真值帧数: UMI 链下 action 采样含 t-1 帧(组装状态对后被剥掉),
+    # 锚点 t 需 t-1 与 t+horizon-1 都在集内 → drop = horizon = 32。
+    drop_n_last_frames: int = 32
 
     # Architecture / modeling.
     # Vision backbone.
@@ -268,7 +269,12 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
+        # UMI 链: 前伸一个 t-1 帧给状态对用(UmiDeriveStateFromActionStep 取
+        # [-1, 0] 为 [t-1, t] 并剥掉),剥完剩余恰为 horizon 帧。同 act 口径。
+        if self.use_umi_relative_ee:
+            return [-1] + list(range(self.horizon))
         return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
+
 
     @property
     def reward_delta_indices(self) -> None:
