@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
 
@@ -118,6 +119,16 @@ class DiffusionConfig(PreTrainedConfig):
     # 数据集工厂按这两个开关计算相对统计量并重写 action/state 特征。
     use_umi_relative_ee: bool = True
     umi_rot6d_identity_norm: bool = True
+
+    # SROI 特征声明(与 ACT 训练一致,不含死列 observation.ee):
+    # state 20D = UMI 相对位姿对(当前 10D + 前帧变化 10D),action 10D = 相对位姿+夹爪。
+    input_features: dict[str, PolicyFeature] | None = field(default_factory=lambda: {
+        "observation.images.camera": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+    })
+    output_features: dict[str, PolicyFeature] = field(default_factory=lambda: {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(10,)),
+    })
 
     # 尾部保留真值帧数: = horizon - n_action_steps - n_obs_steps + 1 = 32-10-1+1。
     drop_n_last_frames: int = 22
