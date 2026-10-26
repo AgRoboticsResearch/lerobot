@@ -100,9 +100,9 @@ class DiffusionConfig(PreTrainedConfig):
     """
 
     # Inputs / output structure.
-    # SROI 草莓采摘口径(与 ACT 训练对齐): 单帧观测、horizon 32(U-Net 下采样因子 8 的整除约束,
-    # ≈ACT chunk 30)、执行 10(30Hz 下重规划 0.33s,余 22 步垫场)。
-    n_obs_steps: int = 1
+    # SROI 草莓采摘口径(ee 基准版): 观测 2 帧 [t-1, t](图像 + ee 对),
+    # horizon 32(U-Net 下采样因子 8 的整除约束)、执行 10(30Hz 下重规划 0.33s)。
+    n_obs_steps: int = 2
     horizon: int = 32
     n_action_steps: int = 10
 
@@ -120,11 +120,12 @@ class DiffusionConfig(PreTrainedConfig):
     use_umi_relative_ee: bool = True
     umi_rot6d_identity_norm: bool = True
 
-    # SROI 特征声明(与 ACT 训练一致,不含死列 observation.ee):
-    # state 20D = UMI 相对位姿对(当前 10D + 前帧变化 10D),action 10D = 相对位姿+夹爪。
+    # SROI 特征声明(state 20D = UMI 相对位姿对的平面化 [B,2,10];
+    # ee 7D = 当前帧绝对位姿+夹爪,由派生步消费后用于相对基准,模型本身不读它):
     input_features: dict[str, PolicyFeature] | None = field(default_factory=lambda: {
         "observation.images.camera": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+        "observation.ee": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
     })
     output_features: dict[str, PolicyFeature] = field(default_factory=lambda: {
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(10,)),
@@ -269,11 +270,9 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
-        # UMI 链: 前伸一个 t-1 帧给状态对用(UmiDeriveStateFromActionStep 取
-        # [-1, 0] 为 [t-1, t] 并剥掉),剥完剩余恰为 horizon 帧。同 act 口径。
-        if self.use_umi_relative_ee:
-            return [-1] + list(range(self.horizon))
-        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
+        # ee 基准口径: chunk 目标 = ee[t+1..t+horizon](绝对位姿),
+        # 相对化在派生步完成(基准 = ee[t] = 观测帧自身位姿)。
+        return list(range(1, self.horizon + 1))
 
 
     @property

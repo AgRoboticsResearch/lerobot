@@ -28,10 +28,6 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
-    UmiAbsoluteActionsStep,
-    UmiDeriveStateFromActionStep,
-    UmiRelativeActionsStep,
-    UmiRelativeStateStep,
     UnnormalizerProcessorStep,
     make_umi_cache_key,
     policy_action_to_transition,
@@ -40,32 +36,39 @@ from lerobot.processor import (
 from lerobot.configs import PipelineFeatureType
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
+from lerobot.processor.umi_relative_ee_processor import (
+    to_umi_relative_actions,
+    to_umi_relative_state,
+)
 from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_diffusion import DiffusionConfig
 
 
-@ProcessorStepRegistry.register("umi_state_time_dim")
-@dataclass
-class UmiStateTimeDimStep(ProcessorStep):
-    """恢复 state 的时间维: DP 的 compute_loss 要求 [B, n_obs_steps, D]。
+EE_KEY = "observation.ee"
 
-    UMI 链(派生→相对化→拼装)输出拍平的 [B, 20];n_obs_steps=1 时在此
-    unsqueeze 回 [B, 1, 20]。"""
-    enabled: bool = True
+
+@ProcessorStepRegistry.register("umi_ee_state")
+@dataclass
+class UmiEEStateStep(ProcessorStep):
+    """ee 对 [t-1, t] → 20D UMI 相对状态,整形为 [B, 2, 10]。
+
+    前半 = 上一帧位姿在当前帧坐标系下的表达(速度),后半 = 恒等+当前夹爪。
+    头样本(t=0)时 [t-1] 越界由 dataloader 用帧 0 自复制填充 = 零速,符合
+    "episode 从静止开始"的物理事实。"""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if not self.enabled:
-            return transition
         observation = transition.get(TransitionKey.OBSERVATION) or {}
-        state = observation.get(OBS_STATE)
-        if state is None or state.ndim != 2:
+        ee = observation.get(EE_KEY)
+        if ee is None or ee.ndim != 3 or ee.shape[-2:] != (2, 7):
             return transition
         result = deepcopy(transition)
         result_observation = dict(observation)
-        result_observation[OBS_STATE] = state.unsqueeze(1)
+        result_observation[OBS_STATE] = to_umi_relative_state(ee).reshape(
+            ee.shape[0], 2, 10
+        )
         result[TransitionKey.OBSERVATION] = result_observation
         return result
 
@@ -75,8 +78,40 @@ class UmiStateTimeDimStep(ProcessorStep):
         result = deepcopy(features)
         observation_features = result.get(PipelineFeatureType.OBSERVATION, {})
         if OBS_STATE in observation_features:
-            feature = observation_features[OBS_STATE]
-            observation_features[OBS_STATE] = PolicyFeature(type=feature.type, shape=(1, *feature.shape))
+            observation_features[OBS_STATE] = PolicyFeature(
+                type=observation_features[OBS_STATE].type, shape=(2, 10)
+            )
+        return result
+
+
+@ProcessorStepRegistry.register("umi_ee_relative_chunk")
+@dataclass
+class UmiEERelativeChunkStep(ProcessorStep):
+    """动作目标(绝对) → 以 ee[t](观测帧自身位姿)为基准的相对动作。
+
+    chunk[i] = ee[t]⁻¹ · ee[t+1+i]:第一个元素就是到下一帧的真实运动,
+    不再是恒等;部署端以实时观测位姿为基准,与训练完全同源。"""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        ee = observation.get(EE_KEY)
+        action = transition.get(TransitionKey.ACTION)
+        if ee is None or action is None or ee.ndim != 3:
+            return transition
+        base = ee[:, -1, :]  # delta 0 帧 = 当前观测位姿
+        result = deepcopy(transition)
+        result[TransitionKey.ACTION] = to_umi_relative_actions(action, base)
+        return result
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        result = deepcopy(features)
+        action_features = result.get(PipelineFeatureType.ACTION, {})
+        if ACTION in action_features:
+            action_features[ACTION] = PolicyFeature(
+                type=action_features[ACTION].type, shape=(10,)
+            )
         return result
 
 
@@ -110,35 +145,24 @@ def make_diffusion_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
-    # SROI UMI 相对 EE 链(与 act/processor_act.py 同款;框架口径=相对动作空间,无开关):
-    #   state 从 action 派生 → 动作转相对位姿 → 拼装 20D 相对 state(含速度)。
-    cache_key = make_umi_cache_key()
-    relative_step = UmiRelativeActionsStep(cache_key=cache_key)
-
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
-        UmiDeriveStateFromActionStep(),
-        relative_step,
-        UmiRelativeStateStep(),
+        UmiEEStateStep(),
+        UmiEERelativeChunkStep(),
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        UmiStateTimeDimStep(),
     ]
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        # 推理端: 相对动作 → 绝对动作(参考帧由 relative_step 的缓存维护)。
-        UmiAbsoluteActionsStep(
-            cache_key=cache_key,
-            relative_step=relative_step,
-            single_action_reference_steps=config.n_action_steps,
-        ),
+        # 相对→绝对的还原在部署循环内以实时 ee 观测为基准完成,
+        # 此处后处理只做 unnormalize + 回 CPU。
         DeviceProcessorStep(device="cpu"),
     ]
     return (
