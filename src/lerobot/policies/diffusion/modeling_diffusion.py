@@ -102,6 +102,13 @@ class DiffusionPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions given environment observations."""
+        if self.config.image_features:
+            batch = dict(batch)  # shallow copy so adding OBS_IMAGES doesn't modify the caller's dict
+            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        # NOTE: select_action fills the observation queues before calling us, but direct callers
+        # (open-loop eval, deployment loops) come here first — populate ourselves so the first
+        # call copies the observation until the queue is full (same semantics as select_action).
+        self._queues = populate_queues(self._queues, batch)
         # stack n latest observations from the queue
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.diffusion.generate_actions(batch, noise=noise)
