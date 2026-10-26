@@ -149,6 +149,11 @@ class ACTConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
 
+    # 尾部保留真值帧数(0=不裁): UMI ee 口径下 ee 采样窗 [-1..chunk] 最大偏移 chunk,
+    # 需 drop = chunk 才能保证最深锚点的 chunk 目标全为真实帧(action 列"末行复制
+    # 自己"的钳位产物永不进训练);__post_init__ 里自动置为 chunk_size。
+    drop_n_last_frames: int = 0
+
     def __post_init__(self):
         super().__post_init__()
 
@@ -174,6 +179,8 @@ class ACTConfig(PreTrainedConfig):
             self.use_rot6d = True
             self.normalization_mapping["STATE"] = NormalizationMode.MIN_MAX
             self.normalization_mapping["ACTION"] = NormalizationMode.MIN_MAX
+            if self.drop_n_last_frames == 0:
+                self.drop_n_last_frames = self.chunk_size
 
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
@@ -208,14 +215,26 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def observation_delta_indices(self) -> dict[str, list] | None:
+        # UMI ee 口径: ee 窗 = [-1..chunk]——前 2 帧 (ee[t-1], ee[t]) 供 20D 状态,
+        # 其余 = chunk 绝对目标 ee[t+1..t+chunk];图像只取当前帧 [0]
+        # (n_obs_steps=1 的硬约束只管模型吃几帧图像,与 ee 取几帧无关)。
+        # 非 UMI 训练保持上游行为(不取窗)。
+        if not self.use_umi_relative_ee:
+            return None
+        image_key = next(iter(self.image_features)) if self.image_features else "observation.images.camera"
+        return {
+            image_key: [0],
+            "observation.ee": list(range(-1, self.chunk_size + 1)),
+        }
 
     @property
-    def action_delta_indices(self) -> list:
-        if self.use_umi_relative_ee:
-            return [-1] + list(range(self.chunk_size))
-        return list(range(self.chunk_size))
+    def action_delta_indices(self) -> list | None:
+        if not self.use_umi_relative_ee:
+            return list(range(self.chunk_size))
+        # UMI ee 口径: action 列是 ee 列的位移副本,不再读取;
+        # chunk 目标改由 ee 窗提供,UmiEERelativeChunkStep 覆写批内 action。
+        return None
 
     @property
     def reward_delta_indices(self) -> None:

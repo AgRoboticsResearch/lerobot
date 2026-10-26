@@ -419,3 +419,97 @@ class UmiAbsoluteActionsStep(ProcessorStep):
 
     def transform_features(self, features):
         return features
+
+
+EE_KEY = "observation.ee"
+
+
+@ProcessorStepRegistry.register("umi_ee_state")
+@dataclass
+class UmiEEStateStep(ProcessorStep):
+    """ee 采样窗前两帧 [t-1, t] → 20D UMI 相对状态,整形 [B, 1, 20]。
+
+    前半 = 上一帧位姿在当前帧坐标系下的表达(速度),后半 = 恒等+当前夹爪。
+    头样本(t=0)时 [t-1] 越界由 dataloader 用帧 0 自复制填充 = 零速,符合
+    "episode 从静止开始"的物理事实。ee 数据源为 observation.ee 列
+    (action 列在 ee 基准口径下不再被读取)。
+
+    flat_output=False → [B, 1, 20](DP 的 (B, n_obs_steps, state_dim) 合同);
+    flat_output=True → [B, 20](ACT 的 (B, state_dim) 合同)。"""
+
+    flat_output: bool = False
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        ee = observation.get(EE_KEY)
+        if ee is None or ee.ndim != 3 or ee.shape[1] < 2 or ee.shape[2] != 7:
+            return transition
+        result = deepcopy(transition)
+        result_observation = dict(observation)
+        flat = to_umi_relative_state(ee[:, :2, :]).reshape(ee.shape[0], 20)
+        result_observation[OBS_STATE] = flat if self.flat_output else flat.unsqueeze(1)
+        result[TransitionKey.OBSERVATION] = result_observation
+        return result
+
+    def get_config(self) -> dict[str, Any]:
+        return {"flat_output": self.flat_output}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        result = deepcopy(features)
+        observation_features = result.get(PipelineFeatureType.OBSERVATION, {})
+        if OBS_STATE in observation_features:
+            observation_features[OBS_STATE] = PolicyFeature(
+                type=observation_features[OBS_STATE].type,
+                shape=(20,) if self.flat_output else (1, 20),
+            )
+        return result
+
+
+@ProcessorStepRegistry.register("umi_ee_relative_chunk")
+@dataclass
+class UmiEERelativeChunkStep(ProcessorStep):
+    """ee 采样窗第 2 位起的绝对目标 ee[t+1..t+chunk] → 以 ee[t](观测帧自身
+    位姿,窗口第 1 位)为基准的相对动作,写入 action。
+
+    chunk[i] = ee[t]⁻¹ · ee[t+1+i]:第一个元素就是到下一帧的真实运动,
+    不再是恒等;部署端以实时观测位姿为基准,与训练完全同源。
+    ee 窗长 = chunk_length + 2(前 2 帧供 UmiEEStateStep 用)。"""
+
+    chunk_length: int
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        ee = observation.get(EE_KEY)
+        if ee is None or ee.ndim != 3 or ee.shape[1] != self.chunk_length + 2 or ee.shape[2] != 7:
+            return transition
+        base = ee[:, 1, :]  # ee[t] = 观测帧自身位姿
+        result = deepcopy(transition)
+        result[TransitionKey.ACTION] = to_umi_relative_actions(ee[:, 2:, :], base)
+        # action 列不再经 dataloader 取窗,也就没有 action_is_pad;
+        # 由 ee 窗目标段的 pad 接管(drop=chunk 下训练时恒为 False)。
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        ee_pad = complementary.get(f"{EE_KEY}_is_pad")
+        if ee_pad is not None:
+            complementary["action_is_pad"] = ee_pad[:, 2:]
+        else:
+            complementary["action_is_pad"] = torch.zeros(
+                (ee.shape[0], self.chunk_length), dtype=torch.bool, device=ee.device
+            )
+        result[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return result
+
+    def get_config(self) -> dict[str, Any]:
+        return {"chunk_length": self.chunk_length}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        result = deepcopy(features)
+        action_features = result.get(PipelineFeatureType.ACTION, {})
+        if ACTION in action_features:
+            action_features[ACTION] = PolicyFeature(
+                type=action_features[ACTION].type, shape=(self.chunk_length, 10)
+            )
+        return result

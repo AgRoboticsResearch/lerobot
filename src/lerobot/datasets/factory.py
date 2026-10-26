@@ -58,7 +58,18 @@ def resolve_delta_timestamps(
         if key == ACTION and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         if key.startswith(OBS_PREFIX) and cfg.observation_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+            obs_indices = cfg.observation_delta_indices
+            if isinstance(obs_indices, dict):
+                # 按特征名给窗(如图像 [0] 而 ee [-1..chunk]);字典必须覆盖数据集里
+                # 全部 observation.* 特征,漏了就显式报错,不做静默缺省。
+                if key not in obs_indices:
+                    raise ValueError(
+                        "observation_delta_indices in dict form must cover every observation "
+                        f"feature of the dataset; missing {key!r}"
+                    )
+                delta_timestamps[key] = [i / ds_meta.fps for i in obs_indices[key]]
+            else:
+                delta_timestamps[key] = [i / ds_meta.fps for i in obs_indices]
 
     if len(delta_timestamps) == 0:
         delta_timestamps = None

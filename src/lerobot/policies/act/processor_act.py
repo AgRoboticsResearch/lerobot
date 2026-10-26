@@ -24,12 +24,9 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
-    UmiAbsoluteActionsStep,
-    UmiDeriveStateFromActionStep,
-    UmiRelativeActionsStep,
-    UmiRelativeStateStep,
+    UmiEEStateStep,
+    UmiEERelativeChunkStep,
     UnnormalizerProcessorStep,
-    make_umi_cache_key,
     policy_action_to_transition,
     transition_to_policy_action,
 )
@@ -60,18 +57,14 @@ def make_act_pre_post_processors(
         pre-processor pipeline and the post-processor pipeline.
     """
 
-    cache_key = make_umi_cache_key()
-    relative_step = UmiRelativeActionsStep(cache_key=cache_key)
-
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
         *(
             [
-                UmiDeriveStateFromActionStep(),
-                relative_step,
-                UmiRelativeStateStep(),
+                UmiEEStateStep(flat_output=True),  # ACT 合同: state (B, state_dim) 扁平
+                UmiEERelativeChunkStep(chunk_length=config.chunk_size),
             ]
             if config.use_umi_relative_ee
             else []
@@ -87,17 +80,8 @@ def make_act_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
-        *(
-            [
-                UmiAbsoluteActionsStep(
-                    cache_key=cache_key,
-                    relative_step=relative_step,
-                    single_action_reference_steps=config.n_action_steps,
-                )
-            ]
-            if config.use_umi_relative_ee
-            else []
-        ),
+        # ee 基准口径: 相对动作的绝对化还原移到部署循环(以实时 ee 为基准),
+        # 后处理器只做 unnormalize + 回 CPU。
         DeviceProcessorStep(device="cpu"),
     ]
 

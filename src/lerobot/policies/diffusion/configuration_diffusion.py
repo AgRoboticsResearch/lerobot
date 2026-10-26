@@ -100,9 +100,10 @@ class DiffusionConfig(PreTrainedConfig):
     """
 
     # Inputs / output structure.
-    # SROI 草莓采摘口径(ee 基准版): 观测 2 帧 [t-1, t](图像 + ee 对),
+    # SROI 草莓采摘口径(ee 基准版): 观测只喂当前帧图像(部署合同=单帧),
+    # 20D 状态的速度半区由 ee 采样窗的 t-1 帧提供(见 observation_delta_indices);
     # horizon 32(U-Net 下采样因子 8 的整除约束)、执行 10(30Hz 下重规划 0.33s)。
-    n_obs_steps: int = 2
+    n_obs_steps: int = 1
     horizon: int = 32
     n_action_steps: int = 10
 
@@ -120,8 +121,8 @@ class DiffusionConfig(PreTrainedConfig):
     use_umi_relative_ee: bool = True
     umi_rot6d_identity_norm: bool = True
 
-    # SROI 特征声明(state 20D = UMI 相对位姿对的平面化 [B,2,10];
-    # ee 7D = 当前帧绝对位姿+夹爪,由派生步消费后用于相对基准,模型本身不读它):
+    # SROI 特征声明(state 20D = UMI 相对状态,批内整形 [B,1,20];
+    # ee 7D = 每帧绝对位姿+夹爪,由 ee 步消费(state 派生+chunk 基准),模型本身不读它):
     input_features: dict[str, PolicyFeature] | None = field(default_factory=lambda: {
         "observation.images.camera": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
@@ -131,8 +132,9 @@ class DiffusionConfig(PreTrainedConfig):
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(10,)),
     })
 
-    # 尾部保留真值帧数: UMI 链下 action 采样含 t-1 帧(组装状态对后被剥掉),
-    # 锚点 t 需 t-1 与 t+horizon-1 都在集内 → drop = horizon = 32。
+    # 尾部保留真值帧数: ee 采样窗 [-1..horizon] 最大偏移 horizon,
+    # 最深锚点 t=T-1-horizon 恰好取到真实末帧位姿(action 列的"末行复制自己"
+    # 钳位产物永不进训练) → drop = horizon = 32。
     drop_n_last_frames: int = 32
 
     # Architecture / modeling.
@@ -265,14 +267,21 @@ class DiffusionConfig(PreTrainedConfig):
                     )
 
     @property
-    def observation_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1))
+    def observation_delta_indices(self) -> dict[str, list]:
+        # ee 基准口径: ee 窗 = [-1..horizon]——前 2 帧 (ee[t-1], ee[t]) 供 20D 状态,
+        # 其余 = chunk 绝对目标 ee[t+1..t+horizon];图像只取当前帧 [0]
+        # (部署合同 = 单帧观测,n_obs_steps=1)。
+        image_key = next(iter(self.image_features)) if self.image_features else "observation.images.camera"
+        return {
+            image_key: [0],
+            "observation.ee": list(range(-1, self.horizon + 1)),
+        }
 
     @property
-    def action_delta_indices(self) -> list:
-        # ee 基准口径: chunk 目标 = ee[t+1..t+horizon](绝对位姿),
-        # 相对化在派生步完成(基准 = ee[t] = 观测帧自身位姿)。
-        return list(range(1, self.horizon + 1))
+    def action_delta_indices(self) -> None:
+        # action 列是 ee 列的位移副本(本口径下不再读取);
+        # chunk 目标改由 ee 窗提供,UmiEERelativeChunkStep 覆写批内 action。
+        return None
 
 
     @property

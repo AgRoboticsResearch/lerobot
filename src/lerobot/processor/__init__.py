@@ -95,8 +95,11 @@ from .relative_action_processor import (
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 from .umi_relative_ee_processor import (
+    EE_KEY,
     UmiAbsoluteActionsStep,
     UmiDeriveStateFromActionStep,
+    UmiEEStateStep,
+    UmiEERelativeChunkStep,
     UmiRelativeActionsStep,
     UmiRelativeStateStep,
     absolute_aa_to_relative_rot6d,
@@ -186,8 +189,11 @@ __all__ = [
     "to_umi_relative_state",
     "to_relative_actions",
     "UnnormalizerProcessorStep",
+    "EE_KEY",
     "UmiAbsoluteActionsStep",
     "UmiDeriveStateFromActionStep",
+    "UmiEEStateStep",
+    "UmiEERelativeChunkStep",
     "UmiRelativeActionsStep",
     "UmiRelativeStateStep",
     "VanillaObservationProcessorStep",
