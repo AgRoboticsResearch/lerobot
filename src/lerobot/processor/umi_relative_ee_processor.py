@@ -531,3 +531,38 @@ class UmiEERelativeChunkStep(ProcessorStep):
                 type=action_features[ACTION].type, shape=(self.chunk_length, 10)
             )
         return result
+
+
+@ProcessorStepRegistry.register("umi_state_time_dim")
+@dataclass
+class UmiStateTimeDimStep(ProcessorStep):
+    """恢复 state 的时间维: DP 的 compute_loss 要求 [B, n_obs_steps, D]。
+
+    兼容中间代(8f80a1eb..aee0421f)checkpoint 的保存管线——它们的链末尾带这
+    一步(拍平 20D → [B,1,20])。当前代码不再接线它,但注册名必须保留,
+    否则那批 checkpoint 的处理器无法加载(如 1M 旧口径基线的开环评估)。"""
+
+    enabled: bool = True
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enabled:
+            return transition
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        state = observation.get(OBS_STATE)
+        if state is None or state.ndim != 2:
+            return transition
+        result = deepcopy(transition)
+        result_observation = dict(observation)
+        result_observation[OBS_STATE] = state.unsqueeze(1)
+        result[TransitionKey.OBSERVATION] = result_observation
+        return result
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        result = deepcopy(features)
+        observation_features = result.get(PipelineFeatureType.OBSERVATION, {})
+        if OBS_STATE in observation_features:
+            feature = observation_features[OBS_STATE]
+            observation_features[OBS_STATE] = PolicyFeature(type=feature.type, shape=(1, *feature.shape))
+        return result
