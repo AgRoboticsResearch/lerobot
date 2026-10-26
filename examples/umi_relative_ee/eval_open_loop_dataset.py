@@ -26,13 +26,18 @@ from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor.umi_relative_ee_processor import axis_angle_to_matrix
+from lerobot.processor.umi_relative_ee_processor import (
+    axis_angle_to_matrix,
+    to_umi_absolute_actions,
+    umi_chain_kind,
+)
 from lerobot.utils.collate import lerobot_collate_fn
 
 logger = logging.getLogger(__name__)
 
 ACTION = "action"
 CAMERA_KEY = "observation.images.camera"
+EE_KEY = "observation.ee"
 DEFAULT_TASK = "pick the strawberry"
 
 
@@ -75,11 +80,15 @@ def choose_query_indices(
     episode_indices: list[int],
     chunk_size: int,
     samples_per_episode: int,
+    extra_tail: int = 0,
 ) -> list[tuple[int, int, int]]:
     """Return ``(dataset_index, episode_index, frame_index)`` query locations.
 
-    A valid UMI query needs ``[t-1, t, ..., t+chunk_size-1]`` within one episode,
-    so local frame ``t`` is restricted to ``[1, episode_length-chunk_size]``.
+    A valid UMI query needs the full sample window within one episode: for the
+    legacy action-derived chain ``[t-1, t, ..., t+chunk_size-1]``, for the
+    ee-based chain ``[t-1, t, ..., t+chunk_size]`` (one frame more, hence
+    ``extra_tail=1``). Local frame ``t`` is restricted to
+    ``[1, episode_length-chunk_size-extra_tail]``.
     """
     if samples_per_episode <= 0:
         raise ValueError("samples_per_episode must be positive")
@@ -88,7 +97,7 @@ def choose_query_indices(
     for episode_index in episode_indices:
         record = episode_records[episode_index]
         first_frame = 1
-        last_frame = int(record["length"]) - chunk_size
+        last_frame = int(record["length"]) - chunk_size - extra_tail
         if last_frame < first_frame:
             logger.warning(
                 "Skipping episode %d: length=%d is too short for chunk_size=%d",
@@ -267,11 +276,15 @@ def main() -> None:
         raise ValueError(f"Episode indices out of range for {metadata.total_episodes} episodes: {invalid}")
     if metadata.episodes is None:
         raise RuntimeError("Dataset metadata does not contain episode records")
+    chunk_len = getattr(policy_config, "chunk_size", None) or policy_config.horizon
+    chain_kind = umi_chain_kind(model_path)
+    logger.info("UMI chain kind: %s", chain_kind)
     query_indices = choose_query_indices(
         metadata.episodes,
         episode_indices,
-        policy_config.chunk_size,
+        chunk_len,
         args.samples_per_episode,
+        extra_tail=1 if chain_kind == "ee_pair" else 0,
     )
     if not query_indices:
         raise ValueError("No valid query frames were found")
@@ -279,7 +292,14 @@ def main() -> None:
     dataset = LeRobotDataset(
         repo_id,
         root=dataset_root,
-        delta_timestamps=resolve_delta_timestamps(policy_config, metadata),
+        delta_timestamps=(
+            resolve_delta_timestamps(policy_config, metadata)
+            if chain_kind == "ee_pair"
+            # 旧链 checkpoint 在新代码下加载时,配置类的取数窗属性已是 ee 窗口径,
+            # 与 checkpoint 里保存的旧三步处理器不匹配;旧链的窗口按旧约定显式给
+            #(只取 action 窗 [-1..chunk-1],其余特征单帧)。单位是秒。
+            else {"action": [-1 / metadata.fps] + [i / metadata.fps for i in range(chunk_len)]}
+        ),
         return_uint8=True,
     )
     logger.info(
@@ -304,7 +324,10 @@ def main() -> None:
             batch[CAMERA_KEY] = batch[CAMERA_KEY].to(torch.float32) / 255.0
         if not batch.get("task"):
             batch["task"] = [args.task]
-        padding = batch.get("action_is_pad")
+        if chain_kind == "ee_pair":
+            padding = batch.get(f"{EE_KEY}_is_pad")
+        else:
+            padding = batch.get("action_is_pad")
         if padding is not None and bool(padding.any()):
             raise RuntimeError(
                 f"Internal sampling error: episode {episode_index} frame {frame_index} is padded"
@@ -318,12 +341,22 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.manual_seed_all(args.seed + sample_index)
 
-        ground_truth = batch[ACTION][0, 1:].to(torch.float32)
+        if chain_kind == "ee_pair":
+            # ee 窗 = [-1..chunk]: 第 2 位起就是 ee[t+1..t+chunk] 的绝对真值
+            # (与旧链 action 窗切片出的真值逐位相同,action[k]=ee[k+1])。
+            ground_truth = batch[EE_KEY][0, 2:].to(torch.float32)
+        else:
+            ground_truth = batch[ACTION][0, 1:].to(torch.float32)
         with torch.no_grad():
             processed = preprocessor(batch)
             processed.pop(ACTION, None)
             predicted_model = policy.predict_action_chunk(processed)
             predicted = postprocessor(predicted_model).squeeze(0).to(torch.float32).cpu()
+            if chain_kind == "ee_pair":
+                # 新链后处理器只做 unnormalize,输出相对 10D chunk;
+                # 以 ee[t](观测帧自身位姿)为基准还原成绝对 7D 再比对。
+                base = batch[EE_KEY][0, 1].to(torch.float32)
+                predicted = to_umi_absolute_actions(predicted, base)
 
         steps = min(len(predicted), len(ground_truth))
         predicted = predicted[:steps]
@@ -367,6 +400,7 @@ def main() -> None:
 
     report = {
         "policy_type": policy_config.type,
+        "umi_chain": chain_kind,
         "checkpoint": model_path,
         "dataset_root": str(dataset_root),
         "dataset_total_episodes": metadata.total_episodes,

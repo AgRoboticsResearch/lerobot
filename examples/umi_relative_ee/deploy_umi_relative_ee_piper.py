@@ -56,7 +56,7 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor import RobotProcessorPipeline, to_umi_absolute_actions, umi_chain_kind
 from lerobot.processor.converters import (
     robot_action_observation_to_transition,
     transition_to_robot_action,
@@ -564,7 +564,14 @@ def resolve_camera_matrix(args, camera_matrix):
 
 
 def load_policy_and_processors(model_path: str, device: torch.device):
-    """Load any supported policy and its checkpointed relative-EE processors."""
+    """Load any supported policy and its checkpointed relative-EE processors.
+
+    Also classifies the checkpoint's UMI convention: "ee_pair" checkpoints
+    (new chain) want a two-frame observation.ee pair per tick and restore
+    absolute actions in this loop; "action_derived" checkpoints (legacy chain)
+    want a single live pose as observation.state and rely on the postprocessor's
+    cache to restore absolute actions.
+    """
     policy_config = PreTrainedConfig.from_pretrained(model_path)
     policy_class = get_policy_class(policy_config.type)
     policy = policy_class.from_pretrained(model_path, local_files_only=True)
@@ -575,7 +582,7 @@ def load_policy_and_processors(model_path: str, device: torch.device):
         pretrained_path=model_path,
         preprocessor_overrides={"device_processor": {"device": str(device)}},
     )
-    return policy, preprocessor, postprocessor
+    return policy, preprocessor, postprocessor, umi_chain_kind(model_path)
 
 
 def add_policy_task(batch: dict, policy, task: str | None) -> None:
@@ -650,7 +657,10 @@ def run_dry_run(args):
 
     # Load policy + processors
     logger.info(f"Loading policy from: {args.pretrained_path}")
-    policy, preprocessor, postprocessor = load_policy_and_processors(args.pretrained_path, device)
+    policy, preprocessor, postprocessor, chain_kind = load_policy_and_processors(
+        args.pretrained_path, device
+    )
+    logger.info("UMI chain kind: %s", chain_kind)
     logger.info("Policy and processors loaded")
 
     action_stats = extract_action_stats(preprocessor)
@@ -701,6 +711,8 @@ def run_dry_run(args):
         args.initial_state if args.initial_state else [0, 0, 0, 0, 0, 0, 0.5],
         dtype=np.float32,
     )
+    # ee 链路(ee_pair)用: 上一拍的合成 state,构造 (t-1, t) 观测对。
+    prev_state: np.ndarray | None = None
 
     policy.reset()
     preprocessor.reset()
@@ -713,8 +725,14 @@ def run_dry_run(args):
         while args.num_steps == 0 or step_count < args.num_steps:
             t0 = time.perf_counter()
 
-            state_tensor = torch.from_numpy(current_state).unsqueeze(0).to(device)
-            batch = {OBS_STATE: state_tensor}
+            if chain_kind == "ee_pair":
+                pair = current_state if prev_state is None else prev_state
+                ee_pair = np.stack([pair, current_state]).astype(np.float32)
+                batch = {"observation.ee": torch.from_numpy(ee_pair).unsqueeze(0).to(device)}
+                prev_state = current_state.copy()
+            else:
+                state_tensor = torch.from_numpy(current_state).unsqueeze(0).to(device)
+                batch = {OBS_STATE: state_tensor}
             add_policy_task(batch, policy, args.task)
 
             for cam_name, camera in cameras.items():
@@ -736,6 +754,7 @@ def run_dry_run(args):
             # Chain state if requested
             if args.update_state:
                 from scipy.spatial.transform import Rotation
+                prev_state = current_state.copy()
                 T_ref = np.eye(4)
                 T_ref[:3, :3] = Rotation.from_rotvec(current_state[3:6]).as_matrix()
                 T_ref[:3, 3] = current_state[:3]
@@ -807,7 +826,7 @@ def main():
     logger.info(f"Loading policy from: {model_path}")
 
     with _timed_phase("load policy + processors"):
-        policy, preprocessor, postprocessor = load_policy_and_processors(model_path, device)
+        policy, preprocessor, postprocessor, chain_kind = load_policy_and_processors(model_path, device)
     logger.info("Policy and processors loaded")
 
     # Visualization setup (shared by both modes)
@@ -939,6 +958,9 @@ def main():
     chunk_ref_ee = None       # 7D EE pose that anchored the current chunk (T_anchor)
     chunk_rel = None          # raw per-step relative model output [T, D] for the current chunk
     chunk_idx = 0             # position within the current chunk (advances per pop)
+    # ee 链路(ee_pair)用: 上一控制拍的 EE 位姿,构造 (t-1, t) 观测对;
+    # 首拍 None → 用当前位姿自配对(零速,与训练头样本约定一致)。
+    prev_ee: np.ndarray | None = None
 
     logger.info(f"Starting control loop at {args.fps} Hz")
     print(_KEYMAP_HELP)
@@ -1058,8 +1080,16 @@ def main():
                 ee_aa = ee_pose_aa_from_fk(kinematics, current_joints, gripper_norm)
                 diag["current_ee"] = ee_aa
                 diag["current_joints_rad"] = current_joints
-                state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
-                batch = {OBS_STATE: state_tensor}
+                if chain_kind == "ee_pair":
+                    # 新链: 喂 (t-1, t) 两帧 ee 对;首拍自配对 = 零速。
+                    # 注意自己带批维 [1,2,7](AddBatch 只处理 1D state/3D 图像)。
+                    pair = ee_aa if prev_ee is None else prev_ee
+                    ee_pair = np.stack([pair, ee_aa]).astype(np.float32)
+                    batch = {"observation.ee": torch.from_numpy(ee_pair).unsqueeze(0).to(device)}
+                    prev_ee = ee_aa.copy()
+                else:
+                    state_tensor = torch.from_numpy(ee_aa).unsqueeze(0).to(device)
+                    batch = {OBS_STATE: state_tensor}
                 add_policy_task(batch, policy, args.task)
 
                 # ── 8c. Read cameras into batch (viz deferred until 8e) ──
@@ -1093,6 +1123,14 @@ def main():
 
                     if isinstance(pred, dict) and "action" in pred:
                         pred = pred["action"]
+
+                    if chain_kind == "ee_pair":
+                        # 新链 post 只做 unnormalize,输出相对 10D chunk;
+                        # 以当前实测 ee 为基准还原绝对 7D(取代旧链的后处理缓存)。
+                        pred = to_umi_absolute_actions(
+                            pred.to(torch.float32),
+                            torch.from_numpy(ee_aa).unsqueeze(0).to(pred.device),
+                        )
 
                     actions_aa = pred[0].cpu().numpy()
                     if step_count < 5:

@@ -8,8 +8,10 @@ an action chunk is expressed from the same chunk-start pose.
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -422,6 +424,22 @@ class UmiAbsoluteActionsStep(ProcessorStep):
 
 
 EE_KEY = "observation.ee"
+
+
+def umi_chain_kind(model_path: str | Path) -> str:
+    """Classify a checkpoint's UMI convention from its saved preprocessor.
+
+    Returns "ee_pair" for the ee-based chain (20D state and chunk both from the
+    observation.ee window, past-anchored on ee[t]) or "action_derived" for the
+    legacy chain (state derived from the action column, future-anchored, with
+    the deployment cache in UmiRelativeActionsStep/UmiAbsoluteActionsStep).
+    Deployment/eval code branches on this to decide what to feed and whether
+    the postprocessor already restored absolute actions.
+    """
+    preprocessor_path = Path(model_path) / "policy_preprocessor.json"
+    steps = json.loads(preprocessor_path.read_text())["steps"]
+    names = {step.get("registry_name") for step in steps}
+    return "ee_pair" if "umi_ee_state" in names else "action_derived"
 
 
 @ProcessorStepRegistry.register("umi_ee_state")

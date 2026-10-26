@@ -108,6 +108,7 @@ from .umi_relative_ee_processor import (
     to_umi_absolute_actions,
     to_umi_relative_actions,
     to_umi_relative_state,
+    umi_chain_kind,
 )
 
 # RenderMessagesStep is intentionally NOT re-exported here: it pulls in
@@ -188,6 +189,7 @@ __all__ = [
     "to_umi_relative_actions",
     "to_umi_relative_state",
     "to_relative_actions",
+    "umi_chain_kind",
     "UnnormalizerProcessorStep",
     "EE_KEY",
     "UmiAbsoluteActionsStep",
