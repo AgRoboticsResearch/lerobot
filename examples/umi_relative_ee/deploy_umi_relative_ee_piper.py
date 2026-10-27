@@ -38,6 +38,8 @@ import subprocess
 import sys
 import threading
 import time
+import queue as py_queue
+import threading
 from contextlib import contextmanager
 from enum import Enum, auto
 
@@ -563,6 +565,84 @@ def resolve_camera_matrix(args, camera_matrix):
     return camera_matrix
 
 
+def blend_chunk_handoff(old_queue, new_actions, steps_skipped, blend_window):
+    """块接缝的线性斜坡融合(纯函数,便于离线单测)。
+
+    old_queue    : 旧块尚未执行的路标 [R, 7](下一个就执行第 0 个)
+    new_actions  : 新块绝对路标 [T, 7],第 0 帧是"派发拍之后的第一条命令"
+    steps_skipped: 派发→到达之间控制线程已经走过的拍数 k(新块前 k 帧已过期,丢弃)
+    blend_window : 固定融合窗口 W——旧队列前 W 步与新块对应帧线性混合,之后全用新块
+
+    返回接替旧队列的新命令流。权重: 第 i 步旧块权重 = (overlap−i)/(overlap+1),
+    即窗口起点几乎全旧、终点几乎全新,线性斜坡过渡。约束(用户定义):
+    派发时剩余步数 R 应 ≥ 推理走过的拍数 k + W,否则窗口自动缩短(降级不报错)。
+    """
+    overlap = min(len(old_queue), blend_window, max(0, len(new_actions) - steps_skipped))
+    blended = []
+    for i in range(overlap):
+        w_old = (overlap - i) / (overlap + 1)
+        blended.append(
+            w_old * np.asarray(old_queue[i], dtype=float)
+            + (1.0 - w_old) * np.asarray(new_actions[steps_skipped + i], dtype=float)
+        )
+    blended.extend(new_actions[steps_skipped + overlap:])
+    return blended
+
+
+class ChunkPrefetcher:
+    """s 连续模式的异步预取推理器。
+
+    控制线程在队列剩余 ≤ fire_threshold 时把观测快照丢给后台线程,自己继续
+    走心跳;结果用 generation 计数做时效校验——任何暂停/清队事件都会使在途
+    结果作废(与"恢复执行以实测位姿重新锚定"的安全原则一致)。
+    """
+
+    def __init__(self, worker_fn):
+        self._req_q: py_queue.Queue = py_queue.Queue(maxsize=1)
+        self._out_q: py_queue.Queue = py_queue.Queue()
+        self._stop = threading.Event()
+        self._generation = 0
+        self._thread = threading.Thread(
+            target=worker_fn, args=(self._stop, self._req_q, self._out_q), daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    def dispatch(self, batch, dispatch_tick: int, ee_anchor) -> int | None:
+        """提交一份观测快照;已有请求在途时返回 None(不重复派发)。"""
+        if self._req_q.empty():
+            self._generation += 1
+            self._req_q.put((self._generation, dispatch_tick, batch, ee_anchor))
+            return self._generation
+        return None
+
+    def poll(self):
+        """非阻塞收取一份完成结果 (gen, dispatch_tick, actions, infer_ms) 或 None。"""
+        try:
+            return self._out_q.get_nowait()
+        except py_queue.Empty:
+            return None
+
+    def invalidate(self) -> None:
+        """使在途/已到结果全部作废(暂停、清队、模式切换时调用)。"""
+        self._generation += 1
+        while True:
+            try:
+                self._out_q.get_nowait()
+            except py_queue.Empty:
+                break
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._req_q.put_nowait(None)
+        except py_queue.Full:
+            pass
+
+
 def load_policy_and_processors(model_path: str, device: torch.device):
     """Load any supported policy and its checkpointed relative-EE processors.
 
@@ -623,6 +703,19 @@ def parse_args():
     parser.add_argument("--urdf_path", type=str, default=DEFAULT_URDF_PATH)
     parser.add_argument("--deploy_frame", type=str, default=DEFAULT_DEPLOY_FRAME)
     parser.add_argument("--n_action_steps", type=int, default=30)
+    parser.add_argument(
+        "--prefetch_threshold", type=int, default=10,
+        help="s 连续模式(仅 ee_pair 链): 队列剩余步数 ≤ 该值时向推理线程派发预取。"
+             "需 ≥ 推理时延拍数 + 融合窗口,否则融合窗口自动缩短。",
+    )
+    parser.add_argument(
+        "--blend_window", type=int, default=6,
+        help="新块到达后,与旧队列重叠融合的固定步数(线性斜坡,旧→新),之后全用新动作。",
+    )
+    parser.add_argument(
+        "--sync_infer", action="store_true",
+        help="禁用异步预取,推理回到队列空时的同步路径(旧行为)。",
+    )
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--warm_start", action="store_true")
     parser.add_argument("--device", type=str, default="cuda")
@@ -829,6 +922,43 @@ def main():
         policy, preprocessor, postprocessor, chain_kind = load_policy_and_processors(model_path, device)
     logger.info("Policy and processors loaded")
 
+    # s 连续模式的异步预取(仅新链 ee_pair;旧链缓存语义依赖每拍同步调用,保持原路径)。
+    prefetcher = None
+    if chain_kind == "ee_pair" and not args.sync_infer:
+        def _infer_worker(stop_event, req_q, out_q):
+            while True:
+                req = req_q.get()
+                if req is None:
+                    return
+                gen, dispatch_tick, batch, ee_anchor = req
+                t0 = time.perf_counter()
+                try:
+                    with torch.no_grad():
+                        processed = preprocessor(batch)
+                        pred_norm = policy.predict_action_chunk(processed)
+                        pred = postprocessor(pred_norm)
+                    if isinstance(pred, dict) and "action" in pred:
+                        pred = pred["action"]
+                    # 新链: 以派发拍的实测 ee 为基准还原绝对 7D(与同步路径同一约定)。
+                    pred = to_umi_absolute_actions(
+                        pred.to(torch.float32),
+                        torch.from_numpy(ee_anchor).unsqueeze(0).to(pred.device),
+                    )
+                    out_q.put((gen, dispatch_tick, pred[0].cpu().numpy(),
+                               pred_norm[0].detach().cpu().numpy(),
+                               (time.perf_counter() - t0) * 1000.0))
+                except Exception as e:  # 推理失败: 交还控制线程走旧块/原地保持
+                    logger.warning(f"async inference failed: {e}")
+                    out_q.put((gen, dispatch_tick, None, None,
+                               (time.perf_counter() - t0) * 1000.0))
+
+        prefetcher = ChunkPrefetcher(_infer_worker)
+        logger.info(
+            "Async prefetch inference engaged (fire at ≤%d remaining, blend window %d)",
+            args.prefetch_threshold, args.blend_window,
+        )
+
+
     # Visualization setup (shared by both modes)
     with _timed_phase("extract action stats"):
         action_stats = extract_action_stats(preprocessor) if not args.no_vis else None
@@ -998,6 +1128,7 @@ def main():
         with KeyboardCommandHandler() as kb:
             state = LoopState.PAUSED
             single_chunk = False
+            dispatch_anchor = None  # 异步预取: 派发拍锚定的实测 ee(结果还原与叠层用)
             logger.info("Loop state: PAUSED (press s to engage control)")
 
             while args.num_steps == 0 or step_count < args.num_steps:
@@ -1018,6 +1149,8 @@ def main():
                 while key is not None:
                     if key == "esc":
                         state = LoopState.SHUTDOWN
+                        if prefetcher is not None:
+                            prefetcher.stop()
                         logger.info("ESC — graceful shutdown")
                         break
                     elif key == "q":
@@ -1031,6 +1164,8 @@ def main():
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
+                        if prefetcher is not None:
+                            prefetcher.invalidate()
                         state = LoopState.PAUSED
                         kb.drain()
                     elif key == "r":
@@ -1044,19 +1179,27 @@ def main():
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
+                        if prefetcher is not None:
+                            prefetcher.invalidate()
                         state = LoopState.PAUSED
                         kb.drain()
                     elif key == "s" and state == LoopState.PAUSED:
                         action_queue.clear()
                         chunk_traj_3d = None
+                        if prefetcher is not None:
+                            prefetcher.invalidate()
                         state = LoopState.INFERENCE
                         logger.info("s — control engaged (arm follows policy)")
                     elif key == "space" and state == LoopState.INFERENCE:
+                        if prefetcher is not None:
+                            prefetcher.invalidate()
                         state = LoopState.PAUSED
                         logger.info("space — control paused (arm holds pose, inference still runs)")
                     elif key == "dot" and state == LoopState.PAUSED:
                         action_queue.clear()
                         single_chunk = True
+                        if prefetcher is not None:
+                            prefetcher.invalidate()
                         state = LoopState.INFERENCE
                         logger.info(". — execute one chunk then re-pause")
                     elif key == "h":
@@ -1101,54 +1244,116 @@ def main():
                         torch.from_numpy(img_chw).unsqueeze(0).to(device)
                     )
 
-                # Update the two-frame relative state every control tick. Generate
-                # and convert a complete chunk only when the absolute-action queue
-                # is empty, so every action retains the same chunk-start base pose.
-                with torch.no_grad():
-                    processed = preprocessor(batch)
-
-                if len(action_queue) == 0:
+                # ── 推理调度 ──
+                # 异步模式(ee_pair 链 + 未 --sync_infer): 所有推理走后台线程。
+                #   s 连续: 队列剩余 ≤ --prefetch_threshold 时预取,结果按
+                #           --blend_window 步线性斜坡融合(旧→新),之后纯新块;
+                #   悬停:   队列空时照常经线程推理,维持叠层低频刷新。
+                # 同步模式(旧链 / single_chunk `.` / --sync_infer): 原路径,
+                # 队列空时现场推理(每拍 retain 同帧相对状态的原语义不变)。
+                use_async = prefetcher is not None and not single_chunk
+                viz_pred_rel = None
+                if use_async:
+                    result = prefetcher.poll()
+                    if result is not None:
+                        gen, dispatch_tick, actions_aa, chunk_rel, infer_ms = result
+                        if gen == prefetcher.generation and actions_aa is not None:
+                            skipped = max(tick - dispatch_tick, 0)
+                            old_len = len(action_queue)
+                            overlap = min(
+                                old_len, args.blend_window,
+                                max(0, len(actions_aa) - skipped),
+                                max(0, args.n_action_steps - skipped),
+                            )
+                            if old_len:
+                                blended = []
+                                for i in range(overlap):
+                                    w_old = (overlap - i) / (overlap + 1)
+                                    old_t = np.asarray(action_queue[i], dtype=float)
+                                    new_t = np.asarray(actions_aa[skipped + i], dtype=float)
+                                    blended.append(w_old * old_t + (1.0 - w_old) * new_t)
+                                    if ctrl_log is not None:
+                                        ctrl_log.log_merge(
+                                            step=step_count, tick=tick,
+                                            timestep=tick + 1 + i, chunk_id=chunk_id + 1,
+                                            weight=1.0 - w_old,
+                                            existing_abs=old_t, incoming_abs=new_t,
+                                            aggregated_abs=blended[-1], ref_ee=ee_aa,
+                                        )
+                                action_queue = blended + list(
+                                    actions_aa[skipped + overlap:args.n_action_steps]
+                                )
+                            else:
+                                action_queue = list(
+                                    actions_aa[skipped:args.n_action_steps]
+                                )
+                            chunk_id += 1
+                            chunk_ref_ee = (
+                                dispatch_anchor.copy() if dispatch_anchor is not None else ee_aa.copy()
+                            )
+                            chunk_rel = np.asarray(chunk_rel) if chunk_rel is not None else None
+                            chunk_idx = 0
+                            logger.info(
+                                "async chunk %d: infer %.0f ms, skipped %d, blended %d, queued %d",
+                                chunk_id, infer_ms, skipped, overlap, len(action_queue),
+                            )
+                            if (not args.no_vis and camera_matrix is not None
+                                    and action_stats is not None and chunk_rel is not None):
+                                viz_pred_rel = unnormalize_actions(
+                                    torch.tensor(chunk_rel), action_stats
+                                ).cpu().numpy()
+                                if viz_pred_rel.ndim == 3:
+                                    viz_pred_rel = viz_pred_rel[0]
+                    # 预取触发: 连续执行中(s 态)队列剩余 ≤ 阈值,或悬停中队列已空。
+                    if (not single_chunk
+                            and len(action_queue) <= args.prefetch_threshold):
+                        if prefetcher.dispatch(batch, tick, ee_aa.copy()) is not None:
+                            dispatch_anchor = ee_aa.copy()
+                else:
                     with torch.no_grad():
-                        pred_norm = policy.predict_action_chunk(processed)
+                        processed = preprocessor(batch)
 
-                        viz_pred_rel = None
-                        if not args.no_vis and camera_matrix is not None and action_stats is not None:
-                            viz_pred_rel = unnormalize_actions(
-                                pred_norm.clone(), action_stats
-                            ).cpu().numpy()
-                            if viz_pred_rel.ndim == 3:
-                                viz_pred_rel = viz_pred_rel[0]
+                    if len(action_queue) == 0:
+                        with torch.no_grad():
+                            pred_norm = policy.predict_action_chunk(processed)
 
-                        pred = postprocessor(pred_norm)
+                            if not args.no_vis and camera_matrix is not None and action_stats is not None:
+                                viz_pred_rel = unnormalize_actions(
+                                    pred_norm.clone(), action_stats
+                                ).cpu().numpy()
+                                if viz_pred_rel.ndim == 3:
+                                    viz_pred_rel = viz_pred_rel[0]
 
-                    if isinstance(pred, dict) and "action" in pred:
-                        pred = pred["action"]
+                            pred = postprocessor(pred_norm)
 
-                    if chain_kind == "ee_pair":
-                        # 新链 post 只做 unnormalize,输出相对 10D chunk;
-                        # 以当前实测 ee 为基准还原绝对 7D(取代旧链的后处理缓存)。
-                        pred = to_umi_absolute_actions(
-                            pred.to(torch.float32),
-                            torch.from_numpy(ee_aa).unsqueeze(0).to(pred.device),
-                        )
+                        if isinstance(pred, dict) and "action" in pred:
+                            pred = pred["action"]
 
-                    actions_aa = pred[0].cpu().numpy()
-                    if step_count < 5:
-                        logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
-                        logger.info(f"  First action_aa: {actions_aa[0]}")
-                        logger.info(f"  Last action_aa:  {actions_aa[-1]}")
-                    action_queue = [
-                        actions_aa[i]
-                        for i in range(min(args.n_action_steps, len(actions_aa)))
-                    ]
-                    # UMI chunk provenance for the --log: this chunk is anchored at the
-                    # current EE pose (ee_aa), and chunk_rel is its raw relative model
-                    # output [T, D] (pred_norm, before the postprocessor made it absolute).
-                    chunk_id += 1
-                    chunk_ref_ee = ee_aa.copy()
-                    chunk_rel = pred_norm[0].detach().cpu().numpy()
-                    chunk_idx = 0
-                    logger.info(f"Predicted chunk of {len(action_queue)} actions")
+                        if chain_kind == "ee_pair":
+                            # 新链 post 只做 unnormalize,输出相对 10D chunk;
+                            # 以当前实测 ee 为基准还原绝对 7D(取代旧链的后处理缓存)。
+                            pred = to_umi_absolute_actions(
+                                pred.to(torch.float32),
+                                torch.from_numpy(ee_aa).unsqueeze(0).to(pred.device),
+                            )
+
+                        actions_aa = pred[0].cpu().numpy()
+                        if step_count < 5:
+                            logger.info(f"  Postprocessor output shape: {pred.shape}, dtype: {pred.dtype}")
+                            logger.info(f"  First action_aa: {actions_aa[0]}")
+                            logger.info(f"  Last action_aa:  {actions_aa[-1]}")
+                        action_queue = [
+                            actions_aa[i]
+                            for i in range(min(args.n_action_steps, len(actions_aa)))
+                        ]
+                        # UMI chunk provenance for the --log: this chunk is anchored at the
+                        # current EE pose (ee_aa), and chunk_rel is its raw relative model
+                        # output [T, D] (pred_norm, before the postprocessor made it absolute).
+                        chunk_id += 1
+                        chunk_ref_ee = ee_aa.copy()
+                        chunk_rel = pred_norm[0].detach().cpu().numpy()
+                        chunk_idx = 0
+                        logger.info(f"Predicted chunk of {len(action_queue)} actions")
 
                     chunk_traj_3d = None
                     if viz_pred_rel is not None:
@@ -1159,8 +1364,15 @@ def main():
 
                 # Pop one action (queue advances in both states so overlay cadence
                 # matches inference cadence — typically one new chunk per n_action_steps).
-                action_aa = action_queue.pop(0)
-                diag["popped"] = True
+                # 异步模式下队列可能在等预取结果时暂时为空: 该拍不执行、不写电机,
+                # 手臂保持当前目标(与 PAUSED 同样的保持语义),等块到了继续。
+                if use_async and len(action_queue) == 0:
+                    action_aa = None
+                    diag["popped"] = False
+                    diag["skip_reason"] = "await_chunk"
+                else:
+                    action_aa = action_queue.pop(0)
+                    diag["popped"] = True
                 diag["action_ee"] = action_aa
                 # Per-tick chunk provenance: anchor + raw relative + the absolute target
                 # (SYNC replays one chunk verbatim, so pre-ensemble == executed).
@@ -1168,9 +1380,10 @@ def main():
                 diag["chunk_ref_ee"] = chunk_ref_ee
                 diag["action_abs"] = action_aa
                 diag["action_agg"] = action_aa
-                if chunk_rel is not None and chunk_idx < len(chunk_rel):
-                    diag["action_rel"] = chunk_rel[chunk_idx]
-                chunk_idx += 1
+                if action_aa is not None:
+                    if chunk_rel is not None and chunk_idx < len(chunk_rel):
+                        diag["action_rel"] = chunk_rel[chunk_idx]
+                    chunk_idx += 1
                 # In single-chunk mode: detect when we just popped the last action
                 # of the chunk so we can return to PAUSED after this tick's write.
                 last_of_chunk = single_chunk and len(action_queue) == 0
@@ -1189,7 +1402,8 @@ def main():
                     cv2.waitKey(1)
 
                 # ── 8f. PAUSED: arm holds pose, loop continues ───────────
-                if state == LoopState.PAUSED:
+                # 异步等块(await_chunk)同样保持: 不写电机,拍照走,块到即续。
+                if state == LoopState.PAUSED or action_aa is None:
                     elapsed = time.perf_counter() - t0
                     diag["work_ms"] = elapsed * 1000.0
                     if elapsed < 1.0 / args.fps:
