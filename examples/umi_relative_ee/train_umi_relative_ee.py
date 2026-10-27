@@ -1,19 +1,23 @@
 #!/usr/bin/env python
 """Train ACT, SmolVLA, or π0.5 on raw absolute-7D UMI relative-EE data.
 
-The standard dataset factory performs the shared 7D -> 10D action and derived
-20D state setup whenever ``--policy.use_umi_relative_ee=true``. This entrypoint
-is intentionally a thin alias around the normal LeRobot trainer.
+The example adapter loads Reach AnyPoint planning labels when present. Ordinary
+UMI datasets use the standard dataset factory and its 7D -> 10D action / 20D
+state setup whenever ``--policy.use_umi_relative_ee=true``.
 """
 
-import lerobot.scripts.lerobot_train as train_module
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
+
+if __package__:
+    from .reach_anypoint_dataset import train_with_reach_anypoint
+else:
+    from reach_anypoint_dataset import train_with_reach_anypoint
 
 
 @parser.wrap()
 def train_umi_relative_ee(cfg: TrainPipelineConfig) -> None:
-    train_module.train(cfg)
+    train_with_reach_anypoint(cfg)
 
 
 if __name__ == "__main__":

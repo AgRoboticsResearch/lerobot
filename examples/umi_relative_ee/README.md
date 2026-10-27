@@ -354,3 +354,11 @@ predicted chunk is postprocessed with one chunk-start base in both cases (sync:
 one local `postprocessor(chunk)` call; async: the UMI server override
 postprocesses the whole chunk in a single call, deliberately **not** the stock
 per-action loop, which would re-base each target on a refreshed pose).
+
+## Reach AnyPoint generated datasets
+
+The training entrypoints in this example automatically read independent planning chunks
+when `dataset.root` contains `annotations/reach_anypoint/manifest.json`, using the
+local [dataset adapter](reach_anypoint_dataset.py). The standard `lerobot-train`
+command does not load these annotations. See
+[the dataset contract and training command](doc/reach_anypoint_dataset.md).
