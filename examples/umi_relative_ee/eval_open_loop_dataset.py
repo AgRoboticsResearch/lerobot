@@ -64,6 +64,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1000)
     parser.add_argument("--num_steps", type=int, default=None)
     parser.add_argument(
+        "--n_action_steps", type=int, default=None,
+        help="Override the checkpoint's n_action_steps — the evaluation span "
+             "(how many steps of each predicted chunk are scored).")
+    parser.add_argument(
         "--legacy_full_action_noise",
         action="store_true",
         help="Deprecated for SmolVLA/π0.5; disables padded masking only for legacy π0 evaluation.",
@@ -266,6 +270,12 @@ def main() -> None:
         setattr(policy_config, step_field, args.num_steps)
         core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
         setattr(core_policy.config, step_field, args.num_steps)
+    if args.n_action_steps is not None:
+        # 覆盖评估跨度(checkpoint 里存的是训练时的默认值): predict 只切前 N 步,
+        # 真值窗按 min(N, 窗长) 对齐——新旧模型同跨度对比用。
+        policy_config.n_action_steps = args.n_action_steps
+        core_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
+        core_policy.config.n_action_steps = args.n_action_steps
 
     metadata = LeRobotDatasetMetadata(repo_id, root=dataset_root)
     episode_indices = (
