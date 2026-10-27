@@ -605,7 +605,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log", nargs="?", default=None, const="",
         help="Log every control tick for offline analysis. Off by default. "
-             "Bare '--log' writes to logs/async_<timestamp>.csv (+ .npz/.json); "
+             "Bare '--log' writes to logs/async_<timestamp>.csv (+ .json meta); "
              "'--log PATH' uses PATH as the stem (the .csv/.npz/.json suffixes are "
              "added automatically).",
     )

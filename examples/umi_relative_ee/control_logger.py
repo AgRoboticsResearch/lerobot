@@ -3,8 +3,16 @@
 Both the sync deploy (``deploy_umi_relative_ee_piper.py``) and the async client
 (``async_umi_relative_ee_piper_client.py``) import :class:`ControlLogger` /
 :func:`make_control_logger` from here so their ``--log`` output shares ONE
-schema (same CSV columns, same NPZ arrays, same JSON meta keys) and runs from
-either script can be diffed directly.
+schema (same CSV columns, same JSON meta keys) and runs from either script can
+be diffed directly.
+
+Design note (2026-10-27): the logger appends one CSV row per tick and flushes
+to the OS — O(1) per tick, crash-safe against SIGKILL. It never rewrites files
+mid-run: the previous design buffered all rows in memory and rebuilt the full
+csv+npz+json every 150 ticks on the control thread, which stalled the loop for
+seconds (growing with session length) — see the 2026-10-20 deploy-log
+forensics. The npz sibling was dropped entirely: it held the same numbers as
+the CSV and had no consumer (regenerate from CSV on demand via pandas).
 """
 
 from __future__ import annotations
@@ -18,7 +26,14 @@ from pathlib import Path
 
 import numpy as np
 
+from lerobot.datasets.compute_stats import RunningQuantileStats
+
 logger = logging.getLogger(__name__)
+
+# Scalars that get a streaming distribution summary in the JSON at close.
+_STAT_FIELDS: tuple[str, ...] = (
+    "tick_dt_ms", "work_ms", "e2e_ms", "ee_delta_m", "joint_delta_max_rad",
+)
 
 
 class ControlLogger:
@@ -31,10 +46,11 @@ class ControlLogger:
     ("real joint commands"), read-back joints, IK skip events, and inference
     latency snapshots.
 
-    On close() it writes three siblings:
-      <stem>.csv   one row per tick (scalars + ';'-joined vectors) — pandas/Excel
-      <stem>.npz   clean numeric arrays — numpy / matplotlib
-      <stem>.json  run metadata + summary stats (mean dt, #IK skips, #underruns)
+    Files:
+      <stem>.csv   one row per tick (scalars + ';'-joined vectors) — appended and
+                   flushed every tick (O(1); durable against SIGKILL)
+      <stem>.json  run metadata — written once at start; the summary block
+                   (tick counts + per-field distributions) is added at close
 
     Per-tick UMI relative-EE chunk-provenance fields (added so the temporal
     ensemble can be audited offline — see log_merge for the per-timestep blend):
@@ -44,7 +60,7 @@ class ControlLogger:
       action_agg      7D aggregated absolute target actually executed (post weighted_average)
       action_rel      raw relative action ΔT (model output; SYNC: in-process, ASYNC: server-reported)
 
-    And, for async runs only, a fourth sibling records each ensemble blend:
+    And, for async runs only, a third sibling records each ensemble blend:
       <stem>_merge.csv  one row per (chunk × overlapping timestep): the existing
                         absolute target, the incoming chunk's absolute target +
                         anchor, the weight, and the resulting aggregated target —
@@ -68,29 +84,72 @@ class ControlLogger:
     )
 
     def __init__(self, stem: str, *, fps: int, meta: dict, flush_every: int = 150) -> None:
+        # ``flush_every`` is accepted for call compatibility but IGNORED: the CSV
+        # is appended and flushed every tick, so there is no periodic rewrite to
+        # schedule (the old every-150-ticks full rewrite froze the control loop).
+        del flush_every
         self.stem = stem
         self.fps = fps
         self.meta = dict(meta)
         self.meta["fps_target"] = fps
-        self._rows: list[dict] = []
-        self._merge_rows: list[dict] = []
         self._loop_t0: float | None = None
-        # Rewrite the files every N ticks so a SIGKILL / OOM / timeout still leaves
-        # recent data on disk (within ~flush_every ticks), not just on graceful close.
-        self._flush_every = flush_every
+        self._fh: csv.DictWriter | None = None
+        self._fh_file = None
+        self._merge_writer: csv.DictWriter | None = None
+        self._merge_file = None
+        self._counts = {
+            "n_ticks": 0, "n_popped": 0, "n_ik_ok": 0,
+            "n_ik_skip": 0, "n_underrun": 0, "n_paused": 0,
+        }
+        self._stat_n = {name: 0 for name in _STAT_FIELDS}
+        self._stats = {
+            name: RunningQuantileStats(quantile_list=[0.50, 0.95, 0.99])
+            for name in _STAT_FIELDS
+        }
+        self._n_merge = 0
 
     def start(self) -> None:
         self._loop_t0 = time.perf_counter()
         self.meta["t_start_wall"] = datetime.datetime.now().isoformat(timespec="milliseconds")
-        logger.info("Control log enabled → %s.{csv,npz,json}", self.stem)
+        Path(self.stem).parent.mkdir(parents=True, exist_ok=True)
+        self._fh_file = open(f"{self.stem}.csv", "w", newline="")
+        self._fh = csv.DictWriter(
+            self._fh_file, fieldnames=list(self.SCALAR_FIELDS) + list(self.ARRAY_FIELDS),
+            extrasaction="ignore",
+        )
+        self._fh.writeheader()
+        # Metadata is static after startup — write it once, O(1).
+        self._write_meta(summary=None)
+        logger.info("Control log enabled → %s.csv (+ .json meta; summary on close)", self.stem)
 
     def log(self, **fields) -> None:
         if self._loop_t0 is None:
             return
         fields["t_s"] = time.perf_counter() - self._loop_t0
-        self._rows.append(fields)
-        if self._flush_every and len(self._rows) % self._flush_every == 0:
-            self._write()
+
+        counts = self._counts
+        counts["n_ticks"] += 1
+        popped = bool(fields.get("popped"))
+        ik_ok = bool(fields.get("ik_ok"))
+        state = fields.get("state")
+        counts["n_popped"] += popped
+        counts["n_ik_ok"] += ik_ok
+        if popped and not ik_ok and state == "INFERENCE":
+            counts["n_ik_skip"] += 1
+        if not popped and state == "INFERENCE":
+            counts["n_underrun"] += 1
+        if state == "PAUSED":
+            counts["n_paused"] += 1
+        for name in _STAT_FIELDS:
+            value = fields.get(name)
+            if value is not None:
+                self._stats[name].update(np.array([[float(value)]], dtype=float))
+                self._stat_n[name] += 1
+
+        if self._fh is None:  # log() before start(): keep going with a late start
+            self.start()
+        self._fh.writerow(self._csv_row(fields, self.SCALAR_FIELDS, self.ARRAY_FIELDS))
+        self._fh_file.flush()  # OS cache — survives SIGKILL, no fsync cost
 
     def log_merge(self, **fields) -> None:
         """Record one temporal-ensemble blend (async only).
@@ -105,141 +164,75 @@ class ControlLogger:
         """
         if self._loop_t0 is None:
             return
-        self._merge_rows.append(fields)
-
-    @staticmethod
-    def _vec_width(rows: list[dict], name: str) -> int:
-        for r in rows:
-            v = r.get(name)
-            if v is not None:
-                return int(np.asarray(v).ravel().shape[0])
-        return 0
-
-    def _stack_vec(self, name: str) -> np.ndarray:
-        width = self._vec_width(self._rows, name)
-        if width == 0:
-            return np.empty((0, 0))
-        return np.stack([
-            np.asarray(r.get(name), dtype=float).ravel()
-            if r.get(name) is not None else np.full(width, np.nan)
-            for r in self._rows
-        ])
-
-    @staticmethod
-    def _stat(x: np.ndarray) -> dict | None:
-        x = x[np.isfinite(x)]
-        if x.size == 0:
-            return None
-        return {
-            "mean": float(np.mean(x)), "std": float(np.std(x)),
-            "min": float(np.min(x)), "max": float(np.max(x)),
-            "p50": float(np.percentile(x, 50)),
-            "p95": float(np.percentile(x, 95)),
-            "p99": float(np.percentile(x, 99)),
-        }
-
-    def _write(self) -> bool:
-        """Rewrite all three sibling files from the buffered rows.
-
-        Called every ``flush_every`` ticks (crash durability) and finally from
-        :meth:`close`. Returns False if there is nothing to write yet.
-        """
-        rows = self._rows
-        if not rows:
-            return False
-        Path(self.stem).parent.mkdir(parents=True, exist_ok=True)
-
-        # --- CSV: scalars as-is, vectors as ';'-joined floats ---
-        fields = list(self.SCALAR_FIELDS) + list(self.ARRAY_FIELDS)
-        with open(f"{self.stem}.csv", "w", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
-            writer.writeheader()
-            for row in rows:
-                out = {}
-                for k in fields:
-                    v = row.get(k)
-                    if v is None:
-                        out[k] = ""
-                    elif isinstance(v, (np.ndarray, list, tuple)):
-                        out[k] = ";".join(f"{x:.6g}" for x in np.asarray(v).ravel())
-                    else:
-                        out[k] = v
-                writer.writerow(out)
-
-        # --- NPZ: clean numeric arrays (NaN where a tick had no action) ---
-        scalars: dict[str, np.ndarray] = {}
-        for name in ("step", "tick", "t_s", "tick_dt_ms", "work_ms", "queue",
-                     "action_timestep", "chunk_id", "ee_delta_m", "joint_delta_max_rad",
-                     "gripper", "e2e_ms", "wire_ms", "server_ms"):
-            scalars[name] = np.array(
-                [float(r.get(name)) if r.get(name) is not None else np.nan for r in rows],
-                dtype=float,
+        if self._merge_writer is None:
+            self._merge_file = open(f"{self.stem}_merge.csv", "w", newline="")
+            self._merge_writer = csv.DictWriter(
+                self._merge_file, fieldnames=list(self.MERGE_FIELDS), extrasaction="ignore"
             )
-        for name in ("popped", "ik_ok"):
-            scalars[name] = np.array([1.0 if r.get(name) else 0.0 for r in rows], dtype=float)
-        arrays = {name: self._stack_vec(name) for name in self.ARRAY_FIELDS}
-        np.savez(f"{self.stem}.npz", **scalars, **arrays)
+            self._merge_writer.writeheader()
+        self._n_merge += 1
+        self._merge_writer.writerow(self._csv_row(fields, self.MERGE_FIELDS, ()))
+        self._merge_file.flush()
 
-        # --- JSON: metadata + summary ---
-        n_popped = int(scalars["popped"].sum())
-        n_ik_ok = int(scalars["ik_ok"].sum())
-        self.meta["t_end_wall"] = datetime.datetime.now().isoformat(timespec="milliseconds")
-        self.meta["summary"] = {
-            "n_ticks": len(rows),
-            "n_popped": n_popped,
-            "n_ik_ok": n_ik_ok,
-            # Real IK failures only: popped + failed + in INFERENCE. Exclude PAUSED
-            # ticks (sync pops-but-discards while paused, which is NOT an IK failure),
-            # so this stays comparable across the sync and async scripts.
-            "n_ik_skip": sum(1 for r in rows
-                             if r.get("popped") and not r.get("ik_ok")
-                             and r.get("state") == "INFERENCE"),
-            "n_underrun": sum(1 for r in rows
-                              if not r.get("popped") and r.get("state") == "INFERENCE"),
-            "n_paused": sum(1 for r in rows if r.get("state") == "PAUSED"),
-            "tick_dt_ms": self._stat(scalars["tick_dt_ms"]),
-            "work_ms": self._stat(scalars["work_ms"]),
-            "e2e_ms": self._stat(scalars["e2e_ms"]),
-            "ee_delta_m": self._stat(scalars["ee_delta_m"]),
-            "joint_delta_max_rad": self._stat(scalars["joint_delta_max_rad"]),
+    @staticmethod
+    def _csv_row(row: dict, scalar_fields, array_fields) -> dict:
+        out = {}
+        for k in list(scalar_fields) + list(array_fields):
+            v = row.get(k)
+            if v is None:
+                out[k] = ""
+            elif isinstance(v, (np.ndarray, list, tuple)):
+                out[k] = ";".join(f"{x:.6g}" for x in np.asarray(v).ravel())
+            else:
+                out[k] = v
+        return out
+
+    @staticmethod
+    def _stat(qs: RunningQuantileStats, count: int) -> dict | None:
+        if count == 0:
+            return None
+        if count < 2:  # get_statistics needs ≥2 samples; degrade to min/max only
+            array = qs._min
+            return {"mean": float(array[0]), "std": 0.0, "min": float(array[0]),
+                    "max": float(array[0]), "p50": float(array[0]),
+                    "p95": float(array[0]), "p99": float(array[0])}
+        s = qs.get_statistics()
+        return {
+            "mean": float(s["mean"]), "std": float(s["std"]),
+            "min": float(s["min"]), "max": float(s["max"]),
+            "p50": float(s["q50"]), "p95": float(s["q95"]), "p99": float(s["q99"]),
         }
+
+    def _write_meta(self, summary: dict | None) -> None:
+        if summary is not None:
+            self.meta["summary"] = summary
         Path(f"{self.stem}.json").write_text(json.dumps(self.meta, indent=2, default=str))
 
-        # --- <stem>_merge.csv: async temporal-ensemble blend audit (if any) ---
-        # Snapshot first: _merge_rows is appended by the async receiver thread while
-        # _write runs on the main thread (SYNC never populates it, so this is async-only).
-        merge_rows = list(self._merge_rows)
-        if merge_rows:
-            with open(f"{self.stem}_merge.csv", "w", newline="") as fh:
-                writer = csv.DictWriter(fh, fieldnames=list(self.MERGE_FIELDS), extrasaction="ignore")
-                writer.writeheader()
-                for row in merge_rows:
-                    out = {}
-                    for k in self.MERGE_FIELDS:
-                        v = row.get(k)
-                        if v is None:
-                            out[k] = ""
-                        elif isinstance(v, (np.ndarray, list, tuple)):
-                            out[k] = ";".join(f"{x:.6g}" for x in np.asarray(v).ravel())
-                        else:
-                            out[k] = v
-                    writer.writerow(out)
-        return True
-
     def flush(self) -> None:
-        """Silent periodic durability flush (rewrite all three files)."""
-        self._write()
+        """Durability flush — O(1): just push the CSV append buffer to the OS."""
+        if self._fh_file is not None:
+            self._fh_file.flush()
 
     def close(self) -> None:
-        if not self._write():
+        empty = self._counts["n_ticks"] == 0
+        self.meta["t_end_wall"] = datetime.datetime.now().isoformat(timespec="milliseconds")
+        summary = {
+            **self._counts,
+            **{name: self._stat(self._stats[name], self._stat_n[name]) for name in _STAT_FIELDS},
+        }
+        self._write_meta(summary=summary)
+        for handle in (self._fh_file, self._merge_file):
+            if handle is not None:
+                handle.close()
+        self._fh = self._merge_writer = None
+        if empty:
             logger.warning("Control log empty — nothing written")
             return
-        s = self.meta.get("summary", {})
-        merge_note = f", {len(self._merge_rows)} ensemble blends" if self._merge_rows else ""
+        merge_note = f", {self._n_merge} ensemble blends" if self._n_merge else ""
         logger.info(
-            "Control log saved: %s.{csv,npz,json} (%s ticks, %s/%s IK-ok, %s underruns%s)",
-            self.stem, s.get("n_ticks"), s.get("n_ik_ok"), s.get("n_popped"),
-            s.get("n_underrun"), merge_note,
+            "Control log saved: %s.csv (%s ticks, %s/%s IK-ok, %s underruns%s)",
+            self.stem, summary["n_ticks"], summary["n_ik_ok"], summary["n_popped"],
+            summary["n_underrun"], merge_note,
         )
 
 

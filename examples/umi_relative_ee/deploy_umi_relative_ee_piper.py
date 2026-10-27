@@ -645,7 +645,7 @@ def parse_args():
     parser.add_argument(
         "--log", nargs="?", default=None, const="",
         help="Log every control tick for offline analysis. Off by default. "
-             "Bare '--log' writes to logs/sync_<timestamp>.csv (+ .npz/.json); "
+             "Bare '--log' writes to logs/sync_<timestamp>.csv (+ .json meta); "
              "'--log PATH' uses PATH as the stem (suffixes added automatically).",
     )
     return parser.parse_args()
