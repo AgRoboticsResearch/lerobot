@@ -1128,6 +1128,7 @@ def main():
         with KeyboardCommandHandler() as kb:
             state = LoopState.PAUSED
             single_chunk = False
+            viz_pred_rel = None  # 持久化: 叠加保留到下一个 chunk 替换
             dispatch_anchor = None  # 异步预取: 派发拍锚定的实测 ee(结果还原与叠层用)
             logger.info("Loop state: PAUSED (press s to engage control)")
 
@@ -1164,6 +1165,7 @@ def main():
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
+                        viz_pred_rel = None
                         if prefetcher is not None:
                             prefetcher.invalidate()
                         state = LoopState.PAUSED
@@ -1179,6 +1181,7 @@ def main():
                         resync_ik_safety(ik_pipeline, kinematics, piper)
                         action_queue.clear()
                         chunk_traj_3d = None
+                        viz_pred_rel = None
                         if prefetcher is not None:
                             prefetcher.invalidate()
                         state = LoopState.PAUSED
@@ -1186,6 +1189,7 @@ def main():
                     elif key == "s" and state == LoopState.PAUSED:
                         action_queue.clear()
                         chunk_traj_3d = None
+                        viz_pred_rel = None
                         if prefetcher is not None:
                             prefetcher.invalidate()
                         state = LoopState.INFERENCE
@@ -1252,7 +1256,6 @@ def main():
                 # 同步模式(旧链 / single_chunk `.` / --sync_infer): 原路径,
                 # 队列空时现场推理(每拍 retain 同帧相对状态的原语义不变)。
                 use_async = prefetcher is not None and not single_chunk
-                viz_pred_rel = None
                 if use_async:
                     result = prefetcher.poll()
                     if result is not None:
@@ -1355,7 +1358,6 @@ def main():
                         chunk_idx = 0
                         logger.info(f"Predicted chunk of {len(action_queue)} actions")
 
-                    chunk_traj_3d = None
                     if viz_pred_rel is not None:
                         T_rel_list = [rot6d_to_matrix(a) for a in viz_pred_rel]
                         chunk_traj_3d = relative_actions_to_3d_points(
